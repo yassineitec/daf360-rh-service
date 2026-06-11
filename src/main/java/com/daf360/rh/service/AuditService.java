@@ -7,7 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Slf4j
 @Service
@@ -17,28 +17,29 @@ public class AuditService {
     private final AuditLogRepository auditLogRepository;
 
     @Async
-    public void log(String actorId, String action, String entity, Long entityId,
+    public void log(String actorId, String action, String entityType, Long entityId,
                     String before, String after) {
-        log(actorId, action, entity, entityId, before, after, null);
+        log(actorId, action, entityType, entityId, before, after, null);
     }
 
     @Async
-    public void log(String actorId, String action, String entity, Long entityId,
-                    String before, String after, String ip) {
+    public void log(String actorId, String action, String entityType, Long entityId,
+                    String before, String after, String ipAddress) {
         try {
             AuditLog entry = AuditLog.builder()
-                    .actorId(actorId != null ? actorId : "SYSTEM")
+                    .userId(actorId != null ? actorId : "SYSTEM")
                     .action(action)
-                    .entity(entity)
-                    .entityId(entityId)
-                    .beforeValue(before)
-                    .afterValue(after)
-                    .ip(ip)
-                    .createdAt(LocalDateTime.now())
+                    .entityType(entityType)
+                    .entityId(entityId != null ? entityId.toString() : null)
+                    .oldValue(before)
+                    .newValue(after)
+                    .ipAddress(ipAddress)
+                    .module("HR")
+                    .timestamp(OffsetDateTime.now())
                     .build();
             auditLogRepository.save(entry);
         } catch (Exception e) {
-            log.error("Failed to save audit log: {}", e.getMessage());
+            log.error("Failed to save audit log for action={} entity={}: {}", action, entityType, e.getMessage());
         }
     }
 }

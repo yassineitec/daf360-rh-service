@@ -16,6 +16,11 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    @ExceptionHandler(AppException.class)
+    public ProblemDetail handleApp(AppException ex) {
+        return ProblemDetail.forStatusAndDetail(ex.getErrorCode().getStatus(), ex.getMessage());
+    }
+
     @ExceptionHandler(ResourceNotFoundException.class)
     public ProblemDetail handleNotFound(ResourceNotFoundException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());

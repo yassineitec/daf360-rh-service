@@ -6,11 +6,17 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Repository
 public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
-    Page<AuditLog> findByActorId(String actorId, Pageable pageable);
-    Page<AuditLog> findByEntity(String entity, Pageable pageable);
-    Page<AuditLog> findByCreatedAtBetween(LocalDateTime from, LocalDateTime to, Pageable pageable);
+
+    /** Find all audit entries by actor (userId field → userId DB column). */
+    Page<AuditLog> findByUserId(String userId, Pageable pageable);
+
+    /** Find all entries for a given entity type. */
+    Page<AuditLog> findByEntityType(String entityType, Pageable pageable);
+
+    /** Date range query using datetimeoffset-compatible OffsetDateTime. */
+    Page<AuditLog> findByTimestampBetween(OffsetDateTime from, OffsetDateTime to, Pageable pageable);
 }

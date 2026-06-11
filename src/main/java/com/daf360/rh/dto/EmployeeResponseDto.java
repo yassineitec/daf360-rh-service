@@ -5,7 +5,7 @@ import com.daf360.rh.domain.enums.EmployeeStatus;
 import lombok.Data;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Data
 public class EmployeeResponseDto {
@@ -22,6 +22,6 @@ public class EmployeeResponseDto {
     private String phone;
     private String position;
     private Double annualLeaveBalance;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
+    private OffsetDateTime createdAt;
+    private OffsetDateTime updatedAt;
 }

@@ -1,6 +1,7 @@
 package com.daf360.rh.dto;
 
-import com.daf360.rh.domain.enums.AbsenceType;
+import com.daf360.rh.domain.enums.LeaveCategory;
+import com.daf360.rh.domain.enums.LeaveType;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
@@ -13,7 +14,10 @@ public class LeaveRequestDto {
     private Long employeeId;
 
     @NotNull
-    private AbsenceType absenceType;
+    private LeaveType leaveType;
+
+    /** Full day / half-day morning / half-day afternoon. Defaults to FULL_DAY if null. */
+    private LeaveCategory category;
 
     @NotNull
     private LocalDate startDate;

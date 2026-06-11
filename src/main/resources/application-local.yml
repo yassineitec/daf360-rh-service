@@ -1,0 +1,42 @@
+# ── DAF360 HR Service — local developer profile ───────────────────────────────
+# Activates with: -Dspring-boot.run.profiles=local  OR  SPRING_PROFILES_ACTIVE=local
+# DO NOT COMMIT this file — contains real credentials.
+server:
+  port: 8082
+
+spring:
+  datasource:
+    url: "jdbc:sqlserver://localhost:1433;databaseName=DAF360_HR;encrypt=false;trustServerCertificate=true"
+    username: sa
+    password: "Timesheetdev2026!**"
+
+  jpa:
+    show-sql: true
+    hibernate:
+      # Override global ddl-auto:update — schema managed manually via SSMS scripts in local dev
+      ddl-auto: none
+
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+
+  # Local SMTP stub (e.g. MailHog or just ignore failures)
+  mail:
+    host: localhost
+    port: 1025
+    username: ""
+    password: ""
+
+app:
+  jwt-secret: daf360-change-me-in-production-32chars
+  # RSA public key — same file the portal uses to sign tokens.
+  # When this is set, RS256 (daf360_access) tokens are validated correctly.
+  jwt-public-key-path: C:\\Users\\ITEC2\\OneDrive\\Documents\\projects\\daf360-portal\\portal\\keys\\public.pem
+
+logging:
+  level:
+    com.daf360: DEBUG
+    org.hibernate.SQL: DEBUG
+    "[org.hibernate.orm.jdbc.bind]": TRACE

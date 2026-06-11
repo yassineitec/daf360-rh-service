@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DAF360 RH — Estimation Sprint 2 Semaines</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --teal-900: #0D2E38;
+      --teal-800: #1C4E5C;
+      --teal-700: #235f70;
+      --teal-600: #2d7a8e;
+      --teal-200: #b3d8e0;
+      --teal-100: #d4edf2;
+      --teal-50:  #edf7fa;
+      --navy:     #0D1F2D;
+      --text:     #1a2e38;
+      --muted:    #5a7a85;
+      --border:   #d0e4e9;
+      --bg:       #f5f9fa;
+      --white:    #ffffff;
+      --gold:     #c8922a;
+      --gold-lt:  #f9f0e0;
+      --red:      #c0392b;
+      --red-lt:   #fdf0ef;
+      --green:    #1a6b4a;
+      --green-lt: #eaf5f0;
+    }
+
+    html { font-size: 15px; }
+
+    body {
+      font-family: 'Manrope', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── COVER ─────────────────────────────────── */
+    .cover {
+      background: var(--teal-800);
+      background-image:
+        radial-gradient(ellipse 120% 80% at 110% -10%, #2d7a8e55 0%, transparent 60%),
+        radial-gradient(ellipse 80% 100% at -10% 110%, #0d2e3866 0%, transparent 60%);
+      color: var(--white);
+      padding: 64px 72px 52px;
+      position: relative;
+      overflow: hidden;
+      animation: coverIn 0.7s ease both;
+    }
+    @keyframes coverIn {
+      from { opacity: 0; transform: translateY(-16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .cover::after {
+      content: '';
+      position: absolute;
+      right: -40px; top: -40px;
+      width: 360px; height: 360px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 50%;
+    }
+    .cover::before {
+      content: '';
+      position: absolute;
+      right: 40px; top: 40px;
+      width: 220px; height: 220px;
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 50%;
+    }
+
+    .cover-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 48px;
+    }
+    .cover-brand svg { flex-shrink: 0; }
+    .cover-brand-name {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+      opacity: 0.95;
+    }
+    .cover-brand-name span { opacity: 0.55; font-weight: 600; }
+
+    .cover-tag {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--teal-200);
+      margin-bottom: 20px;
+    }
+
+    .cover-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 48px;
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+    }
+    .cover-title em {
+      font-style: italic;
+      color: var(--teal-200);
+    }
+
+    .cover-subtitle {
+      font-size: 14px;
+      font-weight: 500;
+      opacity: 0.65;
+      margin-bottom: 48px;
+    }
+
+    .cover-meta {
+      display: flex;
+      gap: 40px;
+      padding-top: 32px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+    .cover-meta-item { }
+    .cover-meta-label {
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      opacity: 0.45;
+      margin-bottom: 4px;
+    }
+    .cover-meta-value {
+      font-size: 13px;
+      font-weight: 600;
+      opacity: 0.9;
+    }
+
+    /* ── SUMMARY BANNER ─────────────────────────── */
+    .summary-banner {
+      background: var(--white);
+      border-bottom: 1px solid var(--border);
+      padding: 28px 72px;
+      display: flex;
+      gap: 0;
+      animation: fadeUp 0.5s 0.2s ease both;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .summary-stat {
+      flex: 1;
+      padding: 0 32px;
+      border-right: 1px solid var(--border);
+    }
+    .summary-stat:first-child { padding-left: 0; }
+    .summary-stat:last-child { border-right: none; }
+
+    .summary-stat-number {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 42px;
+      font-weight: 700;
+      color: var(--teal-800);
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+    .summary-stat-number sup {
+      font-size: 18px;
+      vertical-align: super;
+      font-weight: 600;
+    }
+    .summary-stat-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .summary-stat-note {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    /* ── MAIN CONTENT ────────────────────────────── */
+    .content {
+      max-width: 1060px;
+      margin: 0 auto;
+      padding: 56px 72px 80px;
+      animation: fadeUp 0.5s 0.3s ease both;
+    }
+
+    /* ── SECTION HEADING ─────────────────────────── */
+    .section-heading {
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      margin-bottom: 28px;
+      margin-top: 56px;
+    }
+    .section-heading:first-child { margin-top: 0; }
+
+    .section-num {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--teal-600);
+      letter-spacing: 0.1em;
+      flex-shrink: 0;
+    }
+    .section-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--navy);
+      line-height: 1.15;
+    }
+    .section-line {
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── MODULE CARD ──────────────────────────────── */
+    .module-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 20px;
+      overflow: hidden;
+      transition: box-shadow 0.2s ease;
+    }
+    .module-card:hover { box-shadow: 0 4px 20px rgba(13,46,56,0.07); }
+
+    .module-card-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 20px 28px;
+      border-bottom: 1px solid var(--border);
+      background: var(--teal-50);
+    }
+
+    .module-badge {
+      width: 36px; height: 36px;
+      border-radius: 8px;
+      background: var(--teal-800);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .module-badge svg { color: white; }
+
+    .module-card-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--navy);
+      flex: 1;
+    }
+
+    .module-pill {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 4px 12px;
+      border-radius: 20px;
+      background: var(--teal-100);
+      color: var(--teal-800);
+    }
+
+    /* ── TASK TABLE ──────────────────────────────── */
+    .task-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .task-table thead tr {
+      background: transparent;
+    }
+    .task-table thead th {
+      padding: 12px 28px;
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--muted);
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .task-table thead th:last-child,
+    .task-table thead th:nth-last-child(2) { text-align: center; }
+
+    .task-table tbody tr {
+      border-bottom: 1px solid #f0f4f5;
+      transition: background 0.1s ease;
+    }
+    .task-table tbody tr:last-child { border-bottom: none; }
+    .task-table tbody tr:hover { background: var(--teal-50); }
+
+    .task-table td {
+      padding: 13px 28px;
+      font-size: 13px;
+      color: var(--text);
+      vertical-align: top;
+    }
+
+    .task-name { font-weight: 600; }
+    .task-desc {
+      font-size: 11.5px;
+      color: var(--muted);
+      margin-top: 2px;
+      line-height: 1.5;
+    }
+
+    .day-badge {
+      display: inline-block;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--teal-800);
+      background: var(--teal-100);
+      border-radius: 6px;
+      padding: 3px 10px;
+      min-width: 38px;
+    }
+
+    .table-footer {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 28px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .table-footer-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .table-footer-total {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--teal-800);
+    }
+
+    /* ── TIMELINE ────────────────────────────────── */
+    .weeks-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 8px;
+    }
+
+    .week-block {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .week-header {
+      padding: 18px 24px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .week-label {
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--teal-600);
+      margin-bottom: 4px;
+    }
+    .week-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--navy);
+    }
+    .week-focus {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .day-list { padding: 8px 0; }
+
+    .day-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 10px 24px;
+      border-bottom: 1px solid #f5f9fa;
+      transition: background 0.1s;
+    }
+    .day-row:last-child { border-bottom: none; }
+    .day-row:hover { background: var(--teal-50); }
+
+    .day-num {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: var(--teal-50);
+      border: 1px solid var(--teal-100);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--teal-700);
+      flex-shrink: 0;
+    }
+    .day-num.today {
+      background: var(--teal-800);
+      color: white;
+      border-color: var(--teal-800);
+    }
+
+    .day-info { flex: 1; }
+    .day-task {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.3;
+    }
+    .day-detail {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      line-height: 1.45;
+    }
+
+    .day-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 5px;
+    }
+    .tag {
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 2px 7px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    .tag-be { background: #e8f2f5; color: #1c4e5c; }
+    .tag-fe { background: #fdf0e8; color: #8a4a10; }
+    .tag-test { background: #eaf5f0; color: #1a6b4a; }
+    .tag-int { background: #f5f0fa; color: #5a3a7a; }
+
+    /* ── SCOPE TABLE ─────────────────────────────── */
+    .scope-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .scope-card {
+      border-radius: 10px;
+      padding: 20px 24px;
+      border: 1px solid;
+    }
+    .scope-card.included {
+      background: var(--green-lt);
+      border-color: #a8d5c0;
+    }
+    .scope-card.deferred {
+      background: var(--gold-lt);
+      border-color: #e8c88a;
+    }
+
+    .scope-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .scope-card-icon {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .included .scope-card-icon { background: var(--green); color: white; }
+    .deferred .scope-card-icon { background: var(--gold); color: white; }
+
+    .scope-card-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .included .scope-card-title { color: var(--green); }
+    .deferred .scope-card-title { color: #8a5a10; }
+
+    .scope-list { list-style: none; }
+    .scope-list li {
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--text);
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+      display: flex;
+      gap: 8px;
+    }
+    .scope-list li:last-child { border-bottom: none; }
+    .scope-list li::before {
+      content: '—';
+      opacity: 0.35;
+      flex-shrink: 0;
+    }
+
+    /* ── HYPOTHESES ─────────────────────────────── */
+    .hypo-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+    .hypo-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+    }
+    .hypo-icon {
+      font-size: 18px;
+      margin-bottom: 10px;
+      display: block;
+    }
+    .hypo-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--teal-700);
+      margin-bottom: 6px;
+    }
+    .hypo-text {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    /* ── TOTAL ROW ──────────────────────────────── */
+    .total-block {
+      background: var(--teal-800);
+      background-image: radial-gradient(ellipse 80% 60% at 90% 50%, #2d7a8e44 0%, transparent 70%);
+      border-radius: 12px;
+      padding: 32px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 8px;
+      color: white;
+    }
+    .total-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      opacity: 0.6;
+      margin-bottom: 4px;
+    }
+    .total-value {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 52px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -1px;
+    }
+    .total-value sup {
+      font-size: 22px;
+      vertical-align: super;
+      font-weight: 600;
+      opacity: 0.7;
+    }
+    .total-breakdown {
+      display: flex;
+      gap: 40px;
+    }
+    .total-item { text-align: center; }
+    .total-item-num {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 28px;
+      font-weight: 700;
+      opacity: 0.9;
+    }
+    .total-item-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      opacity: 0.45;
+      margin-top: 2px;
+    }
+    .total-divider {
+      width: 1px;
+      height: 48px;
+      background: rgba(255,255,255,0.15);
+      align-self: center;
+    }
+
+    /* ── FOOTER ──────────────────────────────────── */
+    .doc-footer {
+      border-top: 1px solid var(--border);
+      padding: 20px 72px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--muted);
+      background: var(--white);
+    }
+    .doc-footer strong { color: var(--teal-800); }
+
+    /* ── PRINT ────────────────────────────────────── */
+    @media print {
+      body { background: white; font-size: 13px; }
+      .cover { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .summary-banner, .content, .total-block { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .module-card:hover, .day-row:hover, .task-table tbody tr:hover { background: transparent; box-shadow: none; }
+      @keyframes coverIn, fadeUp { from { opacity:1; transform:none; } }
+      .weeks-grid { grid-template-columns: 1fr 1fr; }
+      .page-break { page-break-before: always; }
+    }
+
+    /* ── SEPARATOR ────────────────────────────────── */
+    .sep {
+      height: 1px;
+      background: var(--border);
+      margin: 48px 0;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── COVER ──────────────────────────────────── -->
+<div class="cover">
+  <div class="cover-brand">
+    <svg width="30" height="30" viewBox="0 0 28 28" fill="none">
+      <rect x="2" y="2" width="10" height="10" rx="2" fill="white"/>
+      <rect x="16" y="2" width="10" height="10" rx="2" fill="white" opacity="0.55"/>
+      <rect x="2" y="16" width="10" height="10" rx="2" fill="white" opacity="0.55"/>
+      <rect x="16" y="16" width="10" height="10" rx="2" fill="white" opacity="0.25"/>
+    </svg>
+    <span class="cover-brand-name">DAF <span>|</span> 360</span>
+  </div>
+
+  <div class="cover-tag">Document d'estimation · Module RH</div>
+  <h1 class="cover-title">Sprint <em>2 Semaines</em><br>Application RH</h1>
+  <p class="cover-subtitle">Recrutement · Cycle de vie employé · Gestion des demandes</p>
+
+  <div class="cover-meta">
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Date</div>
+      <div class="cover-meta-value">25 Mai 2026</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Durée totale</div>
+      <div class="cover-meta-value">2 semaines — 10 jours ouvrés</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Stack</div>
+      <div class="cover-meta-value">Spring Boot 4 · Angular 21</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Profil</div>
+      <div class="cover-meta-value">1 développeur full-stack</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── SUMMARY BANNER ──────────────────────────── -->
+<div class="summary-banner">
+  <div class="summary-stat">
+    <div class="summary-stat-number">10<sup>j</sup></div>
+    <div class="summary-stat-label">Durée sprint</div>
+    <div class="summary-stat-note">2 semaines calendaires</div>
+  </div>
+  <div class="summary-stat">
+    <div class="summary-stat-number">3</div>
+    <div class="summary-stat-label">Modules</div>
+    <div class="summary-stat-note">Recrutement · Vie · Demandes</div>
+  </div>
+  <div class="summary-stat">
+    <div class="summary-stat-number">14</div>
+    <div class="summary-stat-label">Composants</div>
+    <div class="summary-stat-note">Backend + Frontend combinés</div>
+  </div>
+  <div class="summary-stat">
+    <div class="summary-stat-number">MVP</div>
+    <div class="summary-stat-label">Périmètre</div>
+    <div class="summary-stat-note">Fonctionnel, extensible</div>
+  </div>
+</div>
+
+<!-- ── MAIN ──────────────────────────────────────── -->
+<div class="content">
+
+  <!-- MODULES -->
+  <div class="section-heading">
+    <span class="section-num">01</span>
+    <h2 class="section-title">Détail par module</h2>
+    <div class="section-line"></div>
+  </div>
+
+  <!-- Module 1 -->
+  <div class="module-card">
+    <div class="module-card-header">
+      <div class="module-badge">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+      </div>
+      <span class="module-card-title">Module 1 — Recrutement</span>
+      <span class="module-pill">Semaine 1</span>
+    </div>
+    <table class="task-table">
+      <thead>
+        <tr>
+          <th style="width:50%">Composant</th>
+          <th>Description</th>
+          <th>Backend</th>
+          <th>Frontend</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="task-name">Profil candidat</div>
+            <div class="task-desc">Entité, repository, CRUD complet</div>
+          </td>
+          <td><div class="task-desc">CandidateEntity, statuts, recherche</div></td>
+          <td style="text-align:center"><span class="day-badge">1j</span></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="task-name">Entretien (round 1)</div>
+            <div class="task-desc">Formulaire : date, type, résultat, date d'embauche</div>
+          </td>
+          <td><div class="task-desc">InterviewEntity, service, API REST</div></td>
+          <td style="text-align:center"><span class="day-badge">1j</span></td>
+          <td style="text-align:center"><span class="day-badge">1j</span></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="task-name">Rounds multiples</div>
+            <div class="task-desc">Chaîne RH → technique → manager</div>
+          </td>
+          <td><div class="task-desc">Enchaînement conditionnel, statuts intermédiaires</div></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="task-name">Offre & notification HR</div>
+            <div class="task-desc">Suivi offre envoyée + alerte RH à l'acceptation</div>
+          </td>
+          <td><div class="task-desc">OfferEntity, email SMTP, liste nouveaux entrants</div></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="table-footer">
+      <span class="table-footer-label">Total module 1</span>
+      <span class="table-footer-total">5 jours</span>
+    </div>
+  </div>
+
+  <!-- Module 2 -->
+  <div class="module-card">
+    <div class="module-card-header">
+      <div class="module-badge">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+      </div>
+      <span class="module-card-title">Module 2 — Cycle de vie de l'employé</span>
+      <span class="module-pill">Semaine 2 · J6–J8</span>
+    </div>
+    <table class="task-table">
+      <thead>
+        <tr>
+          <th style="width:50%">Composant</th>
+          <th>Description</th>
+          <th>Backend</th>
+          <th>Frontend</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="task-name">Statuts employé</div>
+            <div class="task-desc">TRIAL → PERMANENT → RESIGNED</div>
+          </td>
+          <td><div class="task-desc">Machine à états, transitions validées, historique</div></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="task-name">Notification fin de période d'essai</div>
+            <div class="task-desc">Job planifié quotidien + notification HR</div>
+          </td>
+          <td><div class="task-desc">@Scheduled Spring, calcul date + envoi notif</div></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="task-name">Démission / désactivation</div>
+            <div class="task-desc">Workflow de sortie, désactivation compte</div>
+          </td>
+          <td><div class="task-desc">Soft-disable, date effective, audit log</div></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="table-footer">
+      <span class="table-footer-label">Total module 2</span>
+      <span class="table-footer-total">3 jours</span>
+    </div>
+  </div>
+
+  <!-- Module 3 -->
+  <div class="module-card">
+    <div class="module-card-header">
+      <div class="module-badge">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+      </div>
+      <span class="module-card-title">Module 3 — Gestion des demandes</span>
+      <span class="module-pill">Semaine 2 · J8–J10</span>
+    </div>
+    <table class="task-table">
+      <thead>
+        <tr>
+          <th style="width:50%">Composant</th>
+          <th>Description</th>
+          <th>Backend</th>
+          <th>Frontend</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="task-name">Création de demande</div>
+            <div class="task-desc">Types, statuts, description libre</div>
+          </td>
+          <td><div class="task-desc">RequestEntity, types configurables, API CRUD</div></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="task-name">Pièces jointes</div>
+            <div class="task-desc">Upload de documents liés à la demande</div>
+          </td>
+          <td><div class="task-desc">Multipart upload, stockage local / S3, liens sécurisés</div></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="task-name">Traitement RH</div>
+            <div class="task-desc">Approuver / rejeter + commentaire</div>
+          </td>
+          <td><div class="task-desc">Workflow approbation, notification employé, suivi</div></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+          <td style="text-align:center"><span class="day-badge">0.5j</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="table-footer">
+      <span class="table-footer-label">Total module 3 (hors intégration)</span>
+      <span class="table-footer-total">3 jours</span>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- PLANNING JOUR PAR JOUR -->
+  <div class="section-heading">
+    <span class="section-num">02</span>
+    <h2 class="section-title">Planning jour par jour</h2>
+    <div class="section-line"></div>
+  </div>
+
+  <div class="weeks-grid">
+    <!-- Semaine 1 -->
+    <div class="week-block">
+      <div class="week-header">
+        <div class="week-label">Semaine 1 · Jours 1–5</div>
+        <div class="week-title">Module Recrutement</div>
+        <div class="week-focus">Candidats · Entretiens · Offres · Notification HR</div>
+      </div>
+      <div class="day-list">
+        <div class="day-row">
+          <div class="day-num">J1</div>
+          <div class="day-info">
+            <div class="day-task">Entités & repositories Recrutement</div>
+            <div class="day-detail">Candidate, Interview, Offer — JPA entities, Spring Data repos, migration SQL</div>
+            <div class="day-tags">
+              <span class="tag tag-be">Backend</span>
+            </div>
+          </div>
+        </div>
+        <div class="day-row">
+          <div class="day-num">J2</div>
+          <div class="day-info">
+            <div class="day-task">API Recrutement (CRUD + rounds)</div>
+            <div class="day-detail">RecruitmentService, contrôleur REST, machine à états, sécurité endpoints</div>
+            <div class="day-tags">
+              <span class="tag tag-be">Backend</span>
+            </div>
+          </div>
+        </div>
+        <div class="day-row">
+          <div class="day-num">J3</div>
+          <div class="day-info">
+            <div class="day-task">Frontend — liste candidats & formulaire</div>
+            <div class="day-detail">CandidateListComponent, CandidateFormComponent, service Angular, routing</div>
+            <div class="day-tags">
+              <span class="tag tag-fe">Frontend</span>
+            </div>
+          </div>
+        </div>
+        <div class="day-row">
+          <div class="day-num">J4</div>
+          <div class="day-info">
+            <div class="day-task">Frontend — rounds d'entretiens & résultats</div>
+            <div class="day-detail">InterviewRoundsComponent, timeline, formulaire résultat, date d'embauche</div>
+            <div class="day-tags">
+              <span class="tag tag-fe">Frontend</span>
+            </div>
+          </div>
+        </div>
+        <div class="day-row">
+          <div class="day-num">J5</div>
+          <div class="day-info">
+            <div class="day-task">Offre envoyée + notification HR</div>
+            <div class="day-detail">Suivi statut offre (BE), email SMTP acceptation, liste nouveaux entrants (FE), tests</div>
+            <div class="day-tags">
+              <span class="tag tag-be">Backend</span>
+              <span class="tag tag-fe">Frontend</span>
+              <span class="tag tag-test">Tests</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Semaine 2 -->
+    <div class="week-block">
+      <div class="week-header">
+        <div class="week-label">Semaine 2 · Jours 6–10</div>
+        <div class="week-title">Vie employé · Demandes · Intégration</div>
+        <div class="week-focus">Statuts · Notifications · Demandes · Polish final</div>
+      </div>
+      <div class="day-list">
+        <div class="day-row">
+          <div class="day-num">J6</div>
+          <div class="day-info">
+            <div class="day-task">Statuts employé + création profil complet</div>
+            <div class="day-detail">EmployeeStatus enum (TRIAL/PERMANENT/RESIGNED), formulaire profil post-recrutement</div>
+            <div class="day-tags">
+              <span class="tag tag-be">Backend</span>
+              <span class="tag tag-fe">Frontend</span>
+            </div>
+          </div>
+        </div>
+        <div class="day-row">
+          <div class="day-num">J7</div>
+          <div class="day-info">
+            <div class="day-task">Job planifié + démission</div>
+            <div class="day-detail">@Scheduled détection fin période d'essai, notification titulaire, workflow démission</div>
+            <div class="day-tags">
+              <span class="tag tag-be">Backend</span>
+              <span class="tag tag-fe">Frontend</span>
+            </div>
+          </div>
+        </div>
+        <div class="day-row">
+          <div class="day-num">J8</div>
+          <div class="day-info">
+            <div class="day-task">API demandes + upload documents</div>
+            <div class="day-detail">RequestEntity, types, upload multipart, stockage, endpoints sécurisés</div>
+            <div class="day-tags">
+              <span class="tag tag-be">Backend</span>
+            </div>
+          </div>
+        </div>
+        <div class="day-row">
+          <div class="day-num">J9</div>
+          <div class="day-info">
+            <div class="day-task">Frontend demandes + interface RH</div>
+            <div class="day-detail">RequestFormComponent, liste demandes, traitement approuver/rejeter, pièces jointes</div>
+            <div class="day-tags">
+              <span class="tag tag-fe">Frontend</span>
+            </div>
+          </div>
+        </div>
+        <div class="day-row">
+          <div class="day-num">J10</div>
+          <div class="day-info">
+            <div class="day-task">Intégration, tests & polish</div>
+            <div class="day-detail">Tests unitaires manquants, corrections inter-modules, cohérence UI, review finale</div>
+            <div class="day-tags">
+              <span class="tag tag-test">Tests</span>
+              <span class="tag tag-int">Intégration</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- TOTAL -->
+  <div class="total-block">
+    <div>
+      <div class="total-label">Durée totale estimée</div>
+      <div class="total-value">10<sup>j</sup></div>
+    </div>
+    <div class="total-breakdown">
+      <div class="total-item">
+        <div class="total-item-num">5j</div>
+        <div class="total-item-label">Recrutement</div>
+      </div>
+      <div class="total-divider"></div>
+      <div class="total-item">
+        <div class="total-item-num">3j</div>
+        <div class="total-item-label">Cycle de vie</div>
+      </div>
+      <div class="total-divider"></div>
+      <div class="total-item">
+        <div class="total-item-num">3j</div>
+        <div class="total-item-label">Demandes</div>
+      </div>
+      <div class="total-divider"></div>
+      <div class="total-item">
+        <div class="total-item-num">1j</div>
+        <div class="total-item-label">Intégration</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- SCOPE -->
+  <div class="section-heading">
+    <span class="section-num">03</span>
+    <h2 class="section-title">Périmètre sprint</h2>
+    <div class="section-line"></div>
+  </div>
+
+  <div class="scope-grid">
+    <div class="scope-card included">
+      <div class="scope-card-header">
+        <div class="scope-card-icon">✓</div>
+        <span class="scope-card-title">Inclus dans ce sprint</span>
+      </div>
+      <ul class="scope-list">
+        <li>Création et gestion du profil candidat</li>
+        <li>Entretiens multiples avec résultat (accepté / refusé)</li>
+        <li>Suivi de l'offre envoyée</li>
+        <li>Notification email HR à l'acceptation d'une offre</li>
+        <li>Création du profil complet après recrutement</li>
+        <li>Gestion des statuts : période d'essai → titulaire → démission</li>
+        <li>Notification automatique fin de période d'essai</li>
+        <li>Workflow démission / désactivation compte</li>
+        <li>Création et suivi de demandes avec pièces jointes</li>
+        <li>Interface RH d'approbation / rejet des demandes</li>
+      </ul>
+    </div>
+    <div class="scope-card deferred">
+      <div class="scope-card-header">
+        <div class="scope-card-icon">→</div>
+        <span class="scope-card-title">Différé (sprint suivant)</span>
+      </div>
+      <ul class="scope-list">
+        <li>Tableau de bord analytique recrutement (KPIs, taux)</li>
+        <li>Intégration calendrier entretiens (sync externe)</li>
+        <li>Scoring et comparaison candidats</li>
+        <li>Signature électronique de l'offre</li>
+        <li>Portail candidat (espace self-service)</li>
+        <li>Tests E2E automatisés (Playwright / Cypress)</li>
+        <li>Gestion avancée des congés / absences</li>
+        <li>Mobile responsive poussé</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- HYPOTHESES -->
+  <div class="section-heading">
+    <span class="section-num">04</span>
+    <h2 class="section-title">Hypothèses</h2>
+    <div class="section-line"></div>
+  </div>
+
+  <div class="hypo-grid">
+    <div class="hypo-card">
+      <span class="hypo-icon">⚙️</span>
+      <div class="hypo-title">Stack technique</div>
+      <div class="hypo-text">Spring Boot 4 / Java 17 / SQL Server (backend) + Angular 21 Signals standalone (frontend). Cohérence avec le projet DAF360 existant.</div>
+    </div>
+    <div class="hypo-card">
+      <span class="hypo-icon">👤</span>
+      <div class="hypo-title">Ressource</div>
+      <div class="hypo-text">1 développeur full-stack sans interruption majeure. En mode 2 devs (BE + FE) le sprint passe à ~1 semaine calendaire.</div>
+    </div>
+    <div class="hypo-card">
+      <span class="hypo-icon">📧</span>
+      <div class="hypo-title">Emails</div>
+      <div class="hypo-text">SMTP simple (JavaMailSender). Pas de service tiers (SendGrid, Mailjet). Templates HTML basiques.</div>
+    </div>
+    <div class="hypo-card">
+      <span class="hypo-icon">📎</span>
+      <div class="hypo-title">Stockage fichiers</div>
+      <div class="hypo-text">Stockage local ou S3 compatible. Pas de gestion DRM ni de prévisualisation avancée en sprint 1.</div>
+    </div>
+    <div class="hypo-card">
+      <span class="hypo-icon">🎨</span>
+      <div class="hypo-title">Design</div>
+      <div class="hypo-text">Cohérence avec le système de design DAF360 existant. Tokens CSS, composants partagés. Pas de nouvelles maquettes from scratch.</div>
+    </div>
+    <div class="hypo-card">
+      <span class="hypo-icon">🧪</span>
+      <div class="hypo-title">Tests</div>
+      <div class="hypo-text">Tests unitaires inclus (JUnit 5, Jasmine/Jest). Pas de tests E2E automatisés en sprint 1. Tests manuels sur les golden paths.</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── FOOTER ────────────────────────────────────── -->
+<div class="doc-footer">
+  <span><strong>DAF360</strong> · Estimation Module RH · Sprint 2 Semaines</span>
+  <span>Généré le 25 Mai 2026 · ITEC Groupe</span>
+</div>
+
+</body>
+</html>

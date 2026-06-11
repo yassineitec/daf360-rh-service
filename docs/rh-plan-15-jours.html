@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DAF360 RH — Plan d'implémentation 15 jours</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --primary: #1C4E5C;
+    --primary-light: #EBF4F7;
+    --accent: #e67e22;
+    --success: #27ae60;
+    --danger: #e74c3c;
+    --warning: #f39c12;
+    --text: #0D2233;
+    --text-muted: #64748b;
+    --border: #e2e8f0;
+    --bg: #F8FAFB;
+  }
+
+  body {
+    font-family: 'Manrope', sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    background: #fff;
+    line-height: 1.6;
+    padding: 0;
+  }
+
+  /* Cover page */
+  .cover {
+    min-height: 100vh;
+    background: linear-gradient(135deg, var(--primary) 0%, #2a7a8f 60%, #1a5a6e 100%);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 80px 80px;
+    page-break-after: always;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .cover::before {
+    content: '';
+    position: absolute;
+    top: -120px; right: -120px;
+    width: 500px; height: 500px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.05);
+  }
+  .cover::after {
+    content: '';
+    position: absolute;
+    bottom: -80px; left: -80px;
+    width: 350px; height: 350px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.04);
+  }
+
+  .cover-logo {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 80px;
+  }
+  .logo-squares {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    width: 36px;
+    height: 36px;
+  }
+  .logo-sq {
+    border-radius: 4px;
+    background: rgba(255,255,255,0.9);
+  }
+  .logo-sq:nth-child(2) { opacity: 0.6; }
+  .logo-sq:nth-child(3) { opacity: 0.6; }
+  .logo-sq:nth-child(4) { opacity: 0.3; }
+  .cover-brand { color: rgba(255,255,255,0.95); font-size: 18px; font-weight: 800; letter-spacing: -0.3px; }
+  .cover-brand span { opacity: 0.6; font-weight: 400; font-size: 10px; display: block; letter-spacing: 0.15em; text-transform: uppercase; margin-top: 1px; }
+
+  .cover-tag {
+    display: inline-block;
+    background: rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.9);
+    border: 1px solid rgba(255,255,255,0.2);
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 28px;
+  }
+
+  .cover-title {
+    font-family: 'DM Serif Display', serif;
+    font-size: 52px;
+    color: #fff;
+    line-height: 1.15;
+    margin-bottom: 20px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .cover-subtitle {
+    font-size: 17px;
+    color: rgba(255,255,255,0.75);
+    line-height: 1.6;
+    max-width: 580px;
+    margin-bottom: 60px;
+  }
+
+  .cover-meta {
+    display: flex;
+    gap: 40px;
+    flex-wrap: wrap;
+  }
+  .cover-meta-item { }
+  .cover-meta-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 4px;
+  }
+  .cover-meta-value {
+    font-size: 15px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.95);
+  }
+
+  /* Main content */
+  .content {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 56px 60px;
+  }
+
+  /* Section headers */
+  h1.doc-section {
+    font-family: 'DM Serif Display', serif;
+    font-size: 32px;
+    color: var(--primary);
+    margin: 48px 0 24px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--primary);
+    page-break-before: always;
+  }
+  h1.doc-section:first-child { page-break-before: avoid; margin-top: 0; }
+
+  h2.task-title {
+    font-family: 'Manrope', sans-serif;
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--primary);
+    margin: 36px 0 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  h2.task-title .day-badge {
+    background: var(--primary);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+
+  h3.step-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin: 20px 0 8px;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    font-size: 12px;
+  }
+  th {
+    background: var(--primary);
+    color: #fff;
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  th:first-child { border-radius: 8px 0 0 0; }
+  th:last-child { border-radius: 0 8px 0 0; }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: var(--bg); }
+  tr:last-child td { border-bottom: none; }
+  td code { font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--primary-light); color: var(--primary); padding: 2px 6px; border-radius: 4px; }
+
+  /* Code blocks */
+  pre {
+    background: #0f1923;
+    color: #e2e8f0;
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 12px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.65;
+    overflow: hidden;
+    page-break-inside: avoid;
+  }
+  pre.bash { border-left: 3px solid var(--accent); }
+  code { font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--primary-light); color: var(--primary); padding: 2px 6px; border-radius: 4px; }
+
+  /* Paragraphs */
+  p { margin: 8px 0; color: var(--text); line-height: 1.7; }
+
+  /* Info boxes */
+  .info-box {
+    background: var(--primary-light);
+    border-left: 4px solid var(--primary);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+  .warning-box {
+    background: #fff8ec;
+    border-left: 4px solid var(--warning);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+
+  /* Status badges */
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .badge-primary { background: var(--primary-light); color: var(--primary); }
+  .badge-success { background: #ecfdf5; color: var(--success); }
+  .badge-warning { background: #fffbeb; color: var(--warning); }
+  .badge-danger  { background: #fef2f2; color: var(--danger); }
+
+  /* Sprint grid */
+  .sprint-grid {
+    display: grid;
+    grid-template-columns: 60px 1fr 1fr;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 20px 0;
+  }
+  .sprint-header {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 60px 1fr 1fr;
+    background: var(--primary);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .sprint-header div { padding: 10px 14px; }
+  .sprint-row {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 60px 1fr 1fr;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .sprint-row:nth-child(odd) { background: var(--bg); }
+  .sprint-row div { padding: 10px 14px; }
+  .sprint-day { font-weight: 800; color: var(--primary); }
+
+  /* Module card */
+  .module-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin: 20px 0;
+    page-break-inside: avoid;
+  }
+  .module-header {
+    background: var(--primary);
+    color: #fff;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .module-header h3 { font-size: 15px; font-weight: 800; }
+  .module-header .days { font-size: 11px; opacity: 0.8; }
+  .module-body { padding: 16px 20px; }
+  .feature-list { list-style: none; }
+  .feature-list li {
+    padding: 6px 0;
+    padding-left: 20px;
+    position: relative;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .feature-list li:last-child { border-bottom: none; }
+  .feature-list li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: var(--primary);
+    font-weight: 700;
+  }
+
+  /* File tree */
+  .file-tree {
+    background: #0f1923;
+    color: #8fbcbb;
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.8;
+    margin: 12px 0;
+  }
+  .file-tree .dir { color: #81a1c1; }
+  .file-tree .file { color: #a3be8c; }
+  .file-tree .new { color: #ebcb8b; }
+
+  /* Summary totals */
+  .totals-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin: 24px 0;
+  }
+  .total-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+  }
+  .total-card .number { font-family: 'DM Serif Display', serif; font-size: 36px; color: var(--primary); line-height: 1; }
+  .total-card .label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-top: 6px; }
+
+  /* Endpoint badge */
+  .method { display: inline-block; padding: 2px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; margin-right: 6px; }
+  .get    { background: #ecfdf5; color: #059669; }
+  .post   { background: #eff6ff; color: #2563eb; }
+  .put    { background: #fffbeb; color: #d97706; }
+  .delete { background: #fef2f2; color: #dc2626; }
+
+  /* Page break helpers */
+  .page-break { page-break-after: always; }
+
+  /* Risk table */
+  .risk-low    { color: var(--success); font-weight: 700; }
+  .risk-medium { color: var(--warning); font-weight: 700; }
+  .risk-high   { color: var(--danger);  font-weight: 700; }
+
+  ul, ol { margin-left: 20px; margin-top: 8px; }
+  li { margin-bottom: 4px; }
+
+  @media print {
+    body { font-size: 12px; }
+    .cover { min-height: 100vh; }
+    pre { font-size: 10px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- COVER PAGE -->
+<div class="cover">
+  <div class="cover-logo">
+    <div class="logo-squares">
+      <div class="logo-sq"></div><div class="logo-sq"></div>
+      <div class="logo-sq"></div><div class="logo-sq"></div>
+    </div>
+    <div class="cover-brand">
+      DAF <strong>360</strong>
+      <span>Sovereign Enterprise Platform</span>
+    </div>
+  </div>
+
+  <div class="cover-tag">Plan d'implémentation · Sprint 15 jours</div>
+
+  <h1 class="cover-title">Modules RH<br>DAF360</h1>
+
+  <p class="cover-subtitle">
+    Recrutement (pipeline candidats, entretiens multiples, offres),
+    Cycle de vie employé (période d'essai → titulaire → démission)
+    et Gestion des demandes — backend Spring Boot 4 + frontend Angular 21.
+  </p>
+
+  <div class="cover-meta">
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Date</div>
+      <div class="cover-meta-value">26 mai 2026</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Sprint</div>
+      <div class="cover-meta-value">26 mai → 12 juin 2026</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Durée</div>
+      <div class="cover-meta-value">15 jours ouvrés</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Équipe</div>
+      <div class="cover-meta-value">2 développeurs</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Projet</div>
+      <div class="cover-meta-value">daf360-rh-service / daf360-shell</div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="content">
+
+  <!-- OVERVIEW -->
+  <h1 class="doc-section" style="page-break-before: avoid; margin-top: 0;">Vue d'ensemble</h1>
+
+  <div class="totals-grid">
+    <div class="total-card">
+      <div class="number">3</div>
+      <div class="label">Modules</div>
+    </div>
+    <div class="total-card">
+      <div class="number">15</div>
+      <div class="label">Jours ouvrés</div>
+    </div>
+    <div class="total-card">
+      <div class="number">14</div>
+      <div class="label">Endpoints REST</div>
+    </div>
+    <div class="total-card">
+      <div class="number">9</div>
+      <div class="label">Tâches planifiées</div>
+    </div>
+  </div>
+
+  <div class="module-card">
+    <div class="module-header">
+      <h3>Module 1 — Recrutement</h3>
+      <span class="days">Jours 1–7 · Tasks 1–4</span>
+    </div>
+    <div class="module-body">
+      <ul class="feature-list">
+        <li>Création et gestion des profils candidats (CRUD)</li>
+        <li>Planification d'entretiens multiples (RH → Technique → Manager → Final)</li>
+        <li>Saisie des résultats d'entretien avec feedback</li>
+        <li>Envoi d'offre d'embauche avec date prévue et salaire</li>
+        <li>Flux acceptation / refus d'offre avec notification email RH</li>
+        <li>Frontend : liste candidats, formulaire création, fiche détail avec timeline</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="module-card">
+    <div class="module-header">
+      <h3>Module 2 — Cycle de vie employé</h3>
+      <span class="days">Jours 8–9 · Task 5</span>
+    </div>
+    <div class="module-body">
+      <ul class="feature-list">
+        <li>Statuts successifs : Période d'essai → Titulaire → Démission</li>
+        <li>Détection automatique de la fin de période d'essai (job planifié quotidien)</li>
+        <li>Notification email RH lors de la fin de période d'essai</li>
+        <li>Action de titularisation et de démission avec désactivation du compte</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="module-card">
+    <div class="module-header">
+      <h3>Module 3 — Gestion des demandes</h3>
+      <span class="days">Jours 10–13 · Tasks 6–7</span>
+    </div>
+    <div class="module-body">
+      <ul class="feature-list">
+        <li>Soumission de demandes par les employés (document, attestation, certificat…)</li>
+        <li>Suivi du statut : En attente → En cours → Approuvé / Refusé</li>
+        <li>Interface RH pour traitement des demandes avec notes de réponse</li>
+        <li>Vue historique des demandes par employé</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- SPRINT PLAN -->
+  <h1 class="doc-section">Plan de sprint — 15 jours</h1>
+
+  <div class="sprint-grid">
+    <div class="sprint-header">
+      <div>Jour</div>
+      <div>Backend (Dev 1)</div>
+      <div>Frontend (Dev 2)</div>
+    </div>
+    <div class="sprint-row">
+      <div class="sprint-day">J1–J2<br><small style="font-size:10px;color:#64748b">26-27/05</small></div>
+      <div>Entités JPA : <code>Candidate</code>, <code>Interview</code>, <code>JobOffer</code> + enums + repositories + tests repository</div>
+      <div>Setup projet RH : <code>rh.model.ts</code>, <code>rh.service.ts</code>, routes <code>/rh/*</code></div>
+    </div>
+    <div class="sprint-row">
+      <div class="sprint-day">J3–J4<br><small style="font-size:10px;color:#64748b">28-29/05</small></div>
+      <div>DTOs recrutement + <code>CandidateService</code> + <code>InterviewService</code> + <code>OfferService</code> + <code>HrNotificationService</code> + <code>RecruitmentController</code></div>
+      <div>Page liste candidats (tableau + badges statut + navigation)</div>
+    </div>
+    <div class="sprint-row">
+      <div class="sprint-day">J5–J6<br><small style="font-size:10px;color:#64748b">30-31/05</small></div>
+      <div>Tests service (<code>CandidateServiceTest</code>) + sécurité endpoints + validation email dupliqué</div>
+      <div>Formulaire création candidat + fiche détail avec timeline entretiens</div>
+    </div>
+    <div class="sprint-row">
+      <div class="sprint-day">J7<br><small style="font-size:10px;color:#64748b">02/06</small></div>
+      <div>Révision + correctifs backend Module 1</div>
+      <div>Formulaires entretien (modal) + envoi offre (modal accept/reject)</div>
+    </div>
+    <div class="sprint-row">
+      <div class="sprint-day">J8–J9<br><small style="font-size:10px;color:#64748b">03-04/06</small></div>
+      <div>Enum <code>EmploymentLifecycleStage</code> + modifier <code>Employee.java</code> + <code>EmployeeLifecycleService</code> + <code>EmployeeLifecycleController</code> + modifier <code>HrScheduler</code> + tests</div>
+      <div>Vue statut employé + badge lifecycle + actions titulariser / démission</div>
+    </div>
+    <div class="sprint-row">
+      <div class="sprint-day">J10–J11<br><small style="font-size:10px;color:#64748b">05-06/06</small></div>
+      <div>Entité <code>EmployeeRequest</code> + enums + repository + <code>EmployeeRequestService</code> + <code>EmployeeRequestController</code> + tests</div>
+      <div>Liste des demandes (vue employé + vue RH avec traitement)</div>
+    </div>
+    <div class="sprint-row">
+      <div class="sprint-day">J12–J13<br><small style="font-size:10px;color:#64748b">09-10/06</small></div>
+      <div>Tests intégration + correctifs + polish API</div>
+      <div>Formulaire nouvelle demande + page détail demande + CSS partagé</div>
+    </div>
+    <div class="sprint-row">
+      <div class="sprint-day">J14<br><small style="font-size:10px;color:#64748b">11/06</small></div>
+      <div colspan="2">Navigation sidebar + routes finales + build Angular (0 erreurs) + tests backend complets</div>
+    </div>
+    <div class="sprint-row">
+      <div class="sprint-day">J15<br><small style="font-size:10px;color:#64748b">12/06</small></div>
+      <div colspan="2">Tests end-to-end manuels via curl + correctifs finaux + tag <code>v0.2.0</code></div>
+    </div>
+  </div>
+
+  <!-- TECH STACK -->
+  <h1 class="doc-section">Stack technique</h1>
+
+  <table>
+    <tr><th>Couche</th><th>Technologie</th><th>Version</th><th>Notes</th></tr>
+    <tr><td>Backend language</td><td>Java</td><td>17</td><td>LTS</td></tr>
+    <tr><td>Backend framework</td><td>Spring Boot</td><td>4.0.5</td><td>JPA, Security, Mail, Scheduling</td></tr>
+    <tr><td>Base de données</td><td>SQL Server</td><td>—</td><td>DAF360_HR database</td></tr>
+    <tr><td>ORM</td><td>Hibernate JPA</td><td>—</td><td><code>ddl-auto: update</code> — tables créées auto</td></tr>
+    <tr><td>Email</td><td>Spring Mail (SMTP)</td><td>—</td><td>Office 365 — smtp.office365.com</td></tr>
+    <tr><td>Scheduling</td><td>Spring <code>@Scheduled</code></td><td>—</td><td>Cron quotidien 08h00</td></tr>
+    <tr><td>Sécurité</td><td>Spring Security + JWT</td><td>—</td><td>Rôles : HR, ADMIN, MANAGER, EMPLOYEE</td></tr>
+    <tr><td>Build outil</td><td>Maven</td><td>—</td><td><code>mvn test</code>, <code>mvn spring-boot:run</code></td></tr>
+    <tr><td>Frontend framework</td><td>Angular</td><td>21.2</td><td>Standalone components, Signals</td></tr>
+    <tr><td>HTTP client</td><td>Angular HttpClient</td><td>—</td><td><code>withCredentials: true</code> (HttpOnly cookies)</td></tr>
+    <tr><td>Styles</td><td>CSS plain</td><td>—</td><td>Manrope font, tokens <code>--color-primary: #1C4E5C</code></td></tr>
+    <tr><td>Port backend</td><td>8081</td><td>—</td><td>Base URL : <code>http://localhost:8081</code></td></tr>
+  </table>
+
+  <!-- FILE STRUCTURE -->
+  <h1 class="doc-section">Structure des fichiers</h1>
+
+  <h2 class="task-title">Backend — Nouveaux fichiers</h2>
+  <div class="file-tree">
+<span class="dir">src/main/java/com/daf360/rh/</span>
+├── <span class="dir">domain/</span>
+│   ├── <span class="new">Candidate.java</span>          ← Entité candidat (profil, statut)
+│   ├── <span class="new">Interview.java</span>          ← Entretien (type, round, résultat)
+│   ├── <span class="new">JobOffer.java</span>           ← Offre d'embauche
+│   ├── <span class="new">EmployeeRequest.java</span>    ← Demande employé
+│   └── <span class="dir">enums/</span>
+│       ├── <span class="new">CandidateStatus.java</span>          NEW | IN_PROGRESS | OFFERED | HIRED | REJECTED
+│       ├── <span class="new">InterviewType.java</span>            RH | TECHNICAL | MANAGER | FINAL
+│       ├── <span class="new">InterviewOutcome.java</span>         PENDING | PASSED | FAILED
+│       ├── <span class="new">OfferStatus.java</span>              SENT | ACCEPTED | REJECTED
+│       ├── <span class="new">EmploymentLifecycleStage.java</span> TRIAL_PERIOD | PERMANENT | RESIGNED
+│       ├── <span class="new">RequestType.java</span>              DOCUMENT | CERTIFICATE | ATTESTATION | OTHER
+│       └── <span class="new">RequestStatus.java</span>            PENDING | IN_REVIEW | APPROVED | REJECTED
+├── <span class="dir">repository/</span>
+│   ├── <span class="new">CandidateRepository.java</span>
+│   ├── <span class="new">InterviewRepository.java</span>
+│   ├── <span class="new">JobOfferRepository.java</span>
+│   └── <span class="new">EmployeeRequestRepository.java</span>
+├── <span class="dir">service/</span>
+│   ├── <span class="new">CandidateService.java</span>
+│   ├── <span class="new">InterviewService.java</span>
+│   ├── <span class="new">OfferService.java</span>
+│   ├── <span class="new">EmployeeLifecycleService.java</span>
+│   ├── <span class="new">EmployeeRequestService.java</span>
+│   └── <span class="new">HrNotificationService.java</span>
+└── <span class="dir">controller/</span>
+    ├── <span class="new">RecruitmentController.java</span>
+    ├── <span class="new">EmployeeLifecycleController.java</span>
+    └── <span class="new">EmployeeRequestController.java</span>
+
+<span class="file">Modifiés :</span>
+├── <span class="file">domain/Employee.java</span>         + lifecycleStage, trialEndDate, resignedAt
+└── <span class="file">scheduler/HrScheduler.java</span>   + checkTrialPeriodExpiry()
+  </div>
+
+  <h2 class="task-title">Frontend (daf360-shell) — Nouveaux fichiers</h2>
+  <div class="file-tree">
+<span class="dir">src/app/</span>
+├── <span class="dir">core/rh/</span>
+│   ├── <span class="new">rh.model.ts</span>    ← Interfaces TypeScript pour tous les DTOs RH
+│   └── <span class="new">rh.service.ts</span>  ← HttpClient pour /api/hr/* (candidats, entretiens, offres, demandes)
+└── <span class="dir">pages/rh/</span>
+    ├── <span class="dir">recruitment/</span>
+    │   ├── <span class="new">candidate-list/</span>   ← Tableau des candidats avec statut
+    │   ├── <span class="new">candidate-form/</span>   ← Création d'un nouveau candidat
+    │   └── <span class="new">candidate-detail/</span> ← Fiche avec timeline entretiens + offre
+    ├── <span class="dir">lifecycle/</span>
+    │   └── <span class="new">employee-lifecycle/</span> ← Statut employé + actions RH
+    └── <span class="dir">requests/</span>
+        ├── <span class="new">request-list/</span>   ← Vue employé (mes demandes) et RH (toutes)
+        └── <span class="new">request-form/</span>   ← Formulaire nouvelle demande
+  </div>
+
+  <!-- ENDPOINTS -->
+  <h1 class="doc-section">Endpoints REST implémentés</h1>
+
+  <h2 class="task-title"><span class="day-badge">Module 1</span> Recrutement</h2>
+  <table>
+    <tr><th>Méthode</th><th>URL</th><th>Rôle</th><th>Description</th></tr>
+    <tr>
+      <td><span class="method get">GET</span></td>
+      <td><code>/api/hr/recruitment/candidates</code></td>
+      <td>HR, ADMIN, MANAGER</td>
+      <td>Liste complète des candidats</td>
+    </tr>
+    <tr>
+      <td><span class="method post">POST</span></td>
+      <td><code>/api/hr/recruitment/candidates</code></td>
+      <td>HR, ADMIN</td>
+      <td>Créer un nouveau profil candidat</td>
+    </tr>
+    <tr>
+      <td><span class="method get">GET</span></td>
+      <td><code>/api/hr/recruitment/candidates/{id}</code></td>
+      <td>HR, ADMIN, MANAGER</td>
+      <td>Détail candidat avec entretiens et offre</td>
+    </tr>
+    <tr>
+      <td><span class="method post">POST</span></td>
+      <td><code>/api/hr/recruitment/interviews</code></td>
+      <td>HR, ADMIN</td>
+      <td>Planifier un entretien (round auto-incrémenté)</td>
+    </tr>
+    <tr>
+      <td><span class="method put">PUT</span></td>
+      <td><code>/api/hr/recruitment/interviews/{id}/outcome</code></td>
+      <td>HR, ADMIN, MANAGER</td>
+      <td>Saisir le résultat (PASSED / FAILED) + feedback</td>
+    </tr>
+    <tr>
+      <td><span class="method post">POST</span></td>
+      <td><code>/api/hr/recruitment/offers</code></td>
+      <td>HR, ADMIN</td>
+      <td>Envoyer une offre d'embauche</td>
+    </tr>
+    <tr>
+      <td><span class="method put">PUT</span></td>
+      <td><code>/api/hr/recruitment/offers/{id}/accept</code></td>
+      <td>HR, ADMIN</td>
+      <td>Confirmer l'acceptation → notification email RH</td>
+    </tr>
+    <tr>
+      <td><span class="method put">PUT</span></td>
+      <td><code>/api/hr/recruitment/offers/{id}/reject</code></td>
+      <td>HR, ADMIN</td>
+      <td>Enregistrer le refus avec motif</td>
+    </tr>
+  </table>
+
+  <h2 class="task-title"><span class="day-badge">Module 2</span> Cycle de vie</h2>
+  <table>
+    <tr><th>Méthode</th><th>URL</th><th>Rôle</th><th>Description</th></tr>
+    <tr>
+      <td><span class="method put">PUT</span></td>
+      <td><code>/api/hr/employes/{id}/lifecycle/promote</code></td>
+      <td>HR, ADMIN</td>
+      <td>Passage en statut Titulaire (depuis Période d'essai)</td>
+    </tr>
+    <tr>
+      <td><span class="method put">PUT</span></td>
+      <td><code>/api/hr/employes/{id}/lifecycle/resign</code></td>
+      <td>HR, ADMIN</td>
+      <td>Enregistrement démission + désactivation compte</td>
+    </tr>
+  </table>
+
+  <h2 class="task-title"><span class="day-badge">Module 3</span> Demandes</h2>
+  <table>
+    <tr><th>Méthode</th><th>URL</th><th>Rôle</th><th>Description</th></tr>
+    <tr>
+      <td><span class="method get">GET</span></td>
+      <td><code>/api/hr/requests</code></td>
+      <td>HR, ADMIN</td>
+      <td>Toutes les demandes (vue RH)</td>
+    </tr>
+    <tr>
+      <td><span class="method get">GET</span></td>
+      <td><code>/api/hr/requests/my?employeeId={id}</code></td>
+      <td>Authentifié</td>
+      <td>Mes demandes (vue employé)</td>
+    </tr>
+    <tr>
+      <td><span class="method post">POST</span></td>
+      <td><code>/api/hr/requests?employeeId={id}</code></td>
+      <td>Authentifié</td>
+      <td>Soumettre une nouvelle demande</td>
+    </tr>
+    <tr>
+      <td><span class="method put">PUT</span></td>
+      <td><code>/api/hr/requests/{id}/process</code></td>
+      <td>HR, ADMIN</td>
+      <td>Approuver ou refuser avec notes RH</td>
+    </tr>
+  </table>
+
+  <!-- RISKS -->
+  <h1 class="doc-section">Risques & Mitigations</h1>
+
+  <table>
+    <tr><th>Risque</th><th>Probabilité</th><th>Impact</th><th>Mitigation</th></tr>
+    <tr>
+      <td>Conflit de colonnes JPA sur <code>Employee</code> (ddl-auto: update)</td>
+      <td><span class="risk-low">Faible</span></td>
+      <td><span class="risk-medium">Moyen</span></td>
+      <td>Vérifier le log de démarrage — colonnes ajoutées silencieusement via ALTER TABLE</td>
+    </tr>
+    <tr>
+      <td>Email SMTP Office365 bloqué en développement</td>
+      <td><span class="risk-medium">Moyenne</span></td>
+      <td><span class="risk-low">Faible</span></td>
+      <td><code>HrNotificationService</code> attrape les exceptions — l'app démarre même si le mail échoue</td>
+    </tr>
+    <tr>
+      <td>CHECK CONSTRAINT sur la table <code>RolePermissions</code></td>
+      <td><span class="risk-medium">Moyenne</span></td>
+      <td><span class="risk-medium">Moyen</span></td>
+      <td>Prévoir un script SQL pour ajouter les nouvelles permissions avant le déploiement</td>
+    </tr>
+    <tr>
+      <td>Build Angular : imports manquants sur nouveaux composants</td>
+      <td><span class="risk-low">Faible</span></td>
+      <td><span class="risk-low">Faible</span></td>
+      <td>Lancer <code>npx ng build</code> après chaque Task frontend — corriger immédiatement</td>
+    </tr>
+    <tr>
+      <td>Débordement sur J14–J15</td>
+      <td><span class="risk-medium">Moyenne</span></td>
+      <td><span class="risk-medium">Moyen</span></td>
+      <td>Module 3 (Demandes) est le premier candidat au report en V2 si le sprint prend du retard</td>
+    </tr>
+  </table>
+
+  <!-- HYPOTHESES -->
+  <h1 class="doc-section">Hypothèses</h1>
+
+  <ul style="margin-left: 24px; line-height: 2;">
+    <li>2 développeurs disponibles à temps plein sur les 15 jours</li>
+    <li>Base de données SQL Server accessible en local (port 1433, base <code>DAF360_HR</code>)</li>
+    <li>JWT et cookies HttpOnly déjà fonctionnels (authentification Azure AD existante)</li>
+    <li>Email SMTP Office365 configuré dans <code>application-local.yml</code> (ou Mailtrap pour les tests)</li>
+    <li>Tables créées automatiquement par JPA (<code>ddl-auto: update</code>) — pas de Flyway nécessaire</li>
+    <li>Pas d'upload de fichiers dans ce sprint (reporté en V2)</li>
+    <li>Design cohérent avec l'existant DAF360 — pas de maquettes Figma requises</li>
+  </ul>
+
+  <!-- OUT OF SCOPE -->
+  <h1 class="doc-section">Hors périmètre — V2</h1>
+
+  <div class="warning-box">
+    Les fonctionnalités suivantes ne font <strong>pas</strong> partie de ce sprint et seront planifiées en V2 :
+  </div>
+
+  <ul style="margin-left: 24px; line-height: 2; margin-top: 12px;">
+    <li>Upload de fichiers (CV candidat, pièces jointes aux demandes)</li>
+    <li>Signature électronique de contrat</li>
+    <li>Onboarding checklist post-embauche</li>
+    <li>Entretien annuel / évaluation de performance</li>
+    <li>Tableau de bord KPI recrutement (taux de conversion, délai moyen…)</li>
+    <li>Gestion des congés et absences (déjà présent dans le système existant via <code>LeaveRequest</code>)</li>
+    <li>Tests E2E automatisés (Cypress / Playwright)</li>
+    <li>Application mobile RH</li>
+  </ul>
+
+  <div style="margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; color: var(--text-muted); font-size: 11px;">
+    <span>DAF360 — Plan d'implémentation RH</span>
+    <span>Généré le 25 mai 2026 · Confidentiel</span>
+  </div>
+
+</div>
+
+</body>
+</html>

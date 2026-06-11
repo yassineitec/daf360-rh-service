@@ -18,7 +18,7 @@ public class AuditController {
     private final AuditLogRepository auditLogRepository;
 
     @GetMapping("/logs")
-    @PreAuthorize("hasAnyRole('ADMIN', 'HR')")
+    @PreAuthorize("hasAnyAuthority('HR_ADMIN_ROLES', 'HR_CREATE_PROFILE', 'HR_UPDATE_PROFILE')")
     public Page<AuditLog> logs(Pageable pageable) {
         return auditLogRepository.findAll(pageable);
     }

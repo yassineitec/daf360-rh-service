@@ -22,19 +22,19 @@ public class EmployeeController {
     private final EmployeeService employeeService;
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('HR', 'MANAGER', 'ADMIN')")
+    @PreAuthorize("hasAnyAuthority('GET_USERS', 'HR_CREATE_PROFILE', 'HR_UPDATE_PROFILE', 'HR_ADMIN_ROLES')")
     public Page<EmployeeResponseDto> list(@PageableDefault(size = 20) Pageable pageable) {
         return employeeService.findAll(pageable);
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('HR', 'MANAGER', 'EMPLOYEE', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public EmployeeResponseDto get(@PathVariable Long id) {
         return employeeService.findById(id);
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('HR', 'ADMIN')")
+    @PreAuthorize("hasAnyAuthority('HR_CREATE_PROFILE', 'HR_ADMIN_ROLES')")
     public ResponseEntity<EmployeeResponseDto> create(
             @Valid @RequestBody EmployeeRequestDto dto,
             @AuthenticationPrincipal String actorId) {
@@ -43,7 +43,7 @@ public class EmployeeController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('HR', 'ADMIN')")
+    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE', 'HR_ADMIN_ROLES')")
     public EmployeeResponseDto update(
             @PathVariable Long id,
             @Valid @RequestBody EmployeeRequestDto dto,
@@ -52,7 +52,7 @@ public class EmployeeController {
     }
 
     @DeleteMapping("/{id}/disable")
-    @PreAuthorize("hasAnyRole('HR', 'ADMIN')")
+    @PreAuthorize("hasAnyAuthority('HR_ARCHIVE_PROFILE', 'HR_ADMIN_ROLES')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void disable(@PathVariable Long id, @AuthenticationPrincipal String actorId) {
         employeeService.disable(id, actorId);

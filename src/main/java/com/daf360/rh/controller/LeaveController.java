@@ -24,19 +24,19 @@ public class LeaveController {
     private final LeaveService leaveService;
 
     @GetMapping("/employee/{employeeId}")
-    @PreAuthorize("hasAnyRole('HR', 'MANAGER', 'ADMIN')")
+    @PreAuthorize("hasAnyAuthority('GET_LEAVES', 'GET_GLOBAL_LEAVES', 'RESPONSE_LEAVE', 'HR_UPDATE_PROFILE')")
     public List<LeaveResponseDto> byEmployee(@PathVariable Long employeeId) {
         return leaveService.findByEmployee(employeeId);
     }
 
     @GetMapping("/pending")
-    @PreAuthorize("hasAnyRole('HR', 'MANAGER', 'ADMIN')")
+    @PreAuthorize("hasAnyAuthority('GET_GLOBAL_LEAVES', 'RESPONSE_LEAVE', 'HR_UPDATE_PROFILE')")
     public Page<LeaveResponseDto> pending(Pageable pageable) {
         return leaveService.findPending(pageable);
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('HR', 'EMPLOYEE', 'MANAGER', 'ADMIN')")
+    @PreAuthorize("hasAuthority('ADD_LEAVE')")
     public ResponseEntity<LeaveResponseDto> submit(
             @Valid @RequestBody LeaveRequestDto dto,
             @AuthenticationPrincipal String actorId) {
@@ -45,7 +45,7 @@ public class LeaveController {
     }
 
     @PutMapping("/{id}/approve-manager")
-    @PreAuthorize("hasAnyRole('MANAGER', 'ADMIN')")
+    @PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
     public LeaveResponseDto approveManager(
             @PathVariable Long id,
             @RequestParam Long managerId,
@@ -54,7 +54,7 @@ public class LeaveController {
     }
 
     @PutMapping("/{id}/approve-hr")
-    @PreAuthorize("hasAnyRole('HR', 'ADMIN')")
+    @PreAuthorize("hasAnyAuthority('RESPONSE_LEAVE', 'SETTLE_LEAVES')")
     public LeaveResponseDto approveHr(
             @PathVariable Long id,
             @RequestParam Long hrUserId,
@@ -63,7 +63,7 @@ public class LeaveController {
     }
 
     @PutMapping("/{id}/reject")
-    @PreAuthorize("hasAnyRole('HR', 'MANAGER', 'ADMIN')")
+    @PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
     public LeaveResponseDto reject(
             @PathVariable Long id,
             @RequestBody Map<String, String> body,

@@ -22,13 +22,13 @@ public class DocumentController {
     private final DocumentService documentService;
 
     @GetMapping("/employee/{employeeId}")
-    @PreAuthorize("hasAnyRole('HR', 'EMPLOYEE', 'ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public List<DocumentResponseDto> list(@PathVariable Long employeeId) {
         return documentService.findByEmployee(employeeId);
     }
 
     @PostMapping("/upload")
-    @PreAuthorize("hasAnyRole('HR', 'ADMIN')")
+    @PreAuthorize("hasAnyAuthority('HR_CREATE_PROFILE', 'HR_UPDATE_PROFILE', 'HR_ADMIN_ROLES')")
     public ResponseEntity<DocumentResponseDto> upload(
             @RequestParam Long employeeId,
             @RequestParam DocumentType documentType,
