@@ -1,5 +1,10 @@
 HELP.md
 target/
+
+### Environment / secrets ###
+.env
+src/main/resources/application-local.yml
+uploads/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/

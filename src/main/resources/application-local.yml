@@ -1,39 +1,37 @@
 # ── DAF360 HR Service — local developer profile ───────────────────────────────
-# Activates with: -Dspring-boot.run.profiles=local  OR  SPRING_PROFILES_ACTIVE=local
-# DO NOT COMMIT this file — contains real credentials.
+# Activates with: SPRING_PROFILES_ACTIVE=local  (set in .env)
+# Values are read from .env via DotenvEnvironmentPostProcessor.
+# DO NOT COMMIT this file — it may contain developer-specific paths.
 server:
-  port: 8082
+  port: ${PORT:8082}
 
 spring:
   datasource:
-    url: "jdbc:sqlserver://localhost:1433;databaseName=DAF360_HR;encrypt=false;trustServerCertificate=true"
-    username: sa
-    password: "Timesheetdev2026!**"
+    url: "${DB_URL:jdbc:sqlserver://localhost:1433;databaseName=DAF360_HR;encrypt=false;trustServerCertificate=true}"
+    username: ${DB_USER:sa}
+    password: "${DB_PASS:}"
 
   jpa:
     show-sql: true
     hibernate:
-      # Override global ddl-auto:update — schema managed manually via SSMS scripts in local dev
+      # Schema managed manually via SSMS scripts in local dev
       ddl-auto: none
 
   rabbitmq:
-    host: localhost
-    port: 5672
-    username: guest
-    password: guest
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASS:guest}
 
-  # Local SMTP stub (e.g. MailHog or just ignore failures)
   mail:
-    host: localhost
-    port: 1025
-    username: ""
-    password: ""
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: "${MAIL_USERNAME:}"
+    password: "${MAIL_PASSWORD:}"
 
 app:
-  jwt-secret: daf360-change-me-in-production-32chars
-  # RSA public key — same file the portal uses to sign tokens.
-  # When this is set, RS256 (daf360_access) tokens are validated correctly.
-  jwt-public-key-path: C:\\Users\\ITEC2\\OneDrive\\Documents\\projects\\daf360-portal\\portal\\keys\\public.pem
+  jwt-secret: ${JWT_SECRET:daf360-change-me-in-production-32chars}
+  jwt-public-key-path: ${JWT_PUBLIC_KEY_PATH:}
 
 logging:
   level:
