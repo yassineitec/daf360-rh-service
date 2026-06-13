@@ -13,6 +13,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import com.daf360.rh.dto.profile.FilterOptionsDto;
 import java.util.Map;
 import org.springframework.data.domain.Page;
 import org.springframework.http.MediaType;
@@ -138,29 +139,40 @@ public class EmployeeProfileController {
      * Paginated list of ALL active users (Users LEFT JOIN employee_profiles).
      * Administrateur (showAll=true) sees all entities; other HR roles filter by their paysId.
      */
+    /**
+     * GET /api/hr/profiles/employees
+     * Paginated employee list with optional filters.
+     * Params: page, size, sort, search, pays (Long), status, department, grade
+     */
     @GetMapping("/employees")
     // @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','HR_CREATE_PROFILE','HR_ADMIN_ROLES','ADMIN_ROLES')")
     public ResponseEntity<Page<EmployeeListItemDto>> listAllEmployees(
             @RequestParam(required = false) Long   pays,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String search,
-            @PageableDefault(size = 25, sort = "fullName") Pageable pageable,
+            @RequestParam(required = false) String department,
+            @RequestParam(required = false) String grade,
+            @PageableDefault(size = 12, sort = "fullName") Pageable pageable,
             Authentication auth) {
 
         ProfileFilterDto filter = new ProfileFilterDto();
         filter.setSearch(search);
         filter.setStatus(status);
-
-        // If the caller does NOT have showAll rights, restrict to their own paysId
-        boolean isShowAll = auth != null && auth.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ADMIN_ROLES")
-                            || a.getAuthority().equals("HR_ADMIN_ROLES"));
-        if (!isShowAll && pays == null && auth != null) {
-            // Non-admin: filter will be set by explicit pays param from frontend
-        }
         filter.setPaysId(pays);
+        filter.setDepartment(department);
+        filter.setGrade(grade);
 
         return ResponseEntity.ok(profileService.listAllEmployees(filter, pageable));
+    }
+
+    /**
+     * GET /api/hr/profiles/filter-options
+     * Returns distinct filter values for the profile list dropdowns.
+     */
+    @GetMapping("/filter-options")
+    // @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<FilterOptionsDto> getFilterOptions() {
+        return ResponseEntity.ok(profileService.getFilterOptions());
     }
 
     /**

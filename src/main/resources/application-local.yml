@@ -3,7 +3,7 @@
 # Values are read from .env via DotenvEnvironmentPostProcessor.
 # DO NOT COMMIT this file — it may contain developer-specific paths.
 server:
-  port: ${PORT:8082}
+  port: ${PORT:8888}
 
 spring:
   datasource:

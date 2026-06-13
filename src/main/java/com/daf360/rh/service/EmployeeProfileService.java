@@ -212,7 +212,10 @@ public class EmployeeProfileService {
         transitionLifecycle(id, dto, auth);
     }
 
-    // ── Employee list (Users LEFT JOIN employee_profiles + dimension tables) ──
+    // ── Employee list (Users LEFT JOIN employee_profiles) ────────────────────
+    // NOTE: V23 dimension tables (departments, grades, disciplines, nog_levels)
+    // are not joined here because they may not exist yet in the target DB.
+    // department / grade labels will be null until those tables are migrated.
 
     @Transactional(readOnly = true)
     public org.springframework.data.domain.Page<EmployeeListItemDto> listAllEmployees(
@@ -224,34 +227,37 @@ public class EmployeeProfileService {
         Long   paysId     = filter.getPaysId();
         String status     = (filter.getStatus() != null && !filter.getStatus().isBlank())
                             ? filter.getStatus() : null;
+        // TODO: add department / grade label filters once V23 tables are migrated
 
-        int offset = (int) pageable.getOffset();
-        int limit  = pageable.getPageSize();
+        int offset   = (int) pageable.getOffset();
+        int pageSize = pageable.getPageSize();
+
+        String baseFrom  =
+            "FROM [dbo].[Users] u " +
+            "LEFT JOIN [dbo].[pays] p ON p.id = u.pays_id " +
+            "LEFT JOIN [dbo].[Roles] r ON r.id = u.role_id AND (r.deleted = 0 OR r.deleted IS NULL) " +
+            "LEFT JOIN [dbo].[employee_profiles] ep ON ep.user_id = u.id AND ep.deleted = 0 ";
+
+        String baseWhere =
+            "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
+            (searchLike != null ? "AND (u.fullName LIKE ? OR u.username LIKE ?) " : "") +
+            (paysId     != null ? "AND u.pays_id = ? " : "") +
+            (status     != null ? "AND ep.lifecycle_status = ? " : "");
+
+        List<Object> args = new ArrayList<>();
+        if (searchLike != null) { args.add(searchLike); args.add(searchLike); }
+        if (paysId     != null) { args.add(paysId); }
+        if (status     != null) { args.add(status); }
 
         String listSql =
             "SELECT ep.id AS profile_id, u.id AS user_id, u.fullName AS full_name, " +
             "u.username AS email, u.employee_id AS employee_id, u.pays_id AS pays_id, " +
             "p.french_label AS pays_label, u.role_id AS role_id, r.frenchName AS role_name, " +
             "ep.lifecycle_status AS lifecycle_status, ep.contract_type AS contract_type, " +
-            "ep.hire_date AS hire_date, ep.photo_url AS photo_url, ep.gender AS gender, " +
-            // Dimension FK ids + resolved labels
-            "ep.grade_id,      ISNULL(g.label_fr,   '') AS grade, " +
-            "ep.discipline_id, ISNULL(d.label_fr,   '') AS discipline, " +
-            "ep.nog_level_id,  ISNULL(nl.label_fr,  '') AS nog_level, " +
-            "ep.department_id, ISNULL(dept.label_fr,'') AS department " +
-            "FROM [dbo].[Users] u " +
-            "LEFT JOIN [dbo].[pays] p ON p.id = u.pays_id " +
-            "LEFT JOIN [dbo].[Roles] r ON r.id = u.role_id AND (r.deleted = 0 OR r.deleted IS NULL) " +
-            "LEFT JOIN [dbo].[employee_profiles] ep ON ep.user_id = u.id " +
-            "LEFT JOIN [dbo].[grades]      g    ON g.id    = ep.grade_id " +
-            "LEFT JOIN [dbo].[disciplines] d    ON d.id    = ep.discipline_id " +
-            "LEFT JOIN [dbo].[nog_levels]  nl   ON nl.id   = ep.nog_level_id " +
-            "LEFT JOIN [dbo].[departments] dept ON dept.id = ep.department_id " +
-            "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
-            (search  != null ? "AND (u.fullName LIKE ? OR u.username LIKE ?) " : "") +
-            (paysId  != null ? "AND u.pays_id = ? " : "") +
-            (status  != null ? "AND ep.lifecycle_status = ? " : "") +
-            "ORDER BY u.fullName OFFSET ? ROWS FETCH NEXT ? ROWS ONLY";
+            "ep.hire_date AS hire_date, ep.photo_url AS photo_url, ep.gender AS gender " +
+            baseFrom + baseWhere +
+            "ORDER BY u.fullName " +
+            "OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";
 
         List<EmployeeListItemDto> rows = jdbcTemplate.query(
             listSql,
@@ -269,30 +275,38 @@ public class EmployeeProfileService {
                     .roleName(rs.getString("role_name"))
                     .lifecycleStatus(rs.getString("lifecycle_status"))
                     .contractType(rs.getString("contract_type"))
-                    .department(rs.getString("department"))
-                    .grade(rs.getString("grade"))
-                    .discipline(rs.getString("discipline"))
-                    .nogLevel(rs.getString("nog_level"))
                     .hireDate(sqlDate != null ? sqlDate.toLocalDate() : null)
                     .photoUrl(rs.getString("photo_url"))
                     .gender(rs.getString("gender"))
                     .hasProfile(rs.getObject("profile_id") != null)
                     .build();
             },
-            buildArgs(searchLike, paysId, status, offset, limit));
+            args.toArray());
 
         Integer count = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM [dbo].[Users] u " +
-            "LEFT JOIN [dbo].[employee_profiles] ep ON ep.user_id = u.id " +
-            "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
-            (search != null ? "AND (u.fullName LIKE ? OR u.username LIKE ?) " : "") +
-            (paysId != null ? "AND u.pays_id = ? " : "") +
-            (status != null ? "AND ep.lifecycle_status = ? " : ""),
+            "SELECT COUNT(*) " + baseFrom + baseWhere,
             Integer.class,
-            buildArgs(searchLike, paysId, status, null, null));
+            args.toArray());
 
         long total = count != null ? count : 0;
         return new org.springframework.data.domain.PageImpl<>(rows, pageable, total);
+    }
+
+    // ── Filter options for profile list dropdowns ─────────────────────────────
+
+    @Transactional(readOnly = true)
+    public com.daf360.rh.dto.profile.FilterOptionsDto getFilterOptions() {
+        List<String> paysList = jdbcTemplate.queryForList(
+            "SELECT DISTINCT p.french_label " +
+            "FROM [dbo].[pays] p " +
+            "JOIN [dbo].[Users] u ON u.pays_id = p.id " +
+            "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
+            "  AND p.french_label IS NOT NULL " +
+            "ORDER BY p.french_label",
+            String.class);
+        // TODO: query departments and grades once V23 dimension tables are migrated
+        return new com.daf360.rh.dto.profile.FilterOptionsDto(
+            List.of(), List.of(), paysList);
     }
 
     // ── Update Users table fields ─────────────────────────────────────────────
