@@ -49,4 +49,12 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long
     List<LeaveRequest> findOverlapping(@Param("userId") Long userId,
                                         @Param("from")   OffsetDateTime from,
                                         @Param("to")     OffsetDateTime to);
+
+    @Query("SELECT COUNT(lr) FROM LeaveRequest lr " +
+           "WHERE lr.etatDemande = :etat " +
+           "  AND YEAR(lr.startDate) = :year " +
+           "  AND MONTH(lr.startDate) = :month")
+    long countByEtatDemandeAndYearMonth(@Param("etat")  DemandeEtat etat,
+                                         @Param("year")  int year,
+                                         @Param("month") int month);
 }

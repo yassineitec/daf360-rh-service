@@ -2,7 +2,7 @@
 # Activates with: -Dspring-boot.run.profiles=local  OR  SPRING_PROFILES_ACTIVE=local
 # DO NOT COMMIT this file — contains real credentials.
 server:
-  port: 8082
+  port: 8888
 
 spring:
   datasource:

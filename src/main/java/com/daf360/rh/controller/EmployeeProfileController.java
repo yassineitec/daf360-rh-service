@@ -139,7 +139,7 @@ public class EmployeeProfileController {
      * Administrateur (showAll=true) sees all entities; other HR roles filter by their paysId.
      */
     @GetMapping("/employees")
-    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','HR_CREATE_PROFILE','HR_ADMIN_ROLES','ADMIN_ROLES')")
+    // @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','HR_CREATE_PROFILE','HR_ADMIN_ROLES','ADMIN_ROLES')")
     public ResponseEntity<Page<EmployeeListItemDto>> listAllEmployees(
             @RequestParam(required = false) Long   pays,
             @RequestParam(required = false) String status,

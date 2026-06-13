@@ -10,6 +10,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -78,4 +80,27 @@ public interface EmployeeProfileRepository
     long countByRegimeTemplateIdAndDeletedFalse(Long regimeTemplateId);
 
     long countByPaysIdAndRegimeTemplateIdNotNullAndDeletedFalse(Long paysId);
+
+    // ── Dashboard queries ─────────────────────────────────────────────────────
+
+    long countByLifecycleStatus(LifecycleStatus status);
+
+    long countByOnboardingCompletedTrue();
+
+    @Query("SELECT COUNT(e) FROM EmployeeProfile e WHERE e.onboardingCompleted = false OR e.onboardingCompleted IS NULL")
+    long countIncompleted();
+
+    @Query("SELECT e.gender, COUNT(e) FROM EmployeeProfile e WHERE e.lifecycleStatus = :status GROUP BY e.gender")
+    List<Object[]> countByGenderAndLifecycleStatus(@Param("status") LifecycleStatus status);
+
+    @Query("""
+            SELECT COUNT(e) FROM EmployeeProfile e
+            WHERE e.contractEndDate IS NOT NULL
+              AND e.contractEndDate BETWEEN :today AND :limit
+              AND e.lifecycleStatus = :status
+            """)
+    long countContractsEndingSoon(
+            @Param("today")  LocalDate today,
+            @Param("limit")  LocalDate limit,
+            @Param("status") LifecycleStatus status);
 }

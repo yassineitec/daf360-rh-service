@@ -23,6 +23,8 @@ public interface CandidateRepository extends JpaRepository<Candidate, Long> {
 
     List<Candidate> findByStatusIn(Collection<CandidateStatus> statuses);
 
+    long countByStatusIn(Collection<CandidateStatus> statuses);
+
     @Query("""
         SELECT c FROM Candidate c
         WHERE (:status IS NULL OR c.status = :status)

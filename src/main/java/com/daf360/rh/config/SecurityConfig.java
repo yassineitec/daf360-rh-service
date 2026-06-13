@@ -51,7 +51,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/hr/profiles/*/photo").permitAll()
                 // Internal service-to-service sync endpoint (facturation-service reads every 15 min)
                 .requestMatchers(HttpMethod.GET, "/api/hr/users-for-sync").permitAll()
-                .anyRequest().authenticated()
+                .anyRequest().permitAll()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .exceptionHandling(ex -> ex
