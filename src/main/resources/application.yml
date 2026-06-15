@@ -48,7 +48,7 @@ spring:
       fail-on-unknown-properties: false
 
 server:
-  port: ${PORT:8081}
+  port: ${PORT:8888}
 
 management:
   endpoints:

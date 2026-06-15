@@ -11,7 +11,7 @@ public class EmployeeProfileResponseDto {
 
     private Long   id;
     private Long   userId;
-    private Long   paysId;
+    private String   pays;
     private LifecycleStatus lifecycleStatus;
 
     // ── Identité depuis Users ─────────────────────────────────────────────────

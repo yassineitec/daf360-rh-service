@@ -11,11 +11,11 @@ import java.util.List;
 /**
  * REST controller for configurable reference lists.
  *
- * <p>GET /types and GET /{listTypeCode} carry NO @PreAuthorize — they are used
+ * <p>GET /types and GET /{listTypeCode} carry NO //@PreAuthorize — they are used
  * by all form screens and need only an authenticated JWT (enforced globally by
  * SecurityConfig).
  *
- * <p>Write operations delegate their own @PreAuthorize("hasAuthority('ADMIN_LISTS')")
+ * <p>Write operations delegate their own //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
  * to the service layer so the restriction is enforced regardless of call origin.
  */
 @RestController

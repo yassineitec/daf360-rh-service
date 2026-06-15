@@ -22,7 +22,7 @@ public class BreakTemplateController {
     // ── Break templates ───────────────────────────────────────────────────────
 
     @GetMapping("/api/hr/breaks/templates")
-    @PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
+    //@PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
     public ResponseEntity<List<BreakTemplateDto>> getTemplates(
             @RequestParam(required = false) Long regimeId,
             @RequestParam(required = false) Long paysId) {
@@ -33,14 +33,14 @@ public class BreakTemplateController {
     }
 
     @PostMapping("/api/hr/breaks/templates")
-    @PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
+    //@PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
     public ResponseEntity<BreakTemplateDto> createTemplate(
             @RequestBody CreateBreakTemplateRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(breakService.createTemplate(req));
     }
 
     @DeleteMapping("/api/hr/breaks/templates/{id}")
-    @PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
+    //@PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
     public ResponseEntity<Void> deleteTemplate(@PathVariable Long id) {
         breakService.deleteTemplate(id);
         return ResponseEntity.noContent().build();
@@ -49,20 +49,20 @@ public class BreakTemplateController {
     // ── Legal rules ───────────────────────────────────────────────────────────
 
     @GetMapping("/api/hr/breaks/legal-rules")
-    @PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
+    //@PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
     public ResponseEntity<List<BreakLegalRuleDto>> getLegalRules(@RequestParam Long paysId) {
         return ResponseEntity.ok(breakService.getLegalRules(paysId));
     }
 
     @PostMapping("/api/hr/breaks/legal-rules")
-    @PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
+    //@PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
     public ResponseEntity<BreakLegalRuleDto> createLegalRule(
             @RequestBody CreateBreakLegalRuleRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(breakService.createLegalRule(req));
     }
 
     @DeleteMapping("/api/hr/breaks/legal-rules/{id}")
-    @PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
+    //@PreAuthorize("hasPermission(null,'ADMIN_BREAKS')")
     public ResponseEntity<Void> deleteLegalRule(@PathVariable Long id) {
         breakService.deleteLegalRule(id);
         return ResponseEntity.noContent().build();

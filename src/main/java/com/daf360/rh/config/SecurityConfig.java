@@ -62,7 +62,7 @@ public class SecurityConfig {
     }
 
     /**
-     * Wires HrPermissionEvaluator into @PreAuthorize("hasPermission(...)").
+     * Wires HrPermissionEvaluator into //@PreAuthorize("hasPermission(...)").
      * Must be ROLE_INFRASTRUCTURE to override Spring's default handler.
      */
     @Bean

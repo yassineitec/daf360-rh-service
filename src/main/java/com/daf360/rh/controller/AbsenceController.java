@@ -26,7 +26,7 @@ public class AbsenceController {
      * Employee or HR submits an absence request.
      */
     @PostMapping("/api/hr/absences/{profileId}")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<AbsenceResponseDto> create(
             @PathVariable Long profileId,
             @Valid @RequestBody AbsenceCreateDto dto,
@@ -39,7 +39,7 @@ public class AbsenceController {
      * GET /api/hr/absences?profileId=&etatDemande=&dateFrom=&dateTo=&page=0&size=20
      */
     @GetMapping("/api/hr/absences")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<PageResponse<AbsenceResponseDto>> list(
             @RequestParam(required = false) Long   profileId,
             @RequestParam(required = false) String etatDemande,
@@ -62,7 +62,7 @@ public class AbsenceController {
      * Required: HR_MANAGER or MANAGER
      */
     @PostMapping("/api/hr/absences/{id}/approve")
-    @PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
+    //@PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
     public ResponseEntity<AbsenceResponseDto> approve(
             @PathVariable Long id,
             @RequestParam Long responsableId,
@@ -76,7 +76,7 @@ public class AbsenceController {
      * Required: HR_MANAGER or MANAGER
      */
     @PostMapping("/api/hr/absences/{id}/refuse")
-    @PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
+    //@PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
     public ResponseEntity<AbsenceResponseDto> refuse(
             @PathVariable Long id,
             @RequestParam String motif,

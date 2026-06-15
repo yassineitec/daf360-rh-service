@@ -845,32 +845,32 @@ public class RecruitmentController {
 
     // --- Candidates ---
     @GetMapping("/candidates")
-    @PreAuthorize("hasAnyRole('HR','ADMIN','MANAGER')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN','MANAGER')")
     public List<CandidateResponseDto> listCandidates() {
         return candidateService.listAll();
     }
 
     @GetMapping("/candidates/{id}")
-    @PreAuthorize("hasAnyRole('HR','ADMIN','MANAGER')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN','MANAGER')")
     public CandidateResponseDto getCandidate(@PathVariable Long id) {
         return candidateService.getById(id);
     }
 
     @PostMapping("/candidates")
-    @PreAuthorize("hasAnyRole('HR','ADMIN')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN')")
     public ResponseEntity<CandidateResponseDto> createCandidate(@RequestBody CandidateRequestDto dto) {
         return ResponseEntity.ok(candidateService.createCandidate(dto));
     }
 
     // --- Interviews ---
     @PostMapping("/interviews")
-    @PreAuthorize("hasAnyRole('HR','ADMIN')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN')")
     public ResponseEntity<InterviewResponseDto> scheduleInterview(@RequestBody InterviewCreateDto dto) {
         return ResponseEntity.ok(interviewService.scheduleInterview(dto));
     }
 
     @PutMapping("/interviews/{id}/outcome")
-    @PreAuthorize("hasAnyRole('HR','ADMIN','MANAGER')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN','MANAGER')")
     public ResponseEntity<InterviewResponseDto> recordOutcome(
             @PathVariable Long id,
             @RequestBody OutcomeRequest req) {
@@ -879,19 +879,19 @@ public class RecruitmentController {
 
     // --- Offers ---
     @PostMapping("/offers")
-    @PreAuthorize("hasAnyRole('HR','ADMIN')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN')")
     public ResponseEntity<OfferResponseDto> sendOffer(@RequestBody OfferCreateDto dto) {
         return ResponseEntity.ok(offerService.sendOffer(dto));
     }
 
     @PutMapping("/offers/{id}/accept")
-    @PreAuthorize("hasAnyRole('HR','ADMIN')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN')")
     public ResponseEntity<OfferResponseDto> acceptOffer(@PathVariable Long id) {
         return ResponseEntity.ok(offerService.acceptOffer(id));
     }
 
     @PutMapping("/offers/{id}/reject")
-    @PreAuthorize("hasAnyRole('HR','ADMIN')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN')")
     public ResponseEntity<OfferResponseDto> rejectOffer(@PathVariable Long id, @RequestBody RejectRequest req) {
         return ResponseEntity.ok(offerService.rejectOffer(id, req.getReason()));
     }
@@ -1636,14 +1636,14 @@ public class EmployeeLifecycleController {
     private final EmployeeLifecycleService lifecycleService;
 
     @PutMapping("/{id}/lifecycle/promote")
-    @PreAuthorize("hasAnyRole('HR','ADMIN')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN')")
     public ResponseEntity<Void> promote(@PathVariable Long id) {
         lifecycleService.promoteToTitulaire(id);
         return ResponseEntity.ok().build();
     }
 
     @PutMapping("/{id}/lifecycle/resign")
-    @PreAuthorize("hasAnyRole('HR','ADMIN')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN')")
     public ResponseEntity<Void> resign(@PathVariable Long id) {
         lifecycleService.resign(id);
         return ResponseEntity.ok().build();
@@ -1973,19 +1973,19 @@ public class EmployeeRequestController {
     private final EmployeeRequestService requestService;
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('HR','ADMIN')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN')")
     public List<EmployeeRequestResponseDto> getAll() {
         return requestService.getAll();
     }
 
     @GetMapping("/my")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public List<EmployeeRequestResponseDto> getMine(@RequestParam Long employeeId) {
         return requestService.getByEmployee(employeeId);
     }
 
     @PostMapping
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<EmployeeRequestResponseDto> create(
             @RequestParam Long employeeId,
             @RequestBody EmployeeRequestCreateDto dto) {
@@ -1993,7 +1993,7 @@ public class EmployeeRequestController {
     }
 
     @PutMapping("/{id}/process")
-    @PreAuthorize("hasAnyRole('HR','ADMIN')")
+    //@PreAuthorize("hasAnyRole('HR','ADMIN')")
     public ResponseEntity<EmployeeRequestResponseDto> process(
             @PathVariable Long id,
             @RequestBody ProcessRequest req) {

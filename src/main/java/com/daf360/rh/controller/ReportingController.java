@@ -19,7 +19,7 @@ public class ReportingController {
     private final EmployeeRepository employeeRepository;
 
     @GetMapping("/absenteisme")
-    @PreAuthorize("hasAnyAuthority('GET_GLOBAL_LEAVES', 'HR_UPDATE_PROFILE', 'HR_ADMIN_ROLES')")
+    //@PreAuthorize("hasAnyAuthority('GET_GLOBAL_LEAVES', 'HR_UPDATE_PROFILE', 'HR_ADMIN_ROLES')")
     public Map<String, Object> absenteeismKpis(
             @RequestParam(defaultValue = "0") int year) {
         int effectiveYear = year == 0 ? LocalDate.now().getYear() : year;

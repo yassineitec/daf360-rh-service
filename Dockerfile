@@ -11,7 +11,7 @@ RUN ./mvnw package -DskipTests -B
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
-EXPOSE 8081
+EXPOSE 8888
 ENTRYPOINT ["java", \
   "-Djava.security.egd=file:/dev/./urandom", \
   "-jar", "app.jar"]

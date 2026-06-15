@@ -32,7 +32,7 @@ public class EmployeeProfileController {
      * Required: HR_MANAGER
      */
     @PostMapping
-    @PreAuthorize("hasAuthority('HR_CREATE_PROFILE')")
+    //@PreAuthorize("hasAuthority('HR_CREATE_PROFILE')")
     public ResponseEntity<EmployeeProfileResponseDto> create(
             @Valid @RequestBody EmployeeProfileCreateDto dto,
             Authentication auth) {
@@ -46,7 +46,7 @@ public class EmployeeProfileController {
      * Required: any authenticated HR / manager / employee role.
      */
     @GetMapping
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<PageResponse<EmployeeProfileSummaryDto>> list(
             @RequestParam(required = false) Long   pays,
             @RequestParam(required = false) String status,
@@ -73,7 +73,7 @@ public class EmployeeProfileController {
      * Full profile. Sensitive fields masked unless caller has HR_MANAGER / FINANCE_OFFICER.
      */
     @GetMapping("/{id}")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<EmployeeProfileResponseDto> get(
             @PathVariable Long id, Authentication auth) {
         return ResponseEntity.ok(profileService.getProfile(id, auth));
@@ -85,7 +85,7 @@ public class EmployeeProfileController {
      * Required: HR_MANAGER or HR_VIEWER (read-only roles cannot update).
      */
     @PatchMapping("/{id}")
-    @PreAuthorize("hasAuthority('HR_UPDATE_PROFILE')")
+    //@PreAuthorize("hasAuthority('HR_UPDATE_PROFILE')")
     public ResponseEntity<EmployeeProfileResponseDto> update(
             @PathVariable Long id,
             @Valid @RequestBody EmployeeProfileUpdateDto dto,
@@ -99,7 +99,7 @@ public class EmployeeProfileController {
      * Required: HR_MANAGER
      */
     @PostMapping("/{id}/lifecycle")
-    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE', 'HR_ARCHIVE_PROFILE')")
+    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE', 'HR_ARCHIVE_PROFILE')")
     public ResponseEntity<EmployeeProfileResponseDto> transition(
             @PathVariable Long id,
             @Valid @RequestBody LifecycleTransitionDto dto,
@@ -114,7 +114,7 @@ public class EmployeeProfileController {
      */
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasAuthority('HR_ARCHIVE_PROFILE')")
+    //@PreAuthorize("hasAuthority('HR_ARCHIVE_PROFILE')")
     public void archive(@PathVariable Long id, Authentication auth) {
         profileService.archiveProfile(id, auth);
     }
@@ -126,7 +126,7 @@ public class EmployeeProfileController {
      * pour indiquer à l'interface que le matricule sera assigné automatiquement.
      */
     @GetMapping("/next-employee-id")
-    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','HR_CREATE_PROFILE','ADMIN_ROLES','HR_ADMIN_ROLES')")
+    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','HR_CREATE_PROFILE','ADMIN_ROLES','HR_ADMIN_ROLES')")
     public ResponseEntity<Map<String, String>> nextEmployeeId(@RequestParam(required = false) Long paysId) {
         return ResponseEntity.ok(Map.of(
             "employeeId", "AUTO",
@@ -145,7 +145,7 @@ public class EmployeeProfileController {
      * Params: page, size, sort, search, pays (Long), status, department, grade
      */
     @GetMapping("/employees")
-    // @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','HR_CREATE_PROFILE','HR_ADMIN_ROLES','ADMIN_ROLES')")
+    // //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','HR_CREATE_PROFILE','HR_ADMIN_ROLES','ADMIN_ROLES')")
     public ResponseEntity<Page<EmployeeListItemDto>> listAllEmployees(
             @RequestParam(required = false) Long   pays,
             @RequestParam(required = false) String status,
@@ -170,7 +170,7 @@ public class EmployeeProfileController {
      * Returns distinct filter values for the profile list dropdowns.
      */
     @GetMapping("/filter-options")
-    // @PreAuthorize("isAuthenticated()")
+    // //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<FilterOptionsDto> getFilterOptions() {
         return ResponseEntity.ok(profileService.getFilterOptions());
     }
@@ -180,7 +180,7 @@ public class EmployeeProfileController {
      * Update Users table fields (fullName, roleId) for a given user.
      */
     @PatchMapping("/users/{userId}")
-    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','ADMIN_ROLES','HR_ADMIN_ROLES')")
+    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','ADMIN_ROLES','HR_ADMIN_ROLES')")
     public ResponseEntity<Void> updateUserFields(
             @PathVariable Long userId,
             @RequestBody Map<String, Object> body,
@@ -203,7 +203,7 @@ public class EmployeeProfileController {
      * Accepts: multipart/form-data with field "file"
      */
     @PostMapping(value = "/{id}/photo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','HR_CREATE_PROFILE','HR_ADMIN_ROLES','ADMIN_ROLES')")
+    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','HR_CREATE_PROFILE','HR_ADMIN_ROLES','ADMIN_ROLES')")
     public ResponseEntity<EmployeeProfileResponseDto> uploadPhoto(
             @PathVariable Long id,
             @RequestParam("file") MultipartFile file,

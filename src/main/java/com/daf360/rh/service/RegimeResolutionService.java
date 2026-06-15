@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Optional;
 
 @Slf4j
@@ -111,6 +113,12 @@ public class RegimeResolutionService {
         }
     }
 
+    private static final DateTimeFormatter HHmm = DateTimeFormatter.ofPattern("HH:mm");
+
+    private static final List<String> DAYS_5 = List.of("LUNDI","MARDI","MERCREDI","JEUDI","VENDREDI");
+    private static final List<String> DAYS_6 = List.of("LUNDI","MARDI","MERCREDI","JEUDI","VENDREDI","SAMEDI");
+    private static final List<String> DAYS_7 = List.of("LUNDI","MARDI","MERCREDI","JEUDI","VENDREDI","SAMEDI","DIMANCHE");
+
     private ResolvedRegimeDto mapToDto(WorkingTimeRegime r, String level,
                                        LocalDate from, LocalDate to) {
         ResolvedRegimeDto dto = new ResolvedRegimeDto();
@@ -129,6 +137,25 @@ public class RegimeResolutionService {
         dto.setAssignmentLevel(level);
         dto.setEffectiveFrom(from);
         dto.setEffectiveTo(to);
+
+        // pointage-friendly aliases
+        dto.setRegimeName(r.getLabelFr());
+        dto.setHeureDebut(r.getStartTime() != null ? r.getStartTime().format(HHmm) : "08:00");
+        dto.setHeureFin(r.getEndTime()   != null ? r.getEndTime().format(HHmm)   : "17:00");
+        dto.setPauseDejeuner(r.getBreakDurationMin() != null ? r.getBreakDurationMin() : 60);
+        dto.setJoursOuvrables(deriveWorkingDays(r.getDaysPerWeek()));
+        if (r.getHoursPerWeek() != null && r.getDaysPerWeek() != null && r.getDaysPerWeek() > 0) {
+            dto.setHeuresJour(r.getHoursPerWeek().doubleValue() / r.getDaysPerWeek());
+        } else {
+            dto.setHeuresJour(8.0);
+        }
+
         return dto;
+    }
+
+    private static List<String> deriveWorkingDays(Integer daysPerWeek) {
+        if (daysPerWeek == null || daysPerWeek <= 5) return DAYS_5;
+        if (daysPerWeek == 6) return DAYS_6;
+        return DAYS_7;
     }
 }

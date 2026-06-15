@@ -9,6 +9,7 @@ import java.time.OffsetDateTime;
 @Data
 public class CandidateListItem {
 
+    // --- legacy fields (kept for backward compat) ---
     private Long id;
     private String firstName;
     private String lastName;
@@ -19,4 +20,13 @@ public class CandidateListItem {
     private LocalDate expectedStartDate;
     private CandidateStatus status;
     private OffsetDateTime createdAt;
+
+    // --- pipeline page fields ---
+    private String fullName;
+    private String initials;
+    private int colorIndex;
+    private String poste;
+    private String stage;
+    private Integer fitScore;
+    private String applicationDate;
 }

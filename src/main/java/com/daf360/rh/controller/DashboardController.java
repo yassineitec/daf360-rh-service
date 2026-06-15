@@ -18,32 +18,32 @@ public class DashboardController {
     private final DashboardService dashboardService;
 
     @GetMapping("/stats")
-    //@PreAuthorize("isAuthenticated()")
+    ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<DashboardStatsDto> getStats() {
         return ResponseEntity.ok(dashboardService.getStats());
     }
 
     @GetMapping("/workforce")
-    //@PreAuthorize("isAuthenticated()")
+    ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<WorkforceStatsDto> getWorkforce() {
         return ResponseEntity.ok(dashboardService.getWorkforceStats());
     }
 
     @GetMapping("/completion")
-    //@PreAuthorize("isAuthenticated()")
+    ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<ProfileCompletionDto> getCompletion() {
         return ResponseEntity.ok(dashboardService.getCompletion());
     }
 
     @GetMapping("/fin-periode-essai")
-    //@PreAuthorize("isAuthenticated()")
+    ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<ProbationAlertDto>> getProbation(
             @RequestParam(defaultValue = "30") int joursMax) {
         return ResponseEntity.ok(dashboardService.getProbationAlerts(joursMax));
     }
 
     @GetMapping("/anniversaires")
-    //@PreAuthorize("isAuthenticated()")
+    ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<AnniversaireDto>> getAnniversaires(
             @RequestParam(required = false) Integer mois) {
         int m = mois != null ? mois : LocalDate.now().getMonthValue();
@@ -51,7 +51,7 @@ public class DashboardController {
     }
 
     @GetMapping("/nouveaux-employes")
-    //@PreAuthorize("isAuthenticated()")
+    ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<NouvelEmployeDto>> getNouveaux(
             @RequestParam(defaultValue = "10") int limit) {
         return ResponseEntity.ok(dashboardService.getNouveauxEmployes(limit));
@@ -60,19 +60,19 @@ public class DashboardController {
     // ── Page 1: Tableau de bord RH ────────────────────────────────────────────
 
     @GetMapping("/weekly-stats")
-    //@PreAuthorize("isAuthenticated()")
+    ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<WeeklyStatsDto> getWeeklyStats() {
         return ResponseEntity.ok(dashboardService.getWeeklyStats());
     }
 
     @GetMapping("/recruitment-stats")
-    //@PreAuthorize("isAuthenticated()")
+    ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<RecruitmentStatsDto> getRecruitmentStats() {
         return ResponseEntity.ok(dashboardService.getRecruitmentStats());
     }
 
     @GetMapping("/recent-activity")
-    //@PreAuthorize("isAuthenticated()")
+    ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<RecentActivityDto>> getRecentActivity(
             @RequestParam(defaultValue = "10") int size) {
         return ResponseEntity.ok(dashboardService.getRecentActivity(size));

@@ -22,7 +22,7 @@ public class TeletravailController {
     private final TeletravailService teletravailService;
 
     @PostMapping("/{profileId}")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<TeletravailResponseDto> create(
             @PathVariable Long profileId,
             @Valid @RequestBody TeletravailCreateDto dto,
@@ -32,7 +32,7 @@ public class TeletravailController {
     }
 
     @GetMapping("/{profileId}")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<PageResponse<TeletravailResponseDto>> list(
             @PathVariable Long profileId,
             @PageableDefault(size = 20) Pageable pageable) {
@@ -40,7 +40,7 @@ public class TeletravailController {
     }
 
     @PostMapping("/{id}/approve")
-    @PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
+    //@PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
     public ResponseEntity<TeletravailResponseDto> approve(
             @PathVariable Long id,
             @RequestParam Long responsableId,
@@ -49,7 +49,7 @@ public class TeletravailController {
     }
 
     @PostMapping("/{id}/refuse")
-    @PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
+    //@PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
     public ResponseEntity<TeletravailResponseDto> refuse(
             @PathVariable Long id,
             @RequestParam String motif,

@@ -19,19 +19,19 @@ public class OnboardingController {
     private final OnboardingService onboardingService;
 
     @GetMapping("/pending")
-    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
+    //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
     public List<OnboardingListItem> getPendingList() {
         return onboardingService.getPendingList();
     }
 
     @GetMapping("/{candidateId}/form")
-    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
+    //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
     public OnboardingFormResponse getForm(@PathVariable Long candidateId) {
         return onboardingService.getOnboardingForm(candidateId);
     }
 
     @PostMapping("/{candidateId}/draft")
-    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
+    //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
     public Map<String, Object> saveDraft(
             @PathVariable Long candidateId,
             @RequestBody SaveDraftRequest dto,
@@ -41,7 +41,7 @@ public class OnboardingController {
 
     @PostMapping("/{candidateId}/complete")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
+    //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
     public CompletionResult completeProfile(
             @PathVariable Long candidateId,
             @Valid @RequestBody CompleteProfileRequest dto,

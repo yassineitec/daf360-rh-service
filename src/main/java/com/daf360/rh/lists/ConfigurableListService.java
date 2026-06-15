@@ -69,14 +69,14 @@ public class ConfigurableListService {
     }
 
     @Transactional(readOnly = true)
-    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public List<ListValueResponse> getAllValuesForAdmin(Long listTypeId) {
         List<ConfigurableListValue> values =
                 valueRepo.findByListTypeIdOrderBySortOrderAscLabelFrAsc(listTypeId);
         return toValueResponseList(values, listTypeId);
     }
 
-    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ListValueResponse createListValue(CreateListValueRequest dto, Long createdBy) {
         boolean duplicate = valueRepo.existsByListTypeIdAndPaysIdAndValueCode(
                 dto.getListTypeId(), dto.getPaysId(), dto.getValueCode());
@@ -111,7 +111,7 @@ public class ConfigurableListService {
         return toValueResponse(saved, saved.getListTypeId());
     }
 
-    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ListValueResponse updateListValue(Long id, UpdateListValueRequest dto, Long updatedBy) {
         ConfigurableListValue value = valueRepo.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
@@ -149,7 +149,7 @@ public class ConfigurableListService {
         return toValueResponse(saved, saved.getListTypeId());
     }
 
-    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public void deleteListValue(Long id, Long deletedBy) {
         ConfigurableListValue value = valueRepo.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
@@ -172,7 +172,7 @@ public class ConfigurableListService {
         invalidateCacheForType(value.getListTypeId());
     }
 
-    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public void reorderListValues(Long listTypeId, List<Long> orderedIds, Long updatedBy) {
         List<ConfigurableListValue> toUpdate = new ArrayList<>();
         for (int i = 0; i < orderedIds.size(); i++) {

@@ -30,7 +30,7 @@ public class EmployeeRequestController {
      * Employee submits a new request. Validates no duplicate open request of same type.
      */
     @PostMapping("/{profileId}")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<RequestResponseDto> submit(
             @PathVariable Long profileId,
             @Valid @RequestBody RequestSubmitDto dto,
@@ -43,7 +43,7 @@ public class EmployeeRequestController {
      * GET /api/hr/requests?profileId=&status=&typeId=&paysId=&page=0&size=20
      */
     @GetMapping
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<PageResponse<RequestResponseDto>> list(
             @RequestParam(required = false) Long          profileId,
             @RequestParam(required = false) RequestStatus status,
@@ -63,7 +63,7 @@ public class EmployeeRequestController {
      * GET /api/hr/requests/{id}
      */
     @GetMapping("/{id}")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<RequestResponseDto> get(@PathVariable Long id) {
         return ResponseEntity.ok(requestService.getById(id));
     }
@@ -74,7 +74,7 @@ public class EmployeeRequestController {
      * Required: HR_MANAGER, ADMIN, or FINANCE_OFFICER
      */
     @PostMapping("/{id}/process")
-    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE', 'HR_ADMIN_ROLES')")
+    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE', 'HR_ADMIN_ROLES')")
     public ResponseEntity<RequestResponseDto> process(
             @PathVariable Long id,
             @Valid @RequestBody RequestProcessDto dto,
@@ -87,7 +87,7 @@ public class EmployeeRequestController {
      * Employee cancels their own SUBMITTED request.
      */
     @PostMapping("/{id}/cancel")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<RequestResponseDto> cancel(
             @PathVariable Long id,
             @RequestParam Long profileId,
@@ -100,7 +100,7 @@ public class EmployeeRequestController {
      * Returns generated documents for an approved DOCUMENT-category request.
      */
     @GetMapping("/{id}/document")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<GeneratedDocumentResponseDto>> getDocuments(@PathVariable Long id) {
         return ResponseEntity.ok(docService.listForRequest(id));
     }

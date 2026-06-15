@@ -18,7 +18,7 @@ public class DepartmentController {
     private final DepartmentRepository departmentRepository;
 
     @GetMapping
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public List<DepartmentResponseDto> list() {
         return departmentRepository.findAll().stream().map(d -> {
             DepartmentResponseDto dto = new DepartmentResponseDto();

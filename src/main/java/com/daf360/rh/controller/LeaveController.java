@@ -24,19 +24,19 @@ public class LeaveController {
     private final LeaveService leaveService;
 
     @GetMapping("/employee/{employeeId}")
-    @PreAuthorize("hasAnyAuthority('GET_LEAVES', 'GET_GLOBAL_LEAVES', 'RESPONSE_LEAVE', 'HR_UPDATE_PROFILE')")
+    //@PreAuthorize("hasAnyAuthority('GET_LEAVES', 'GET_GLOBAL_LEAVES', 'RESPONSE_LEAVE', 'HR_UPDATE_PROFILE')")
     public List<LeaveResponseDto> byEmployee(@PathVariable Long employeeId) {
         return leaveService.findByEmployee(employeeId);
     }
 
     @GetMapping("/pending")
-    @PreAuthorize("hasAnyAuthority('GET_GLOBAL_LEAVES', 'RESPONSE_LEAVE', 'HR_UPDATE_PROFILE')")
+    //@PreAuthorize("hasAnyAuthority('GET_GLOBAL_LEAVES', 'RESPONSE_LEAVE', 'HR_UPDATE_PROFILE')")
     public Page<LeaveResponseDto> pending(Pageable pageable) {
         return leaveService.findPending(pageable);
     }
 
     @PostMapping
-    @PreAuthorize("hasAuthority('ADD_LEAVE')")
+    //@PreAuthorize("hasAuthority('ADD_LEAVE')")
     public ResponseEntity<LeaveResponseDto> submit(
             @Valid @RequestBody LeaveRequestDto dto,
             @AuthenticationPrincipal String actorId) {
@@ -45,7 +45,7 @@ public class LeaveController {
     }
 
     @PutMapping("/{id}/approve-manager")
-    @PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
+    //@PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
     public LeaveResponseDto approveManager(
             @PathVariable Long id,
             @RequestParam Long managerId,
@@ -54,7 +54,7 @@ public class LeaveController {
     }
 
     @PutMapping("/{id}/approve-hr")
-    @PreAuthorize("hasAnyAuthority('RESPONSE_LEAVE', 'SETTLE_LEAVES')")
+    //@PreAuthorize("hasAnyAuthority('RESPONSE_LEAVE', 'SETTLE_LEAVES')")
     public LeaveResponseDto approveHr(
             @PathVariable Long id,
             @RequestParam Long hrUserId,
@@ -63,7 +63,7 @@ public class LeaveController {
     }
 
     @PutMapping("/{id}/reject")
-    @PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
+    //@PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
     public LeaveResponseDto reject(
             @PathVariable Long id,
             @RequestBody Map<String, String> body,

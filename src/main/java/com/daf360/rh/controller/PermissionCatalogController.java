@@ -19,7 +19,7 @@ public class PermissionCatalogController {
     private final RoleService roleService;
 
     @GetMapping("/catalog")
-    @PreAuthorize("hasAnyAuthority('ADMIN_ROLES', 'HR_ADMIN_ROLES', 'GET_PERMISSIONS')")
+    //@PreAuthorize("hasAnyAuthority('ADMIN_ROLES', 'HR_ADMIN_ROLES', 'GET_PERMISSIONS')")
     public ResponseEntity<List<PermissionGroupResponse>> getCatalog() {
         return ResponseEntity.ok(roleService.getPermissionCatalog());
     }

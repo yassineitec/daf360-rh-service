@@ -66,4 +66,26 @@ public interface CandidateRepository extends JpaRepository<Candidate, Long> {
             @Param("paysId")  Long paysId,
             @Param("search")  String search,
             Pageable pageable);
+
+    @Query(value = """
+        SELECT c FROM Candidate c
+        WHERE c.status IN :statuses
+          AND (:search IS NULL
+               OR LOWER(c.firstName)       LIKE LOWER(CONCAT('%', :search, '%'))
+               OR LOWER(c.lastName)        LIKE LOWER(CONCAT('%', :search, '%'))
+               OR LOWER(c.appliedPosition) LIKE LOWER(CONCAT('%', :search, '%')))
+        ORDER BY c.createdAt DESC
+        """,
+        countQuery = """
+        SELECT COUNT(c) FROM Candidate c
+        WHERE c.status IN :statuses
+          AND (:search IS NULL
+               OR LOWER(c.firstName)       LIKE LOWER(CONCAT('%', :search, '%'))
+               OR LOWER(c.lastName)        LIKE LOWER(CONCAT('%', :search, '%'))
+               OR LOWER(c.appliedPosition) LIKE LOWER(CONCAT('%', :search, '%')))
+        """)
+    Page<Candidate> searchByStatusesAndSearch(
+            @Param("statuses") Collection<CandidateStatus> statuses,
+            @Param("search")   String search,
+            Pageable pageable);
 }

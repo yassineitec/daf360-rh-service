@@ -22,7 +22,7 @@ public class AutorisationController {
     private final AutorisationService autorisationService;
 
     @PostMapping("/{profileId}")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<AutorisationResponseDto> create(
             @PathVariable Long profileId,
             @Valid @RequestBody AutorisationCreateDto dto,
@@ -32,7 +32,7 @@ public class AutorisationController {
     }
 
     @GetMapping("/{profileId}")
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<PageResponse<AutorisationResponseDto>> list(
             @PathVariable Long profileId,
             @PageableDefault(size = 20) Pageable pageable) {
@@ -40,7 +40,7 @@ public class AutorisationController {
     }
 
     @PostMapping("/{id}/approve")
-    @PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
+    //@PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
     public ResponseEntity<AutorisationResponseDto> approve(
             @PathVariable Long id,
             @RequestParam Long responsableId,
@@ -49,7 +49,7 @@ public class AutorisationController {
     }
 
     @PostMapping("/{id}/refuse")
-    @PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
+    //@PreAuthorize("hasAuthority('RESPONSE_LEAVE')")
     public ResponseEntity<AutorisationResponseDto> refuse(
             @PathVariable Long id,
             @RequestParam String motif,

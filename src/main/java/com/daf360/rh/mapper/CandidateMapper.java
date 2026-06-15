@@ -2,6 +2,7 @@ package com.daf360.rh.mapper;
 
 import com.daf360.rh.domain.Candidate;
 import com.daf360.rh.domain.ItProvisioning;
+import com.daf360.rh.domain.enums.CandidateStatus;
 import com.daf360.rh.dto.candidate.*;
 import org.mapstruct.*;
 
@@ -21,6 +22,7 @@ public interface CandidateMapper {
     @Mapping(target = "cvPath",          ignore = true)
     @Mapping(target = "cvOriginalName",  ignore = true)
     @Mapping(target = "cvUploadedAt",    ignore = true)
+    @Mapping(target = "fitScore",        ignore = true)
     // FK dimension fields — resolved by CandidateService after mapping
     @Mapping(target = "nationality",     ignore = true)
     @Mapping(target = "appliedGrade",    ignore = true)
@@ -43,7 +45,13 @@ public interface CandidateMapper {
     @Mapping(target = "department",           expression = "java(candidate.getDepartment()     != null ? candidate.getDepartment().getLabelFr()         : null)")
     CandidateResponse toResponse(Candidate candidate);
 
-    @Mapping(target = "appliedGrade", expression = "java(candidate.getAppliedGrade() != null ? candidate.getAppliedGrade().getLabelFr() : null)")
+    @Mapping(target = "appliedGrade",    expression = "java(candidate.getAppliedGrade() != null ? candidate.getAppliedGrade().getLabelFr() : null)")
+    @Mapping(target = "fullName",        expression = "java(buildFullName(candidate))")
+    @Mapping(target = "initials",        expression = "java(buildInitials(candidate))")
+    @Mapping(target = "colorIndex",      expression = "java((int)(Math.abs(candidate.getId() == null ? 0L : candidate.getId()) % 8))")
+    @Mapping(target = "poste",           source = "appliedPosition")
+    @Mapping(target = "stage",           expression = "java(mapStage(candidate.getStatus()))")
+    @Mapping(target = "applicationDate", expression = "java(candidate.getCreatedAt() != null ? candidate.getCreatedAt().toLocalDate().toString() : null)")
     CandidateListItem toListItem(Candidate candidate);
 
     List<CandidateListItem> toListItems(List<Candidate> candidates);
@@ -64,10 +72,39 @@ public interface CandidateMapper {
     @Mapping(target = "cvPath",          ignore = true)
     @Mapping(target = "cvOriginalName",  ignore = true)
     @Mapping(target = "cvUploadedAt",    ignore = true)
+    @Mapping(target = "fitScore",        ignore = true)
     // FK dimension fields — resolved by CandidateService after mapping
     @Mapping(target = "nationality",       ignore = true)
     @Mapping(target = "appliedGrade",      ignore = true)
     @Mapping(target = "appliedDiscipline", ignore = true)
     @Mapping(target = "department",        ignore = true)
     void updateEntity(@MappingTarget Candidate candidate, UpdateCandidateRequest request);
+
+    // ── Computed helpers ───────────────────────────────────────────────────────
+
+    default String buildFullName(Candidate c) {
+        String f = c.getFirstName() != null ? c.getFirstName() : "";
+        String l = c.getLastName()  != null ? c.getLastName()  : "";
+        return (f + " " + l).trim();
+    }
+
+    default String buildInitials(Candidate c) {
+        String f = c.getFirstName();
+        String l = c.getLastName();
+        String fi = (f != null && !f.isEmpty()) ? String.valueOf(f.charAt(0)).toUpperCase() : "";
+        String li = (l != null && !l.isEmpty()) ? String.valueOf(l.charAt(0)).toUpperCase() : "";
+        return fi + li;
+    }
+
+    default String mapStage(CandidateStatus status) {
+        if (status == null) return "Candidature";
+        return switch (status) {
+            case PENDING                    -> "Candidature";
+            case ACCEPTED, HR_IN_PROGRESS   -> "Screening RH";
+            case IT_IN_PROGRESS             -> "Entretien Technique";
+            case EMAIL_RECEIVED             -> "Offre Envoyée";
+            case HIRED                      -> "Recruté";
+            case REJECTED, ARCHIVED         -> "Rejeté";
+        };
+    }
 }

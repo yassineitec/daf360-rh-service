@@ -193,10 +193,27 @@ public class CandidateService {
     }
 
     @Transactional(readOnly = true)
-    public Page<CandidateListItem> listCandidates(CandidateStatus status, Long paysId, String search,
-                                                   Pageable pageable) {
+    public Page<CandidateListItem> listCandidates(CandidateStatus status, String stage,
+                                                   Long paysId, String search, Pageable pageable) {
+        if (stage != null && !stage.isBlank()) {
+            List<CandidateStatus> statuses = stageToStatuses(stage);
+            return candidateRepo.searchByStatusesAndSearch(statuses, search, pageable)
+                    .map(mapper::toListItem);
+        }
         return candidateRepo.searchPaged(status, paysId, search, pageable)
                 .map(mapper::toListItem);
+    }
+
+    private static List<CandidateStatus> stageToStatuses(String stage) {
+        return switch (stage.toUpperCase()) {
+            case "CANDIDATURE"          -> List.of(CandidateStatus.PENDING);
+            case "SCREENING_RH"         -> List.of(CandidateStatus.ACCEPTED, CandidateStatus.HR_IN_PROGRESS);
+            case "ENTRETIEN_TECHNIQUE"  -> List.of(CandidateStatus.IT_IN_PROGRESS);
+            case "OFFRE_ENVOYEE"        -> List.of(CandidateStatus.EMAIL_RECEIVED);
+            case "RECRUTE"              -> List.of(CandidateStatus.HIRED);
+            case "REJETE"               -> List.of(CandidateStatus.REJECTED, CandidateStatus.ARCHIVED);
+            default                     -> List.of(CandidateStatus.values());
+        };
     }
 
     @Transactional(readOnly = true)

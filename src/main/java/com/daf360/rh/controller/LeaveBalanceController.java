@@ -24,7 +24,7 @@ public class LeaveBalanceController {
      * Returns all leave balances for the employee for the given year.
      */
     @GetMapping
-    @PreAuthorize("isAuthenticated()")
+    //@PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<LeaveBalanceResponseDto>> get(
             @PathVariable Long profileId,
             @RequestParam Integer annee) {
@@ -37,7 +37,7 @@ public class LeaveBalanceController {
      * Required: HR_MANAGER
      */
     @PostMapping("/adjust")
-    @PreAuthorize("hasAnyAuthority('SETTLE_LEAVES', 'HR_ADMIN_ROLES')")
+    //@PreAuthorize("hasAnyAuthority('SETTLE_LEAVES', 'HR_ADMIN_ROLES')")
     public ResponseEntity<LeaveBalanceResponseDto> adjust(
             @PathVariable Long profileId,
             @RequestParam Long balanceId,

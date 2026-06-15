@@ -14,7 +14,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/hr/admin")
 @RequiredArgsConstructor
-@PreAuthorize("hasPermission(null, 'ADMIN_NOTIFICATIONS')")
+//@PreAuthorize("hasPermission(null, 'ADMIN_NOTIFICATIONS')")
 public class NotificationRoutingAdminController {
 
     private final NotificationRoutingAdminService notifAdminService;

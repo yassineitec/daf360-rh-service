@@ -114,4 +114,9 @@ public class Candidate {
 
     @Column(name = "cv_uploaded_at", columnDefinition = "datetimeoffset(6)")
     private OffsetDateTime cvUploadedAt;
+
+    // TODO: run migration: ALTER TABLE [dbo].[candidates] ADD fit_score INT NULL;
+    // @Column(name = "fit_score") -- re-enable after migration
+    @jakarta.persistence.Transient
+    private Integer fitScore;
 }

@@ -7,13 +7,13 @@ import org.springframework.stereotype.Component;
 import java.io.Serializable;
 
 /**
- * Permission evaluator that backs @PreAuthorize("hasPermission(null, 'PERMISSION_CODE')").
+ * Permission evaluator that backs //@PreAuthorize("hasPermission(null, 'PERMISSION_CODE')").
  *
  * Works with the rh-service auth model: JwtAuthFilter maps each permission string
  * from the JWT directly to a SimpleGrantedAuthority (no ROLE_ prefix), so we
  * check getAuthorities() for an exact string match.
  *
- * Usage: @PreAuthorize("hasPermission(null, 'HR_CREATE_PROFILE')")
+ * Usage: //@PreAuthorize("hasPermission(null, 'HR_CREATE_PROFILE')")
  */
 @Component
 public class HrPermissionEvaluator implements PermissionEvaluator {
