@@ -251,7 +251,7 @@ public class EmployeeProfileService {
 
         String listSql =
             "SELECT ep.id AS profile_id, u.id AS user_id, u.fullName AS full_name, " +
-            "u.username AS email, u.employee_id AS employee_id, u.pays_id AS pays_id, " +
+            "COALESCE(u.email, u.username) AS email, u.employee_id AS employee_id, u.pays_id AS pays_id, " +
             "p.french_label AS pays_label, u.role_id AS role_id, r.frenchName AS role_name, " +
             "ep.lifecycle_status AS lifecycle_status, ep.contract_type AS contract_type, " +
             "ep.hire_date AS hire_date, ep.photo_url AS photo_url, ep.gender AS gender " +
@@ -304,9 +304,20 @@ public class EmployeeProfileService {
             "  AND p.french_label IS NOT NULL " +
             "ORDER BY p.french_label",
             String.class);
-        // TODO: query departments and grades once V23 dimension tables are migrated
+        List<String> departmentList = jdbcTemplate.queryForList(
+            "SELECT DISTINCT d.label_fr " +
+            "FROM [dbo].[departments] d " +
+            "WHERE d.is_active = 1 AND d.label_fr IS NOT NULL " +
+            "ORDER BY d.label_fr",
+            String.class);
+        List<String> gradeList = jdbcTemplate.queryForList(
+            "SELECT DISTINCT g.label_fr " +
+            "FROM [dbo].[grades] g " +
+            "WHERE g.is_active = 1 AND g.label_fr IS NOT NULL " +
+            "ORDER BY g.label_fr",
+            String.class);
         return new com.daf360.rh.dto.profile.FilterOptionsDto(
-            List.of(), List.of(), paysList);
+            departmentList, gradeList, paysList);
     }
 
     // ── Update Users table fields ─────────────────────────────────────────────

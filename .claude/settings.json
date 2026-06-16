@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/dashboard/stats\")",
+      "Bash(echo \"---EXIT:$?\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/dashboard/workforce\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/dashboard/completion\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/dashboard/fin-periode-essai?joursMax=30\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/dashboard/anniversaires?mois=6\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/dashboard/nouveaux-employes?limit=5\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/profiles/employees?page=0&size=3\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/profiles/filter-options\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/pipeline/stats\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/pipeline/kanban\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/pipeline/candidates?page=0&size=3\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/profiles/1\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/profiles/1/contrats\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/profiles/1/documents\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/profiles/1/leave-balances?annee=2026\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/absences?profileId=1&page=0&size=5\")"
+    ]
+  }
+}

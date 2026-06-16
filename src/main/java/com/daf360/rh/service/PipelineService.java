@@ -16,8 +16,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -119,7 +121,7 @@ public class PipelineService {
     public List<KanbanColumnDto> getKanban() {
         String sql = """
             SELECT id, first_name, last_name, applied_position, status,
-                   expected_start_date, notes
+                   expected_start_date, notes, email_personal, created_at
             FROM [dbo].[candidates]
             WHERE status IN (""" + KANBAN_IN + ")\n" +
             "ORDER BY created_at DESC";
@@ -171,8 +173,8 @@ public class PipelineService {
                 " OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";
 
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT id, first_name, last_name, applied_position, status, expected_start_date, notes" +
-                " FROM [dbo].[candidates] " + dataArgs,
+                "SELECT id, first_name, last_name, applied_position, status, expected_start_date, notes," +
+                " email_personal, created_at FROM [dbo].[candidates] " + dataArgs,
                 args.toArray());
 
         List<KanbanCandidateDto> content = rows.stream()
@@ -202,8 +204,8 @@ public class PipelineService {
         }
 
         Map<String, Object> row = jdbc.queryForMap(
-                "SELECT id, first_name, last_name, applied_position, status, expected_start_date, notes" +
-                " FROM [dbo].[candidates] WHERE id = ?", id);
+                "SELECT id, first_name, last_name, applied_position, status, expected_start_date, notes," +
+                " email_personal, created_at FROM [dbo].[candidates] WHERE id = ?", id);
 
         return rowToKanbanDto(row);
     }
@@ -213,14 +215,29 @@ public class PipelineService {
     private KanbanCandidateDto rowToKanbanDto(Map<String, Object> r) {
         String status   = str(r, "status");
         String stage    = STATUS_TO_STAGE.getOrDefault(status, "SCREENING");
+        String stageLabel = STAGE_LABELS.getOrDefault(stage, stage);
         LocalDate esd   = toLocalDate(r.get("expected_start_date"));
         boolean urgent  = esd != null && !esd.isAfter(LocalDate.now().plusDays(14));
 
-        String fullName = (str(r, "first_name") + " " + str(r, "last_name")).trim();
+        String firstName = str(r, "first_name");
+        String lastName  = str(r, "last_name");
+        String fullName  = ((firstName != null ? firstName : "") + " " + (lastName != null ? lastName : "")).trim();
+
+        String initials = deriveInitials(fullName);
+
+        String applicationDate = null;
+        Object createdAt = r.get("created_at");
+        if (createdAt instanceof OffsetDateTime odt) {
+            applicationDate = odt.format(DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.FRENCH));
+        } else if (createdAt instanceof java.sql.Timestamp ts) {
+            applicationDate = ts.toLocalDateTime()
+                    .format(DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.FRENCH));
+        }
 
         return new KanbanCandidateDto(
                 toLong(r.get("id")),
                 fullName,
+                initials,
                 null,
                 str(r, "applied_position"),
                 0,
@@ -233,8 +250,21 @@ public class PipelineService {
                 null,
                 null,
                 urgent,
-                stage
+                stage,
+                stageLabel,
+                applicationDate,
+                str(r, "email_personal"),
+                status
         );
+    }
+
+    private static String deriveInitials(String fullName) {
+        if (fullName == null || fullName.isBlank()) return "";
+        String[] parts = fullName.trim().split("\\s+");
+        if (parts.length >= 2) {
+            return (String.valueOf(parts[0].charAt(0)) + String.valueOf(parts[1].charAt(0))).toUpperCase();
+        }
+        return String.valueOf(parts[0].charAt(0)).toUpperCase();
     }
 
     private String resolveInClause(String stage) {

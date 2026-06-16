@@ -5,6 +5,7 @@ import java.util.List;
 public record KanbanCandidateDto(
         Long id,
         String fullName,
+        String initials,
         String photoUrl,
         String poste,
         int fitScore,
@@ -17,5 +18,9 @@ public record KanbanCandidateDto(
         String nextEvent,
         String salary,
         boolean isUrgent,
-        String stage
+        String stage,
+        String stageLabel,
+        String applicationDate,
+        String email,
+        String status
 ) {}

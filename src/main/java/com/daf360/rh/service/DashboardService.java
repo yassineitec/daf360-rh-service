@@ -132,9 +132,12 @@ public class DashboardService {
     public List<NouvelEmployeDto> getNouveauxEmployes(int limit) {
         int safeLimit = Math.max(1, Math.min(limit, 100));
         return jdbcTemplate.query(
-                "SELECT ep.id, u.fullName, ep.photo_url, ep.hire_date " +
+                "SELECT ep.id, u.fullName, ep.photo_url, ep.hire_date, " +
+                "       d.label_fr AS department_label, g.label_fr AS grade_label " +
                 "FROM [dbo].[employee_profiles] ep " +
                 "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
+                "LEFT JOIN [dbo].[departments] d ON d.id = ep.department_id " +
+                "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
                 "WHERE ep.lifecycle_status = 'ACTIVE' " +
                 "  AND ep.deleted = 0 " +
                 "ORDER BY ep.hire_date DESC " +
@@ -146,8 +149,8 @@ public class DashboardService {
                             rs.getString("fullName"),
                             rs.getString("photo_url"),
                             d != null ? d.toLocalDate() : null,
-                            null,
-                            null);
+                            rs.getString("department_label"),
+                            rs.getString("grade_label"));
                 });
     }
 

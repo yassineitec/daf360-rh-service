@@ -6,5 +6,5 @@ public record PipelineStatsDto(
         double scoreMoyen,
         long recrutementsClos,
         double delaiMoyenJours,
-        long postesUrgents
+        long urgents
 ) {}
