@@ -39,11 +39,12 @@ public class CreateCandidateRequest {
 
     private Long departmentId;
 
-    @Size(max = 50)
-    private String contractType;
-
     private LocalDate expectedStartDate;
 
     @Size(max = 1000)
     private String notes;
+
+    private Long recruitmentDemandId;
+
+    private Long employmentTypeId;
 }

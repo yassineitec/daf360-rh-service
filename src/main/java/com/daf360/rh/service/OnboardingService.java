@@ -250,7 +250,6 @@ public class OnboardingService {
         profile.setCnssAffiliationDate(dto.getCnssAffiliationDate());
         profile.setMaritalStatus(dto.getMaritalStatus());
         profile.setNumberOfChildren(dto.getNumberOfChildren());
-        profile.setPersonalAddress(dto.getPersonalAddress());
         profile.setDateOfBirth(dto.getDateOfBirth());
         profile.setGender(dto.getGender());
         profile.setNationalId(dto.getNationalId());
@@ -419,7 +418,7 @@ public class OnboardingService {
                 .appliedDiscipline(c.getAppliedDiscipline() != null ? c.getAppliedDiscipline().getLabelFr() : null)
                 .department(c.getDepartment() != null ? c.getDepartment().getLabelFr() : null)
                 .contractType(hasDraft ? draft.getContractType()
-                            : hasProfile ? existingProfile.getContractType() : c.getContractType())
+                            : hasProfile ? existingProfile.getContractType() : null)
                 .expectedStartDate(c.getExpectedStartDate())
                 .hireDate(hasProfile ? existingProfile.getHireDate() : null)
                 .contractEndDate(hasProfile ? existingProfile.getContractEndDate() : null)
@@ -452,8 +451,6 @@ public class OnboardingService {
                              : hasProfile ? existingProfile.getMaritalStatus() : null)
                 .numberOfChildren(hasDraft ? draft.getNumberOfChildren()
                                 : hasProfile ? existingProfile.getNumberOfChildren() : null)
-                .personalAddress(hasDraft ? draft.getPersonalAddress()
-                               : hasProfile ? existingProfile.getPersonalAddress() : null)
                 // Section 5 — Bank / RIB
                 .bankId(hasProfile && existingProfile.getBank() != null
                         ? existingProfile.getBank().getId() : null)

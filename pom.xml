@@ -126,6 +126,12 @@
 			<artifactId>jackson-datatype-jsr310</artifactId>
 		</dependency>
 
+		<!-- ── Tomcat compile-scope: TomcatConnectorCustomizer for header size fix -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-tomcat</artifactId>
+		</dependency>
+
 		<!-- ── Dev tools ─────────────────────────────────────────────── -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

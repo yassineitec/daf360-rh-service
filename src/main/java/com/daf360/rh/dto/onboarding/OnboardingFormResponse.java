@@ -50,8 +50,6 @@ public class OnboardingFormResponse {
     private LocalDate cnssAffiliationDate;
     private String    maritalStatus;
     private Integer   numberOfChildren;
-    private String    personalAddress;
-
     // Section 5 — Bank / RIB
     private Long   bankId;
     private String bankName;

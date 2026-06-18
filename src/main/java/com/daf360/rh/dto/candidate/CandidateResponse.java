@@ -26,7 +26,8 @@ public class CandidateResponse {
     private String appliedDiscipline;
     private Long   departmentId;
     private String department;
-    private String contractType;
+    private Long   employmentTypeId;
+    private String employmentTypeLabel;
     private LocalDate expectedStartDate;
     private CandidateStatus status;
     private String rejectionReason;
@@ -44,4 +45,7 @@ public class CandidateResponse {
 
     /** Populated when a provisioning task exists for this candidate. */
     private ItProvisioningSummary itProvisioning;
+
+    private Long recruitmentDemandId;
+    private String recruitmentDemandJobTitle;
 }

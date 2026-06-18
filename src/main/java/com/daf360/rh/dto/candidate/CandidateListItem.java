@@ -16,7 +16,6 @@ public class CandidateListItem {
     private String emailPersonal;
     private String appliedPosition;
     private String appliedGrade;
-    private String contractType;
     private LocalDate expectedStartDate;
     private CandidateStatus status;
     private OffsetDateTime createdAt;

@@ -1,12 +1,10 @@
 package com.daf360.rh.service;
 
 import com.daf360.rh.domain.enums.CandidateStatus;
-import com.daf360.rh.domain.enums.DemandeEtat;
 import com.daf360.rh.domain.enums.LifecycleStatus;
 import com.daf360.rh.dto.dashboard.*;
 import com.daf360.rh.repository.CandidateRepository;
 import com.daf360.rh.repository.EmployeeProfileRepository;
-import com.daf360.rh.repository.LeaveRequestRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -27,7 +25,6 @@ public class DashboardService {
 
     private final EmployeeProfileRepository profileRepository;
     private final CandidateRepository       candidateRepository;
-    private final LeaveRequestRepository    leaveRequestRepository;
     private final JdbcTemplate              jdbcTemplate;
 
     // ── Page 2: Portail-RH ────────────────────────────────────────────────────
@@ -173,8 +170,11 @@ public class DashboardService {
         long recrutements = candidateRepository.countByStatusIn(activeStatuses);
 
         LocalDate now = LocalDate.now();
-        long conges = leaveRequestRepository.countByEtatDemandeAndYearMonth(
-                DemandeEtat.VALIDE, now.getYear(), now.getMonthValue());
+        Long congesCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[absences] WHERE etat_demande = 'VALIDE'" +
+                " AND YEAR(date_debut) = ? AND MONTH(date_debut) = ?",
+                Long.class, now.getYear(), now.getMonthValue());
+        long conges = congesCount != null ? congesCount : 0L;
 
         return new RecruitmentStatsDto(recrutements, conges);
     }

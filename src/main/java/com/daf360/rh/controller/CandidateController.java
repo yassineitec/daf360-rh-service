@@ -100,6 +100,15 @@ public class CandidateController {
                 .body(resource);
     }
 
+    @PostMapping("/{id}/hire")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasPermission(null, 'RH_HIRE_CANDIDATE')")
+    public HireCandidateResponse hire(@PathVariable Long id,
+                                      @Valid @RequestBody HireCandidateRequest request,
+                                      Authentication auth) {
+        return candidateService.hireCandidate(id, request, actorId(auth));
+    }
+
     @GetMapping("/{id}/history")
     //@PreAuthorize("hasAnyAuthority('VIEW_CANDIDATES','HR_ONBOARDING','IT_PROVISIONING','HR_UPDATE_PROFILE','ADMIN_ROLES')")
     public ResponseEntity<List<CandidateHistoryItem>> getHistory(

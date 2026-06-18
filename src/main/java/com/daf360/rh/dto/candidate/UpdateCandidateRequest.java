@@ -37,9 +37,6 @@ public class UpdateCandidateRequest {
 
     private Long departmentId;
 
-    @Size(max = 50)
-    private String contractType;
-
     private LocalDate expectedStartDate;
 
     @Size(max = 1000)

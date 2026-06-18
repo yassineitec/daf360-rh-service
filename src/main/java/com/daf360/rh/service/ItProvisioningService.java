@@ -48,11 +48,11 @@ public class ItProvisioningService {
         "SELECT id FROM [dbo].[Roles] WHERE frenchName = 'Collaborateur' AND (deleted = 0 OR deleted IS NULL)";
 
     private static final String INSERT_USER_SQL =
-        "INSERT INTO [dbo].[Users] (fullName, username, email, azure_upn, pays_id, isActive, role_id, roleId, created_at) " +
-        "VALUES (?, ?, ?, ?, ?, 1, ?, ?, SYSDATETIMEOFFSET())";
+        "INSERT INTO [dbo].[Users] (fullName, username, email, azure_upn, pays_id, isActive, role_id, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, 1, ?, SYSDATETIMEOFFSET())";
 
     private static final String UPDATE_MATRICULE_SQL =
-        "UPDATE [dbo].[Users] SET employee_id = ?, roleId = role_id WHERE id = ?";
+        "UPDATE [dbo].[Users] SET employee_id = ? WHERE id = ?";
 
     private static final String USERS_WITH_PERMISSION_SQL =
         "SELECT DISTINCT u.id FROM [dbo].[Users] u " +
@@ -205,7 +205,7 @@ public class ItProvisioningService {
         prov.setUpdatedAt(OffsetDateTime.now());
         prov = itProvRepo.save(prov);
 
-        auditService.log(itManagerId.toString(), "UPDATE_IT_PROVISIONING", "IT_PROVISIONING",
+        auditService.log(itManagerId != null ? itManagerId.toString() : "SYSTEM", "UPDATE_IT_PROVISIONING", "IT_PROVISIONING",
                 prov.getId(), before, "status=" + prov.getStatus());
 
         Candidate candidate = candidateRepo.findById(prov.getCandidateId())
@@ -240,7 +240,6 @@ public class ItProvisioningService {
             ps.setString(4, ms365Email);
             ps.setLong(5, candidate.getPaysId());
             ps.setLong(6, collaborateurRoleId);
-            ps.setLong(7, collaborateurRoleId);
             return ps;
         }, keyHolder);
         Long newUserId = Objects.requireNonNull(keyHolder.getKey()).longValue();
@@ -276,7 +275,7 @@ public class ItProvisioningService {
                 .build()
         );
 
-        auditService.log(itManagerId.toString(), "SUBMIT_MS365_EMAIL", "IT_PROVISIONING",
+        auditService.log(itManagerId != null ? itManagerId.toString() : "SYSTEM", "SUBMIT_MS365_EMAIL", "IT_PROVISIONING",
                 prov.getId(), "status=IN_PROGRESS",
                 "status=EMAIL_CREATED; email=" + ms365Email + "; userId=" + newUserId);
 
@@ -300,7 +299,7 @@ public class ItProvisioningService {
         prov.setUpdatedAt(OffsetDateTime.now());
         prov = itProvRepo.save(prov);
 
-        auditService.log(itManagerId.toString(), "COMPLETE_IT_PROVISIONING", "IT_PROVISIONING",
+        auditService.log(itManagerId != null ? itManagerId.toString() : "SYSTEM", "COMPLETE_IT_PROVISIONING", "IT_PROVISIONING",
                 prov.getId(), "status=EMAIL_CREATED", "status=COMPLETED");
 
         try {

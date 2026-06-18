@@ -31,7 +31,6 @@ public class CompleteProfileRequest {
     private LocalDate cnssAffiliationDate;
     private String maritalStatus;
     private Integer numberOfChildren;
-    private String personalAddress;
     private LocalDate dateOfBirth;
     private String gender;
     private String nationalId;

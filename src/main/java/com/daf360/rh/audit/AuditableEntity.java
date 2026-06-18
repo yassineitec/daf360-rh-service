@@ -11,7 +11,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 
 /**
- * Base class for rh-service-owned tables (employes, departements, contrats, etc.).
+ * Base class for rh-service-owned tables (employees, contracts, etc.).
  * Uses OffsetDateTime to match the datetimeoffset type used in DAF360_HR.
  *
  * Dates are set via @PrePersist / @PreUpdate (JPA lifecycle callbacks) instead of

@@ -44,7 +44,6 @@ public class EmployeeProfileService {
     private final AuditService              auditService;
     private final JdbcTemplate              jdbcTemplate;
     private final ObjectMapper              objectMapper;
-    private final LeaveBalanceService       leaveBalanceService;
     private final AppProperties             appProperties;
 
     // ── Dimension repos injected for FK lookups ───────────────────────────────
@@ -182,11 +181,6 @@ public class EmployeeProfileService {
             throw new AppException(
                     com.daf360.rh.exception.ErrorCode.LIFECYCLE_TRANSITION_INVALID,
                     "Transition interdite: " + current + " → " + next);
-        }
-
-        if (next == LifecycleStatus.ACTIVE && current == LifecycleStatus.PRE_ONBOARDING) {
-            int currentYear = java.time.Year.now(PARIS).getValue();
-            leaveBalanceService.initializeBalances(id, currentYear);
         }
 
         if (next == LifecycleStatus.ARCHIVED) {
@@ -334,8 +328,6 @@ public class EmployeeProfileService {
             Long newRoleId = body.get("roleId") != null
                              ? Long.valueOf(body.get("roleId").toString()) : null;
             updates.add("role_id = ?");
-            args.add(newRoleId);
-            updates.add("roleId = ?");
             args.add(newRoleId);
         }
 

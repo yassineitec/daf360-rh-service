@@ -2,18 +2,25 @@ package com.daf360.rh.service;
 
 import com.daf360.rh.config.AppProperties;
 import com.daf360.rh.domain.Candidate;
+import com.daf360.rh.domain.EmployeeProfile;
 import com.daf360.rh.domain.ItProvisioning;
 import com.daf360.rh.domain.enums.CandidateStatus;
 import com.daf360.rh.domain.enums.ItProvisioningStatus;
+import com.daf360.rh.domain.enums.LifecycleStatus;
 import com.daf360.rh.dto.candidate.*;
+import com.daf360.rh.dto.lifecycle.CreateContractRequest;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.lifecycle.ContractTypeBridge;
+import com.daf360.rh.lifecycle.EmployeeLifecycleService;
 import com.daf360.rh.mapper.CandidateMapper;
 import com.daf360.rh.repository.CandidateRepository;
 import com.daf360.rh.repository.DisciplineRepository;
+import com.daf360.rh.repository.EmployeeProfileRepository;
 import com.daf360.rh.repository.GradeRepository;
 import com.daf360.rh.repository.HrDepartmentRepository;
 import com.daf360.rh.repository.ItProvisioningRepository;
+import com.daf360.rh.lists.ConfigurableListValueRepository;
 import com.daf360.rh.repository.NationalityRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -56,17 +63,21 @@ public class CandidateService {
 
     private final CandidateRepository        candidateRepo;
     private final ItProvisioningRepository   itProvRepo;
+    private final EmployeeProfileRepository  profileRepo;
     private final CandidateMapper            mapper;
     private final AuditService               auditService;
     private final AppProperties              appProperties;
     private final JdbcTemplate               jdbc;
     private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
+    private final EmployeeLifecycleService   lifecycleService;
+    private final ContractTypeBridge         contractTypeBridge;
 
     // ── Dimension repos for FK resolution ────────────────────────────────────
-    private final NationalityRepository  nationalityRepo;
-    private final GradeRepository        gradeRepo;
-    private final DisciplineRepository   disciplineRepo;
-    private final HrDepartmentRepository departmentRepo;
+    private final NationalityRepository           nationalityRepo;
+    private final GradeRepository                 gradeRepo;
+    private final DisciplineRepository            disciplineRepo;
+    private final HrDepartmentRepository          departmentRepo;
+    private final ConfigurableListValueRepository listValueRepo;
 
     // ── SQL constants ─────────────────────────────────────────────────────────
 
@@ -167,7 +178,8 @@ public class CandidateService {
                         .build()
         );
 
-        auditService.log(actorUserId.toString(), "ACCEPT", "CANDIDATE", candidate.getId(),
+        auditService.log(actorUserId != null ? actorUserId.toString() : "SYSTEM",
+                "ACCEPT", "CANDIDATE", candidate.getId(),
                 "status=PENDING", "status=ACCEPTED");
 
         return toFullResponse(candidate);
@@ -186,10 +198,84 @@ public class CandidateService {
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidate = candidateRepo.save(candidate);
 
-        auditService.log(actorUserId.toString(), "REJECT", "CANDIDATE", candidate.getId(),
+        auditService.log(actorUserId != null ? actorUserId.toString() : "SYSTEM",
+                "REJECT", "CANDIDATE", candidate.getId(),
                 "status=PENDING", "status=REJECTED; reason=" + request.getRejectionReason());
 
         return toFullResponse(candidate);
+    }
+
+    private static final Set<CandidateStatus> HIREABLE_STATUSES = Set.of(
+            CandidateStatus.ACCEPTED, CandidateStatus.EMAIL_RECEIVED, CandidateStatus.HR_IN_PROGRESS);
+
+    private static final Set<String> NEEDS_END_DATE = Set.of("CDD", "CIVP", "STAGE", "DETACHEMENT");
+
+    public HireCandidateResponse hireCandidate(Long id, HireCandidateRequest req, Long actorUserId) {
+        Candidate candidate = findOrThrow(id);
+
+        if (!HIREABLE_STATUSES.contains(candidate.getStatus())) {
+            throw new AppException(ErrorCode.CANDIDATE_STATUS_INVALID,
+                    "Le candidat doit être en statut ACCEPTED, EMAIL_RECEIVED ou HR_IN_PROGRESS pour être recruté.");
+        }
+
+        ItProvisioning prov = itProvRepo.findByCandidateId(id)
+                .orElseThrow(() -> new AppException(ErrorCode.IT_PROVISIONING_NOT_FOUND,
+                        "Le provisioning IT doit être complété avant de recruter."));
+        if (prov.getUserId() == null) {
+            throw new AppException(ErrorCode.ONBOARDING_USER_NOT_CREATED,
+                    "Le compte utilisateur n'a pas encore été créé par l'équipe IT.");
+        }
+
+        EmployeeProfile profile = profileRepo.findByUserId(prov.getUserId())
+                .orElseGet(() -> EmployeeProfile.builder()
+                        .userId(prov.getUserId())
+                        .paysId(candidate.getPaysId())
+                        .candidateId(id)
+                        .hireDate(req.getHireDate())
+                        .lifecycleStatus(LifecycleStatus.ACTIVE)
+                        .onboardingCompleted(false)
+                        .deleted(false)
+                        .createdAt(OffsetDateTime.now())
+                        .updatedAt(OffsetDateTime.now())
+                        .build());
+        profile.setHireDate(req.getHireDate());
+        profile.setUpdatedAt(OffsetDateTime.now());
+        profile = profileRepo.save(profile);
+
+        String contractTypeCode = req.getContractTypeCode() != null && !req.getContractTypeCode().isBlank()
+                ? req.getContractTypeCode()
+                : contractTypeBridge.resolveContractTypeCode(candidate.getEmploymentTypeId());
+
+        if (NEEDS_END_DATE.contains(contractTypeCode) && req.getDateFinPrevue() == null) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "La date de fin est obligatoire pour le type de contrat : " + contractTypeCode);
+        }
+
+        CreateContractRequest contractReq = new CreateContractRequest();
+        contractReq.setEmployeeProfileId(profile.getId());
+        contractReq.setPaysId(candidate.getPaysId());
+        contractReq.setContractTypeCode(contractTypeCode);
+        contractReq.setDateDebut(req.getHireDate());
+        contractReq.setDateFinPrevue(req.getDateFinPrevue());
+        contractReq.setManagerProfile(req.isManagerProfile());
+
+        var created = lifecycleService.createContractFromBridge(contractReq, actorUserId);
+
+        candidate.setStatus(CandidateStatus.HIRED);
+        candidate.setUpdatedAt(OffsetDateTime.now());
+        candidateRepo.save(candidate);
+
+        auditService.log(actorUserId.toString(), "HIRE_CANDIDATE", "CANDIDATE", id,
+                "status=" + candidate.getStatus(), "status=HIRED; contractType=" + contractTypeCode);
+
+        return HireCandidateResponse.builder()
+                .candidateId(id)
+                .employeeProfileId(profile.getId())
+                .contractId(created.getId())
+                .contractTypeCode(contractTypeCode)
+                .userId(prov.getUserId())
+                .message("Candidat recruté. Contrat " + contractTypeCode + " créé avec succès.")
+                .build();
     }
 
     @Transactional(readOnly = true)
@@ -381,6 +467,11 @@ public class CandidateService {
         itProvRepo.findByCandidateId(candidate.getId())
                 .map(mapper::toItSummary)
                 .ifPresent(response::setItProvisioning);
+        if (candidate.getEmploymentTypeId() != null) {
+            listValueRepo.findById(candidate.getEmploymentTypeId())
+                    .ifPresent(v -> response.setEmploymentTypeLabel(
+                            v.getLabelFr() != null ? v.getLabelFr() : v.getLabelEn()));
+        }
         return response;
     }
 

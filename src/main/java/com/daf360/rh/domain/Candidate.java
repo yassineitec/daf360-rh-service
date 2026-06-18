@@ -69,10 +69,6 @@ public class Candidate {
     @JoinColumn(name = "department_id")
     private HrDepartment department;
 
-    /** PERMANENT | FIXED_TERM | INTERN | CONSULTANT */
-    @Column(name = "contract_type", length = 50)
-    private String contractType;
-
     @Column(name = "expected_start_date")
     private LocalDate expectedStartDate;
 
@@ -114,6 +110,12 @@ public class Candidate {
 
     @Column(name = "cv_uploaded_at", columnDefinition = "datetimeoffset(6)")
     private OffsetDateTime cvUploadedAt;
+
+    @Column(name = "recruitment_demand_id")
+    private Long recruitmentDemandId;
+
+    @Column(name = "employment_type_id")
+    private Long employmentTypeId;
 
     // TODO: run migration: ALTER TABLE [dbo].[candidates] ADD fit_score INT NULL;
     // @Column(name = "fit_score") -- re-enable after migration

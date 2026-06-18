@@ -156,11 +156,19 @@ public class EmployeeProfile {
     @Column(name = "number_of_children")
     private Integer numberOfChildren;
 
-    @Column(name = "personal_address", length = 500, columnDefinition = "nvarchar(500)")
-    private String personalAddress;
+
 
     @Column(name = "candidate_id")
     private Long candidateId;
+
+    // ── Employee Lifecycle Engine (V32) ───────────────────────────────────────
+    @Column(name = "current_contract_id")
+    private Long currentContractId;
+
+    /** New lifecycle engine status code (from configurable_list_values). Nullable.
+     *  Distinct from lifecycleStatus (legacy NOT NULL enum). */
+    @Column(name = "lifecycle_status_code", length = 50)
+    private String lifecycleStatusCode;
 
     @Column(name = "onboarding_completed", nullable = false)
     @Builder.Default

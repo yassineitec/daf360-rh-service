@@ -45,6 +45,9 @@ public enum ErrorCode {
     ONBOARDING_STATUS_INVALID       (HttpStatus.UNPROCESSABLE_CONTENT, "Le candidat n'est pas dans un état compatible avec l'onboarding"),
     ONBOARDING_USER_NOT_CREATED     (HttpStatus.UNPROCESSABLE_CONTENT, "L'email Microsoft 365 doit être soumis avant de compléter l'onboarding"),
     ONBOARDING_PROFILE_EXISTS       (HttpStatus.CONFLICT,              "Un profil employé existe déjà pour ce candidat"),
+    RECRUITMENT_DEMAND_NOT_FOUND    (HttpStatus.NOT_FOUND,                "Demande de recrutement introuvable"),
+    RECRUITMENT_DEMAND_INVALID_TRANSITION (HttpStatus.UNPROCESSABLE_CONTENT, "Transition de statut invalide pour la demande de recrutement"),
+    RECRUITMENT_DEMAND_ALREADY_REVIEWED   (HttpStatus.CONFLICT,           "Cette demande a déjà été traitée"),
     BUSINESS_RULE_VIOLATION         (HttpStatus.UNPROCESSABLE_CONTENT,    "Règle métier non respectée"),
     FORBIDDEN                       (HttpStatus.FORBIDDEN,                "Accès refusé"),
     INTERNAL_ERROR                  (HttpStatus.INTERNAL_SERVER_ERROR,    "Erreur interne — veuillez réessayer");

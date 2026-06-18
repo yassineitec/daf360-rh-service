@@ -1,0 +1,1464 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Guide Utilisateur — Cycle de Vie des Contrats | DAF360 RH</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Serif+Display&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --teal:        #1a6b7c;
+      --teal-light:  #e6f4f6;
+      --teal-mid:    #9ecdd4;
+      --green:       #065f46;
+      --green-bg:    #d1fae5;
+      --amber:       #713f12;
+      --amber-bg:    #fef9c3;
+      --red:         #991b1b;
+      --red-bg:      #fee2e2;
+      --blue:        #1e40af;
+      --blue-bg:     #dbeafe;
+      --purple:      #3730a3;
+      --purple-bg:   #e0e7ff;
+      --slate:       #475569;
+      --slate-bg:    #f1f5f9;
+      --gray-100:    #f8fafc;
+      --gray-200:    #e2e8f0;
+      --gray-300:    #cbd5e1;
+      --gray-500:    #64748b;
+      --gray-700:    #334155;
+      --gray-900:    #0f172a;
+      --sidebar-w:   280px;
+      --radius:      10px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.7;
+      color: var(--gray-700);
+      background: var(--gray-100);
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────────────── */
+    .layout { display: flex; min-height: 100vh; }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────────────── */
+    .sidebar {
+      position: fixed; top: 0; left: 0; bottom: 0;
+      width: var(--sidebar-w);
+      background: var(--gray-900);
+      color: #e2e8f0;
+      overflow-y: auto;
+      padding: 0 0 32px;
+      z-index: 100;
+    }
+
+    .sidebar-brand {
+      display: flex; align-items: center; gap: 10px;
+      padding: 24px 20px 20px;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      margin-bottom: 12px;
+    }
+    .brand-badge {
+      background: var(--teal); color: #fff;
+      font-size: 11px; font-weight: 700; letter-spacing: 1px;
+      padding: 3px 8px; border-radius: 6px;
+    }
+    .brand-title {
+      font-size: 14px; font-weight: 600; color: #f1f5f9;
+      line-height: 1.3;
+    }
+    .brand-sub { font-size: 11px; color: #94a3b8; }
+
+    .sidebar nav { padding: 0 12px; }
+    .nav-section { margin-bottom: 8px; }
+    .nav-section-title {
+      font-size: 10px; font-weight: 700; letter-spacing: 1.2px;
+      text-transform: uppercase; color: #64748b;
+      padding: 8px 8px 4px;
+    }
+    .nav-section a {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 10px; border-radius: 8px;
+      color: #94a3b8; text-decoration: none; font-size: 13px;
+      transition: all .15s;
+    }
+    .nav-section a:hover  { background: rgba(255,255,255,.06); color: #e2e8f0; }
+    .nav-section a.active { background: rgba(26,107,124,.25); color: #9ecdd4; }
+    .nav-section a .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--teal-mid); flex-shrink: 0;
+    }
+    .nav-step-num {
+      width: 18px; height: 18px; border-radius: 50%;
+      background: rgba(255,255,255,.08); color: #94a3b8;
+      font-size: 10px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* ── Main content ──────────────────────────────────────────────────────── */
+    .main {
+      margin-left: var(--sidebar-w);
+      flex: 1;
+      padding: 0;
+    }
+
+    /* ── Hero ──────────────────────────────────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #0f172a 0%, #1a3d47 50%, #1a6b7c 100%);
+      color: #fff;
+      padding: 64px 64px 56px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::after {
+      content: '';
+      position: absolute; inset: 0;
+      background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.02'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    }
+    .hero-eyebrow {
+      font-size: 12px; font-weight: 600; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--teal-mid);
+      margin-bottom: 12px; position: relative; z-index: 1;
+    }
+    .hero h1 {
+      font-family: 'DM Serif Display', serif;
+      font-size: 42px; font-weight: 400; line-height: 1.15;
+      color: #fff; margin-bottom: 16px;
+      position: relative; z-index: 1;
+    }
+    .hero p {
+      font-size: 16px; color: rgba(255,255,255,.7); max-width: 560px;
+      position: relative; z-index: 1;
+    }
+    .hero-meta {
+      display: flex; gap: 24px; margin-top: 32px;
+      position: relative; z-index: 1;
+    }
+    .hero-meta-item {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; color: rgba(255,255,255,.55);
+    }
+    .hero-meta-item strong { color: rgba(255,255,255,.85); font-weight: 600; }
+
+    /* ── Page sections ─────────────────────────────────────────────────────── */
+    .content { padding: 48px 64px; max-width: 960px; }
+
+    h2 {
+      font-family: 'DM Serif Display', serif;
+      font-size: 28px; font-weight: 400; color: var(--gray-900);
+      margin: 56px 0 8px;
+      padding-top: 20px;
+    }
+    h2:first-of-type { margin-top: 0; }
+
+    .section-intro {
+      font-size: 15px; color: var(--gray-500);
+      max-width: 680px; margin-bottom: 32px;
+    }
+
+    h3 {
+      font-size: 18px; font-weight: 700; color: var(--gray-900);
+      margin: 32px 0 12px;
+    }
+
+    p { margin-bottom: 14px; }
+
+    /* ── Step cards ─────────────────────────────────────────────────────────── */
+    .steps { display: flex; flex-direction: column; gap: 0; }
+
+    .step {
+      display: flex; gap: 24px;
+      padding-bottom: 0;
+    }
+
+    .step-left {
+      display: flex; flex-direction: column; align-items: center; flex-shrink: 0;
+    }
+    .step-num {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--teal); color: #fff;
+      font-size: 14px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; margin-top: 4px;
+      box-shadow: 0 0 0 4px var(--teal-light);
+    }
+    .step-line {
+      width: 2px; background: var(--gray-200); flex: 1; margin-top: 8px; min-height: 24px;
+    }
+    .step:last-child .step-line { display: none; }
+
+    .step-body {
+      background: #fff;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      flex: 1;
+      margin-bottom: 16px;
+    }
+    .step-title {
+      font-size: 15px; font-weight: 700; color: var(--gray-900);
+      margin-bottom: 6px;
+    }
+    .step-desc { font-size: 14px; color: var(--gray-500); margin-bottom: 0; }
+
+    /* ── UI Mockup ──────────────────────────────────────────────────────────── */
+    .ui-mockup {
+      background: #fff; border: 1px solid var(--gray-200);
+      border-radius: var(--radius); overflow: hidden;
+      margin: 24px 0; box-shadow: 0 4px 20px rgba(0,0,0,.06);
+    }
+    .ui-mockup-bar {
+      background: #f8fafc; border-bottom: 1px solid var(--gray-200);
+      padding: 10px 16px; display: flex; align-items: center; gap: 8px;
+    }
+    .ui-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .ui-dot-r { background: #fc5c65; }
+    .ui-dot-y { background: #fed330; }
+    .ui-dot-g { background: #20bf6b; }
+    .ui-url {
+      flex: 1; background: #fff; border: 1px solid var(--gray-200);
+      border-radius: 6px; padding: 4px 12px; font-size: 11px; color: var(--gray-500);
+      font-family: monospace;
+    }
+    .ui-body { padding: 20px 24px; }
+
+    /* ── Section card mockup ─────────────────────────────────────────────────── */
+    .mock-section-card {
+      border: 1px solid var(--gray-200); border-radius: 10px; overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .mock-section-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 13px 18px; background: #fff; cursor: default;
+    }
+    .mock-section-title {
+      font-size: 13px; font-weight: 600; color: var(--gray-700);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .mock-chevron { color: var(--gray-500); font-size: 16px; transition: transform .2s; }
+    .mock-chevron.open { transform: rotate(90deg); }
+    .mock-section-body {
+      border-top: 1px solid var(--gray-200); padding: 16px 18px; background: #fff;
+    }
+
+    /* ── Contract card mockup ────────────────────────────────────────────────── */
+    .mock-contract-card {
+      background: #f8fafc; border: 1px solid var(--gray-200);
+      border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
+    }
+    .mock-contract-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 10px; margin-bottom: 8px;
+    }
+    .mock-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+    /* ── Status badges ───────────────────────────────────────────────────────── */
+    .badge {
+      display: inline-flex; align-items: center;
+      padding: 2px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 700; letter-spacing: .2px;
+    }
+    .badge-actif        { background: var(--green-bg);  color: var(--green);  }
+    .badge-essai        { background: var(--amber-bg);  color: var(--amber);  }
+    .badge-confirme     { background: var(--green-bg);  color: var(--green);  }
+    .badge-expire       { background: var(--red-bg);    color: var(--red);    }
+    .badge-resilie      { background: var(--red-bg);    color: var(--red);    }
+    .badge-converti     { background: var(--purple-bg); color: var(--purple); }
+    .badge-renouvele    { background: var(--blue-bg);   color: var(--blue);   }
+    .badge-inactif      { background: var(--slate-bg);  color: var(--slate);  }
+    .badge-type         { background: #fff; border: 1px solid var(--gray-200); color: var(--gray-700); }
+    .badge-locked       { background: var(--red-bg); color: var(--red); }
+
+    .mock-dates { font-size: 12px; color: var(--gray-500); display: flex; gap: 14px; flex-wrap: wrap; }
+    .mock-warning { color: #b45309; font-weight: 600; }
+
+    .mock-actions { display: flex; flex-direction: column; gap: 6px; }
+    .mock-btn {
+      padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: default;
+      white-space: nowrap;
+    }
+    .mock-btn-outline {
+      border: 1px solid var(--teal); background: none; color: var(--teal);
+    }
+    .mock-btn-primary {
+      border: none; background: var(--teal); color: #fff;
+    }
+    .mock-btn-ghost {
+      border: 1px solid var(--gray-200); background: none; color: var(--gray-500);
+    }
+
+    /* ── Modal mockup ────────────────────────────────────────────────────────── */
+    .mock-modal {
+      background: #fff; border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.15);
+      max-width: 520px; margin: 0 auto;
+    }
+    .mock-modal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 20px; border-bottom: 1px solid var(--gray-200);
+    }
+    .mock-modal-title { font-size: 15px; font-weight: 700; color: var(--gray-900); }
+    .mock-modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+    .mock-modal-footer {
+      padding: 14px 20px; border-top: 1px solid var(--gray-200);
+      display: flex; justify-content: flex-end; gap: 10px;
+    }
+
+    .mock-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .mock-form-group { display: flex; flex-direction: column; gap: 4px; }
+    .mock-label {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .4px; color: var(--gray-500);
+    }
+    .mock-input {
+      background: #f2f4f6; border: none; border-radius: 8px;
+      padding: 8px 12px; font-size: 13px; color: var(--gray-700);
+    }
+    .mock-radio-group { display: flex; flex-direction: column; gap: 8px; }
+    .mock-radio-option {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 13px; color: var(--gray-700);
+    }
+    .mock-radio {
+      width: 16px; height: 16px; border-radius: 50%;
+      border: 2px solid var(--gray-300); display: flex; align-items: center; justify-content: center;
+    }
+    .mock-radio.selected { border-color: var(--teal); }
+    .mock-radio.selected::after {
+      content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--teal);
+    }
+
+    /* ── Type chip ───────────────────────────────────────────────────────────── */
+    .type-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+    .type-chip {
+      padding: 6px 14px; border: 1px solid var(--gray-200);
+      border-radius: 999px; font-size: 13px; color: var(--gray-500); cursor: default;
+    }
+    .type-chip.active {
+      border-color: var(--teal); background: var(--teal); color: #fff;
+    }
+
+    /* ── Timeline mockup ─────────────────────────────────────────────────────── */
+    .mock-timeline { display: flex; flex-direction: column; gap: 0; }
+    .mock-tl-row { display: flex; gap: 10px; }
+    .mock-tl-left { display: flex; flex-direction: column; align-items: center; width: 16px; flex-shrink: 0; }
+    .mock-tl-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--teal); margin-top: 5px; flex-shrink: 0; }
+    .mock-tl-line { width: 2px; flex: 1; background: var(--gray-200); margin-top: 2px; min-height: 20px; }
+    .mock-tl-card {
+      background: #fff; border: 1px solid var(--gray-200);
+      border-radius: 10px; padding: 10px 14px; flex: 1; margin-bottom: 8px;
+    }
+    .mock-tl-badges { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+    .mock-tl-note { font-size: 11px; color: var(--gray-500); font-style: italic; }
+    .mock-tl-date { font-size: 10px; color: var(--gray-300); white-space: nowrap; }
+
+    /* ── Sidebar badge mockup ────────────────────────────────────────────────── */
+    .mock-nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; border-radius: 8px; background: rgba(26,107,124,.15);
+      font-size: 13px; color: var(--teal-mid); margin-bottom: 4px;
+    }
+    .mock-nav-badge {
+      margin-left: auto;
+      background: #ef4444; color: #fff;
+      font-size: 10px; font-weight: 700;
+      padding: 1px 6px; border-radius: 999px;
+    }
+
+    /* ── Callout boxes ───────────────────────────────────────────────────────── */
+    .callout {
+      display: flex; gap: 14px;
+      padding: 16px 18px; border-radius: var(--radius);
+      margin: 20px 0;
+    }
+    .callout-icon { font-size: 20px; flex-shrink: 0; margin-top: 1px; }
+    .callout-body { flex: 1; }
+    .callout-title { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+    .callout-text  { font-size: 13px; margin: 0; line-height: 1.6; }
+
+    .callout-info    { background: var(--teal-light); border-left: 3px solid var(--teal); }
+    .callout-info .callout-title  { color: var(--teal); }
+    .callout-info .callout-text   { color: #0f4a57; }
+
+    .callout-warning { background: var(--amber-bg); border-left: 3px solid #d97706; }
+    .callout-warning .callout-title { color: #92400e; }
+    .callout-warning .callout-text  { color: #78350f; }
+
+    .callout-success { background: var(--green-bg); border-left: 3px solid #059669; }
+    .callout-success .callout-title { color: var(--green); }
+    .callout-success .callout-text  { color: #064e3b; }
+
+    .callout-error   { background: var(--red-bg); border-left: 3px solid #dc2626; }
+    .callout-error .callout-title   { color: var(--red); }
+    .callout-error .callout-text    { color: #7f1d1d; }
+
+    /* ── Tables ──────────────────────────────────────────────────────────────── */
+    table {
+      width: 100%; border-collapse: collapse;
+      margin: 20px 0; font-size: 14px;
+    }
+    th {
+      background: var(--gray-100); color: var(--gray-700);
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+      padding: 10px 14px; border: 1px solid var(--gray-200); text-align: left;
+    }
+    td {
+      padding: 10px 14px; border: 1px solid var(--gray-200);
+      color: var(--gray-700); vertical-align: top;
+    }
+    tr:nth-child(even) td { background: var(--gray-100); }
+
+    /* ── Code block ──────────────────────────────────────────────────────────── */
+    .code-block {
+      background: var(--gray-900); color: #e2e8f0;
+      border-radius: var(--radius); padding: 16px 20px;
+      font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.6;
+      margin: 16px 0; overflow-x: auto;
+    }
+    .code-block .kw { color: #9ecdd4; }
+    .code-block .str { color: #a5d6a7; }
+    .code-block .cmt { color: #546e7a; }
+    .code-block .num { color: #ffab40; }
+
+    /* ── Permission chip ─────────────────────────────────────────────────────── */
+    .perm-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--purple-bg); color: var(--purple);
+      font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+      font-family: monospace;
+    }
+
+    /* ── Divider ─────────────────────────────────────────────────────────────── */
+    .divider {
+      border: none; border-top: 1px solid var(--gray-200);
+      margin: 48px 0;
+    }
+
+    /* ── Summary table ───────────────────────────────────────────────────────── */
+    .summary-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+      margin: 24px 0;
+    }
+    .summary-card {
+      background: #fff; border: 1px solid var(--gray-200);
+      border-radius: var(--radius); padding: 20px;
+    }
+    .summary-card-icon { font-size: 28px; margin-bottom: 8px; }
+    .summary-card-title { font-size: 14px; font-weight: 700; color: var(--gray-900); margin-bottom: 4px; }
+    .summary-card-desc  { font-size: 12px; color: var(--gray-500); }
+
+    /* ── Arrow annotation ────────────────────────────────────────────────────── */
+    .annotation {
+      display: flex; align-items: flex-start; gap: 8px;
+      font-size: 12px; color: var(--gray-500); margin-top: 8px;
+    }
+    .annotation::before { content: '↑'; color: var(--teal); font-size: 14px; line-height: 1; }
+
+    /* ── Keyboard shortcut ───────────────────────────────────────────────────── */
+    kbd {
+      display: inline-flex; align-items: center; justify-content: center;
+      background: #f1f5f9; border: 1px solid var(--gray-300);
+      border-bottom-width: 2px; border-radius: 5px;
+      padding: 1px 7px; font-size: 12px; font-family: monospace; color: var(--gray-700);
+    }
+
+    /* ── Responsive ──────────────────────────────────────────────────────────── */
+    @media (max-width: 900px) {
+      .sidebar { display: none; }
+      .main { margin-left: 0; }
+      .hero { padding: 40px 28px 36px; }
+      .content { padding: 32px 28px; }
+      h2 { font-size: 22px; }
+      .hero h1 { font-size: 28px; }
+      .summary-grid { grid-template-columns: 1fr 1fr; }
+      .mock-form-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+
+<body>
+<div class="layout">
+
+  <!-- ═══════════════════ SIDEBAR ═══════════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div>
+        <div class="brand-badge">DAF360</div>
+      </div>
+      <div>
+        <div class="brand-title">Guide Utilisateur</div>
+        <div class="brand-sub">Cycle de Vie des Contrats</div>
+      </div>
+    </div>
+
+    <nav>
+      <div class="nav-section">
+        <div class="nav-section-title">Introduction</div>
+        <a href="#intro"><span class="dot"></span> Vue d'ensemble</a>
+        <a href="#navigation"><span class="dot"></span> Navigation</a>
+        <a href="#permissions"><span class="dot"></span> Permissions requises</a>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">Contrats</div>
+        <a href="#creer-contrat"><span class="nav-step-num">1</span> Créer un contrat</a>
+        <a href="#valider-essai"><span class="nav-step-num">2</span> Valider la période d'essai</a>
+        <a href="#renouveler-cdd"><span class="nav-step-num">3</span> Renouveler un CDD</a>
+        <a href="#convertir-cdi"><span class="nav-step-num">4</span> Convertir en CDI</a>
+        <a href="#historique"><span class="nav-step-num">5</span> Voir l'historique</a>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">Alertes</div>
+        <a href="#alertes-sidebar"><span class="dot"></span> Badges dans la barre latérale</a>
+        <a href="#alertes-gestion"><span class="dot"></span> Acquitter une alerte</a>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">Référence</div>
+        <a href="#statuts"><span class="dot"></span> Tableau des statuts</a>
+        <a href="#types-contrat"><span class="dot"></span> Types de contrats</a>
+        <a href="#machine-etats"><span class="dot"></span> Machine à états</a>
+      </div>
+    </nav>
+  </aside>
+
+  <!-- ═══════════════════ MAIN ═══════════════════ -->
+  <main class="main">
+
+    <!-- Hero -->
+    <div class="hero">
+      <div class="hero-eyebrow">Documentation · DAF360 RH</div>
+      <h1>Cycle de Vie des Contrats</h1>
+      <p>Guide complet pour créer, gérer et suivre les contrats des collaborateurs — de l'embauche à l'archivage.</p>
+      <div class="hero-meta">
+        <div class="hero-meta-item">📋 <strong>6 types</strong> de contrats supportés</div>
+        <div class="hero-meta-item">🔔 <strong>Alertes automatiques</strong> 30 jours avant expiry</div>
+        <div class="hero-meta-item">📜 <strong>Audit complet</strong> de toutes les transitions</div>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- ══════════════ INTRODUCTION ══════════════ -->
+      <section id="intro">
+        <h2>Vue d'ensemble</h2>
+        <p class="section-intro">
+          Le moteur de cycle de vie des contrats gère l'ensemble de la vie contractuelle d'un collaborateur,
+          depuis son recrutement jusqu'à l'archivage de son dossier.
+        </p>
+
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="summary-card-icon">📄</div>
+            <div class="summary-card-title">Gestion des contrats</div>
+            <div class="summary-card-desc">Créer, modifier et suivre tous les types de contrats : CDI, CDD, CIVP, Stage, Détachement, Portage.</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-card-icon">⏱️</div>
+            <div class="summary-card-title">Périodes d'essai</div>
+            <div class="summary-card-desc">Suivi automatique des périodes d'essai avec calcul des dates selon le profil (3 ou 6 mois).</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-card-icon">🔔</div>
+            <div class="summary-card-title">Alertes proactives</div>
+            <div class="summary-card-desc">Notifications automatiques 30 jours avant l'expiration envoyées à RH, IT et Direction.</div>
+          </div>
+        </div>
+
+        <div class="callout callout-info">
+          <div class="callout-icon">ℹ️</div>
+          <div class="callout-body">
+            <div class="callout-title">Où trouver cette fonctionnalité ?</div>
+            <p class="callout-text">
+              La section "Contrats &amp; Cycle de vie" se trouve dans chaque fiche collaborateur, accessible via
+              <strong>Profils → [Nom du collaborateur]</strong> puis en dépliant la section correspondante.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <!-- ══════════════ NAVIGATION ══════════════ -->
+      <section id="navigation">
+        <h2>Naviguer vers la section</h2>
+        <p class="section-intro">La gestion des contrats est intégrée directement dans la fiche de chaque collaborateur.</p>
+
+        <div class="steps">
+          <div class="step">
+            <div class="step-left">
+              <div class="step-num">1</div>
+              <div class="step-line"></div>
+            </div>
+            <div class="step-body">
+              <div class="step-title">Ouvrir le menu Profils</div>
+              <div class="step-desc">Dans la barre de navigation gauche, cliquez sur <strong>Profils</strong>. La liste de tous les collaborateurs s'affiche.</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-left">
+              <div class="step-num">2</div>
+              <div class="step-line"></div>
+            </div>
+            <div class="step-body">
+              <div class="step-title">Sélectionner un collaborateur</div>
+              <div class="step-desc">Cliquez sur la ligne du collaborateur souhaité pour ouvrir sa fiche détaillée.</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-left">
+              <div class="step-num">3</div>
+              <div class="step-line"></div>
+            </div>
+            <div class="step-body">
+              <div class="step-title">Déplier la section "Contrats &amp; Cycle de vie"</div>
+              <div class="step-desc">Faites défiler vers le bas jusqu'à trouver la section. Cliquez sur son en-tête pour la déplier. Les données sont chargées à la première ouverture.</div>
+
+              <div class="ui-mockup" style="margin-top:16px;">
+                <div class="ui-mockup-bar">
+                  <div class="ui-dot ui-dot-r"></div>
+                  <div class="ui-dot ui-dot-y"></div>
+                  <div class="ui-dot ui-dot-g"></div>
+                  <div class="ui-url">http://localhost:4200/hr/profiles/42</div>
+                </div>
+                <div class="ui-body">
+                  <div class="mock-section-card" style="opacity:.4;">
+                    <div class="mock-section-header">
+                      <span class="mock-section-title">Coordonnées bancaires <span style="font-size:10px;background:#fef3c7;color:#b45309;padding:1px 7px;border-radius:999px;font-weight:600;">Confidentiel</span></span>
+                      <span class="mock-chevron">›</span>
+                    </div>
+                  </div>
+
+                  <div class="mock-section-card" style="border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-light);">
+                    <div class="mock-section-header" style="background:var(--teal-light);">
+                      <span class="mock-section-title" style="color:var(--teal);">
+                        Contrats &amp; Cycle de vie
+                        <span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;border-radius:999px;background:var(--teal);color:#fff;font-size:10px;font-weight:700;padding:0 4px;">2</span>
+                      </span>
+                      <span class="mock-chevron open" style="color:var(--teal);">›</span>
+                    </div>
+                    <div class="mock-section-body">
+                      <span style="font-size:13px;color:var(--gray-500);">Chargement des contrats…</span>
+                    </div>
+                  </div>
+
+                  <div class="mock-section-card" style="opacity:.4;">
+                    <div class="mock-section-header">
+                      <span class="mock-section-title">Historique des contrats</span>
+                      <span class="mock-chevron">›</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p class="annotation">La section "Contrats &amp; Cycle de vie" s'affiche entre les coordonnées bancaires et l'historique des contrats. Le badge indique le nombre total de contrats.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <!-- ══════════════ PERMISSIONS ══════════════ -->
+      <section id="permissions">
+        <h2>Permissions requises</h2>
+        <p class="section-intro">Les actions disponibles dépendent du rôle de l'utilisateur connecté.</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Permission requise</th>
+              <th>Rôle typique</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Voir les contrats</td>
+              <td><span class="perm-chip">RH_VIEW_CONTRACTS</span></td>
+              <td>RH, Responsable RH, Admin</td>
+            </tr>
+            <tr>
+              <td>Créer / modifier des contrats</td>
+              <td><span class="perm-chip">RH_MANAGE_LIFECYCLE</span></td>
+              <td>Responsable RH, Admin</td>
+            </tr>
+            <tr>
+              <td>Approuver une période d'essai</td>
+              <td><span class="perm-chip">RH_MANAGE_LIFECYCLE</span></td>
+              <td>Responsable RH, Admin</td>
+            </tr>
+            <tr>
+              <td>Recevoir des alertes d'expiration</td>
+              <td><span class="perm-chip">RH_VIEW_CONTRACTS</span></td>
+              <td>RH, IT (pour <span class="perm-chip">RH_MANAGE_LIFECYCLE</span>), Direction</td>
+            </tr>
+            <tr>
+              <td>Modifier la configuration pays</td>
+              <td><span class="perm-chip">HR_ADMIN_ROLES</span></td>
+              <td>Admin uniquement</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout callout-warning">
+          <div class="callout-icon">⚠️</div>
+          <div class="callout-body">
+            <div class="callout-title">Accès restreint</div>
+            <p class="callout-text">
+              Les boutons d'action ("+ Nouveau contrat", "Valider période d'essai", etc.) sont <strong>masqués automatiquement</strong> si l'utilisateur n'a pas la permission <span class="perm-chip">RH_MANAGE_LIFECYCLE</span>. Les utilisateurs en lecture seule voient les contrats mais ne peuvent pas les modifier.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <!-- ══════════════ CRÉER UN CONTRAT ══════════════ -->
+      <section id="creer-contrat">
+        <h2>1 · Créer un nouveau contrat</h2>
+        <p class="section-intro">
+          La création d'un contrat initialise le cycle de vie du collaborateur.
+          Selon le type choisi, des champs spécifiques apparaissent.
+        </p>
+
+        <div class="steps">
+          <div class="step">
+            <div class="step-left"><div class="step-num">1</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Ouvrir le formulaire</div>
+              <div class="step-desc">Dans la section "Contrats &amp; Cycle de vie", cliquez sur le bouton <strong>+ Nouveau contrat</strong>. Une fenêtre modale s'ouvre.</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-num">2</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Sélectionner le type de contrat</div>
+              <div class="step-desc">Cliquez sur l'un des 6 types disponibles. Le formulaire s'adapte automatiquement selon votre choix.</div>
+
+              <div class="ui-mockup" style="margin-top:16px;">
+                <div class="ui-mockup-bar">
+                  <div class="ui-dot ui-dot-r"></div><div class="ui-dot ui-dot-y"></div><div class="ui-dot ui-dot-g"></div>
+                  <span style="font-size:12px;color:var(--gray-500);margin-left:8px;">Modal — Nouveau contrat</span>
+                </div>
+                <div class="ui-body">
+                  <div class="mock-modal">
+                    <div class="mock-modal-header">
+                      <span class="mock-modal-title">Nouveau contrat</span>
+                      <span style="color:var(--gray-300);cursor:default;">✕</span>
+                    </div>
+                    <div class="mock-modal-body">
+                      <div class="mock-form-group">
+                        <span class="mock-label">Type de contrat *</span>
+                        <div class="type-chips">
+                          <span class="type-chip active">CDI</span>
+                          <span class="type-chip">CDD</span>
+                          <span class="type-chip">CIVP</span>
+                          <span class="type-chip">Stage</span>
+                          <span class="type-chip">Détachement</span>
+                          <span class="type-chip">Portage</span>
+                        </div>
+                      </div>
+                      <div class="mock-form-row">
+                        <div class="mock-form-group">
+                          <span class="mock-label">Date de début *</span>
+                          <div class="mock-input">01/07/2026</div>
+                        </div>
+                      </div>
+                      <div class="mock-form-group">
+                        <span class="mock-label">Référence contrat</span>
+                        <div class="mock-input" style="color:var(--gray-300);">ex: CTR-2026-001</div>
+                      </div>
+                      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--gray-700);cursor:default;">
+                        <input type="checkbox" checked readonly /> Profil encadrant (période d'essai 6 mois au lieu de 3)
+                      </label>
+                    </div>
+                    <div class="mock-modal-footer">
+                      <button class="mock-btn mock-btn-ghost">Annuler</button>
+                      <button class="mock-btn mock-btn-primary">Créer le contrat</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-left"><div class="step-num">3</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Renseigner les champs selon le type</div>
+              <div class="step-desc">Certains champs n'apparaissent que pour certains types de contrats :</div>
+              <table style="margin-top:12px;">
+                <thead>
+                  <tr><th>Type</th><th>Champs requis</th><th>Champs optionnels</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><span class="badge badge-type">CDI</span></td><td>Date de début</td><td>Référence, ✓ Profil encadrant</td></tr>
+                  <tr><td><span class="badge badge-type">CDD</span></td><td>Date de début, <strong>Date de fin</strong></td><td>Référence</td></tr>
+                  <tr><td><span class="badge badge-type">CIVP</span></td><td>Date de début, <strong>Date de fin</strong></td><td>Référence ANETI, Date convention</td></tr>
+                  <tr><td><span class="badge badge-type">Stage</span></td><td>Date de début, <strong>Date de fin</strong></td><td>École / Université, ✓ Convention signée</td></tr>
+                  <tr><td><span class="badge badge-type">Détachement</span></td><td>Date de début, <strong>Date de fin</strong></td><td>Date retour prévu</td></tr>
+                  <tr><td><span class="badge badge-type">Portage</span></td><td>Date de début</td><td>Référence</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-left"><div class="step-num">4</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Valider la création</div>
+              <div class="step-desc">Cliquez sur <strong>Créer le contrat</strong>. La liste se rafraîchit automatiquement. Pour un CDI, le statut initial est <span class="badge badge-essai">Période d'essai</span> avec la date de fin calculée automatiquement.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout callout-info">
+          <div class="callout-icon">💡</div>
+          <div class="callout-body">
+            <div class="callout-title">Calcul automatique de la période d'essai (CDI)</div>
+            <p class="callout-text">
+              Pour un CDI, la date de fin de période d'essai est calculée automatiquement selon la configuration Tunisie :
+              <br>• <strong>Profil standard :</strong> 90 jours à partir de la date de début
+              <br>• <strong>Profil encadrant</strong> (case cochée) <strong>:</strong> 180 jours
+              <br>La durée peut être configurée par pays via <strong>Admin → Configuration cycles de vie</strong>.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <!-- ══════════════ PÉRIODE D'ESSAI ══════════════ -->
+      <section id="valider-essai">
+        <h2>2 · Valider la période d'essai</h2>
+        <p class="section-intro">
+          À l'issue de la période d'essai d'un CDI, le responsable RH doit statuer :
+          approuver ou refuser le recrutement définitif.
+        </p>
+
+        <div class="callout callout-warning">
+          <div class="callout-icon">⚠️</div>
+          <div class="callout-body">
+            <div class="callout-title">Action irréversible</div>
+            <p class="callout-text">
+              Le refus d'une période d'essai passe le contrat en statut <span class="badge badge-resilie">Résilié</span> et
+              <strong>verrouille définitivement</strong> le dossier. Cette action ne peut pas être annulée.
+            </p>
+          </div>
+        </div>
+
+        <div class="steps">
+          <div class="step">
+            <div class="step-left"><div class="step-num">1</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Identifier le contrat en période d'essai</div>
+              <div class="step-desc">Dans la liste des contrats, repérez la carte affichant le badge <span class="badge badge-essai">Période d'essai</span> et la date de fin avec le nombre de jours restants.</div>
+
+              <div class="ui-mockup" style="margin-top:14px;">
+                <div class="ui-body">
+                  <div class="mock-contract-card">
+                    <div class="mock-contract-header">
+                      <div>
+                        <div class="mock-chips" style="margin-bottom:6px;">
+                          <strong style="font-size:13px;color:#1d2b3e;">CDI</strong>
+                          <span class="badge badge-essai">Période d'essai</span>
+                          <span class="badge badge-actif" style="font-size:10px;">Actif</span>
+                        </div>
+                        <div class="mock-dates">
+                          <span>Début : 01/07/2026</span>
+                          <span class="mock-warning">⏱ Période d'essai → 29/09/2026 (14 j)</span>
+                        </div>
+                        <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">Réf : CTR-2026-001</div>
+                      </div>
+                      <div class="mock-actions">
+                        <button class="mock-btn mock-btn-outline">Valider période d'essai</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-left"><div class="step-num">2</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Cliquer sur "Valider période d'essai"</div>
+              <div class="step-desc">La fenêtre de validation s'ouvre. Choisissez l'issue.</div>
+
+              <div class="ui-mockup" style="margin-top:14px;">
+                <div class="ui-body">
+                  <div class="mock-modal">
+                    <div class="mock-modal-header">
+                      <span class="mock-modal-title">Valider la période d'essai</span>
+                      <span style="color:var(--gray-300);">✕</span>
+                    </div>
+                    <div class="mock-modal-body">
+                      <div class="mock-radio-group">
+                        <label class="mock-radio-option">
+                          <div class="mock-radio selected"></div>
+                          <span>Approuver — passer en <span class="badge badge-confirme" style="font-size:10px;">Confirmé</span></span>
+                        </label>
+                        <label class="mock-radio-option">
+                          <div class="mock-radio"></div>
+                          <span>Refuser — résilier le contrat</span>
+                        </label>
+                      </div>
+                      <div class="mock-form-group">
+                        <span class="mock-label">Commentaire</span>
+                        <div class="mock-input" style="min-height:60px;color:var(--gray-300);">Motif ou observations…</div>
+                      </div>
+                    </div>
+                    <div class="mock-modal-footer">
+                      <button class="mock-btn mock-btn-ghost">Annuler</button>
+                      <button class="mock-btn mock-btn-primary">Confirmer</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-left"><div class="step-num">3</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Résultat selon le choix</div>
+              <div class="step-desc">
+                <strong>Approuver</strong> → Le contrat passe en statut <span class="badge badge-confirme">Confirmé</span> (ACTIF_CONFIRME). L'essai est validé, l'employé est confirmé dans son poste.<br><br>
+                <strong>Refuser</strong> → Le contrat passe en statut <span class="badge badge-resilie">Résilié</span> et le dossier est <span class="badge badge-locked">Verrouillé</span>. Aucune autre action n'est possible sur ce contrat.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <!-- ══════════════ RENOUVELER CDD ══════════════ -->
+      <section id="renouveler-cdd">
+        <h2>3 · Renouveler un CDD</h2>
+        <p class="section-intro">
+          Un CDD peut être renouvelé avant son expiration. Le compteur de renouvellements est
+          incrémenté automatiquement à chaque renouvellement.
+        </p>
+
+        <div class="steps">
+          <div class="step">
+            <div class="step-left"><div class="step-num">1</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Identifier le CDD actif à renouveler</div>
+              <div class="step-desc">Le bouton "Renouveler CDD" apparaît sur les contrats CDD en statut <span class="badge badge-actif">Actif</span>. Notez l'avertissement d'expiration si la date est proche.</div>
+
+              <div class="ui-mockup" style="margin-top:14px;">
+                <div class="ui-body">
+                  <div class="mock-contract-card">
+                    <div class="mock-contract-header">
+                      <div>
+                        <div class="mock-chips" style="margin-bottom:6px;">
+                          <strong style="font-size:13px;color:#1d2b3e;">CDD</strong>
+                          <span class="badge badge-actif">Actif</span>
+                        </div>
+                        <div class="mock-dates">
+                          <span>Début : 01/01/2026</span>
+                          <span>Fin prévue : 31/07/2026</span>
+                          <span class="mock-warning">⚠ 13 jour(s) restant(s)</span>
+                        </div>
+                      </div>
+                      <div class="mock-actions">
+                        <button class="mock-btn mock-btn-outline">Renouveler CDD</button>
+                        <button class="mock-btn mock-btn-outline">Convertir en CDI</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-left"><div class="step-num">2</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Saisir la nouvelle date de fin</div>
+              <div class="step-desc">Dans la fenêtre modale, renseignez la nouvelle date de fin. Elle doit être postérieure à la date de fin actuelle. Le commentaire est facultatif.</div>
+
+              <div class="ui-mockup" style="margin-top:14px;">
+                <div class="ui-body">
+                  <div class="mock-modal">
+                    <div class="mock-modal-header">
+                      <span class="mock-modal-title">Renouveler le CDD</span>
+                      <span style="color:var(--gray-300);">✕</span>
+                    </div>
+                    <div class="mock-modal-body">
+                      <div class="mock-form-group">
+                        <span class="mock-label">Nouvelle date de fin *</span>
+                        <div class="mock-input">31/12/2026</div>
+                      </div>
+                      <div class="mock-form-group">
+                        <span class="mock-label">Commentaire</span>
+                        <div class="mock-input" style="color:var(--gray-300);min-height:48px;">Renouvellement annuel</div>
+                      </div>
+                    </div>
+                    <div class="mock-modal-footer">
+                      <button class="mock-btn mock-btn-ghost">Annuler</button>
+                      <button class="mock-btn mock-btn-primary">Renouveler</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-left"><div class="step-num">3</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Vérifier le résultat</div>
+              <div class="step-desc">La carte du contrat affiche la nouvelle date de fin. Le statut reste <span class="badge badge-renouvele">Renouvelé</span> puis repasse en <span class="badge badge-actif">Actif</span>. L'historique des transitions enregistre l'opération.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout callout-info">
+          <div class="callout-icon">💡</div>
+          <div class="callout-body">
+            <div class="callout-title">Compteur de renouvellements</div>
+            <p class="callout-text">Chaque renouvellement incrémente le compteur interne <code>cdd_renouvellement_count</code>. En Tunisie, la loi limite les renouvellements — la configuration pays peut être ajustée par un administrateur.</p>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <!-- ══════════════ CONVERTIR EN CDI ══════════════ -->
+      <section id="convertir-cdi">
+        <h2>4 · Convertir un CDD en CDI</h2>
+        <p class="section-intro">
+          Lorsqu'un CDD (ou CIVP) est transformé en CDI définitif,
+          cette opération crée automatiquement un nouveau contrat CDI et clôture l'ancien.
+        </p>
+
+        <div class="steps">
+          <div class="step">
+            <div class="step-left"><div class="step-num">1</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Cliquer sur "Convertir en CDI"</div>
+              <div class="step-desc">Ce bouton apparaît sur les contrats CDD actifs. Cliquez dessus pour ouvrir la fenêtre de conversion.</div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-left"><div class="step-num">2</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Renseigner la date de début du CDI</div>
+              <div class="step-desc">Cette date devient la date de début du nouveau contrat CDI. Généralement le lendemain de la fin du CDD.</div>
+
+              <div class="ui-mockup" style="margin-top:14px;">
+                <div class="ui-body">
+                  <div class="mock-modal">
+                    <div class="mock-modal-header">
+                      <span class="mock-modal-title">Convertir en CDI</span>
+                      <span style="color:var(--gray-300);">✕</span>
+                    </div>
+                    <div class="mock-modal-body">
+                      <div class="mock-form-group">
+                        <span class="mock-label">Date de début du CDI *</span>
+                        <div class="mock-input">01/01/2027</div>
+                      </div>
+                      <div class="mock-form-group">
+                        <span class="mock-label">Commentaire</span>
+                        <div class="mock-input" style="color:var(--gray-300);min-height:48px;">Intégration définitive suite à CDD satisfaisant</div>
+                      </div>
+                    </div>
+                    <div class="mock-modal-footer">
+                      <button class="mock-btn mock-btn-ghost">Annuler</button>
+                      <button class="mock-btn mock-btn-primary">Convertir</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-left"><div class="step-num">3</div><div class="step-line"></div></div>
+            <div class="step-body">
+              <div class="step-title">Résultat de la conversion</div>
+              <div class="step-desc">Deux contrats apparaissent maintenant dans la liste :</div>
+              <div class="ui-mockup" style="margin-top:14px;">
+                <div class="ui-body">
+                  <div class="mock-contract-card">
+                    <div class="mock-contract-header">
+                      <div>
+                        <div class="mock-chips" style="margin-bottom:6px;">
+                          <strong style="font-size:13px;color:#1d2b3e;">CDI</strong>
+                          <span class="badge badge-essai">Période d'essai</span>
+                          <span class="badge badge-actif" style="font-size:10px;">Actif</span>
+                        </div>
+                        <div class="mock-dates">
+                          <span>Début : 01/01/2027</span>
+                          <span>Période d'essai → 01/04/2027</span>
+                        </div>
+                      </div>
+                      <div class="mock-actions">
+                        <button class="mock-btn mock-btn-outline">Valider période d'essai</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="mock-contract-card" style="opacity:.6;">
+                    <div class="mock-chips" style="margin-bottom:6px;">
+                      <strong style="font-size:13px;color:#1d2b3e;">CDD</strong>
+                      <span class="badge badge-converti">Converti en CDI</span>
+                      <span class="badge badge-locked">Dossier verrouillé</span>
+                    </div>
+                    <div class="mock-dates">
+                      <span>Début : 01/01/2026</span>
+                      <span>Fin : 31/12/2026</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p class="annotation">Le CDD est clôturé avec le statut "Converti en CDI" et verrouillé. Un nouveau CDI démarre en période d'essai.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <!-- ══════════════ HISTORIQUE ══════════════ -->
+      <section id="historique">
+        <h2>5 · Consulter l'historique des transitions</h2>
+        <p class="section-intro">
+          Toutes les actions sur les contrats sont enregistrées dans un journal
+          d'audit immuable, visible directement dans la section.
+        </p>
+
+        <p>Faites défiler vers le bas de la section "Contrats &amp; Cycle de vie" pour voir la timeline des transitions :</p>
+
+        <div class="ui-mockup" style="margin-top:16px;">
+          <div class="ui-body">
+            <p style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#44474c;margin:0 0 14px;">
+              Historique des transitions
+            </p>
+            <div class="mock-timeline">
+              <div class="mock-tl-row">
+                <div class="mock-tl-left">
+                  <div class="mock-tl-dot"></div>
+                  <div class="mock-tl-line"></div>
+                </div>
+                <div class="mock-tl-card">
+                  <div class="mock-tl-badges">
+                    <span class="badge badge-essai" style="font-size:10px;">Période d'essai</span>
+                    <span style="font-size:11px;color:var(--gray-500);">→</span>
+                    <span class="badge badge-confirme" style="font-size:10px;">Confirmé</span>
+                    <span class="mock-tl-date" style="margin-left:auto;">15/09/2026</span>
+                  </div>
+                  <span class="mock-tl-note">Excellente intégration, collaboration proactive.</span>
+                </div>
+              </div>
+              <div class="mock-tl-row">
+                <div class="mock-tl-left">
+                  <div class="mock-tl-dot" style="background:var(--gray-300);"></div>
+                  <div class="mock-tl-line"></div>
+                </div>
+                <div class="mock-tl-card">
+                  <div class="mock-tl-badges">
+                    <span style="font-size:10px;padding:1px 7px;border-radius:999px;font-weight:600;background:#f1f5f9;color:#475569;">—</span>
+                    <span style="font-size:11px;color:var(--gray-500);">→</span>
+                    <span class="badge badge-essai" style="font-size:10px;">Période d'essai</span>
+                    <span class="mock-tl-date" style="margin-left:auto;">01/07/2026</span>
+                  </div>
+                  <span class="mock-tl-note">Création du contrat CDI.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout callout-success">
+          <div class="callout-icon">🔒</div>
+          <div class="callout-body">
+            <div class="callout-title">Audit immuable</div>
+            <p class="callout-text">
+              Le journal d'audit est en <strong>écriture seule</strong> — aucune entrée ne peut être modifiée ou supprimée.
+              Chaque ligne enregistre : l'état avant, l'état après, l'action réalisée, l'utilisateur et la date/heure exacte.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <!-- ══════════════ ALERTES ══════════════ -->
+      <section id="alertes-sidebar">
+        <h2>Alertes d'expiration</h2>
+        <p class="section-intro">
+          Un job automatique s'exécute chaque matin à 08h00 et envoie des alertes
+          pour les contrats qui expirent dans les 30 prochains jours.
+        </p>
+
+        <h3>Badge dans la barre de navigation</h3>
+        <p>Quand des alertes non acquittées existent pour votre pays, un badge rouge apparaît à côté de l'élément <strong>Lifecycle</strong> dans la barre latérale :</p>
+
+        <div class="ui-mockup" style="max-width:300px;margin:16px 0;">
+          <div class="ui-body" style="background:var(--gray-900);border-radius:8px;">
+            <div class="mock-nav-item" style="opacity:.4;background:none;color:#94a3b8;">
+              <span>📋</span> <span>Profils</span>
+            </div>
+            <div class="mock-nav-item" style="opacity:.4;background:none;color:#94a3b8;">
+              <span>📅</span> <span>Congés</span>
+            </div>
+            <div class="mock-nav-item">
+              <span>⚡</span> <span>Lifecycle</span>
+              <span class="mock-nav-badge">3</span>
+            </div>
+            <div class="mock-nav-item" style="opacity:.4;background:none;color:#94a3b8;">
+              <span>⚙️</span> <span>Admin</span>
+            </div>
+          </div>
+        </div>
+        <p class="annotation">Le badge "3" indique 3 alertes non acquittées pour votre pays.</p>
+
+        <div id="alertes-gestion">
+          <h3>Qui reçoit les alertes ?</h3>
+          <p>Chaque alerte est envoyée simultanément à tous les utilisateurs de votre pays ayant l'un de ces rôles :</p>
+          <table>
+            <thead><tr><th>Rôle</th><th>Permission de routage</th><th>Méthode de notification</th></tr></thead>
+            <tbody>
+              <tr><td>RH / Responsable RH</td><td><span class="perm-chip">RH_VIEW_CONTRACTS</span></td><td>Notification in-app + Email</td></tr>
+              <tr><td>IT / Administrateur Système</td><td><span class="perm-chip">RH_MANAGE_LIFECYCLE</span></td><td>Notification in-app + Email</td></tr>
+              <tr><td>Directeur Pays</td><td><span class="perm-chip">RH_APPROVE_RECRUITMENT_DEMAND</span></td><td>Notification in-app + Email</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Acquitter une alerte (via API)</h3>
+          <p>Pour marquer une alerte comme traitée, utilisez l'endpoint suivant :</p>
+          <div class="code-block">
+<span class="kw">POST</span> /api/hr/lifecycle/alerts/<span class="num">{id}</span>/acknowledge
+Authorization: Bearer <span class="str">&lt;votre_token_jwt&gt;</span>
+
+<span class="cmt">// Réponse 200 OK</span>
+{
+  <span class="str">"id"</span>: <span class="num">42</span>,
+  <span class="str">"isAcknowledged"</span>: <span class="kw">true</span>,
+  <span class="str">"acknowledgedAt"</span>: <span class="str">"2026-07-01T09:15:00+01:00"</span>
+}
+          </div>
+
+          <h3>Déclencher manuellement le job d'alertes</h3>
+          <p>Pour un administrateur, il est possible de déclencher le traitement immédiatement sans attendre 08h00 :</p>
+          <div class="code-block">
+<span class="kw">POST</span> /api/hr/lifecycle/alerts/process
+Authorization: Bearer <span class="str">&lt;token_admin&gt;</span>
+
+<span class="cmt">// Réponse : 202 Accepted</span>
+<span class="cmt">// Le traitement s'exécute en arrière-plan</span>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <!-- ══════════════ RÉFÉRENCE ══════════════ -->
+      <section id="statuts">
+        <h2>Référence — Tableau des statuts</h2>
+        <p class="section-intro">Chaque contrat passe par une série de statuts. Voici leur signification et leur représentation visuelle dans l'interface.</p>
+
+        <table>
+          <thead>
+            <tr><th>Statut</th><th>Badge</th><th>Signification</th><th>Dossier verrouillé ?</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>DRAFT</code></td>
+              <td><span class="badge badge-inactif">Brouillon</span></td>
+              <td>Contrat créé mais non encore activé</td>
+              <td>Non</td>
+            </tr>
+            <tr>
+              <td><code>PERIODE_ESSAI</code></td>
+              <td><span class="badge badge-essai">Période d'essai</span></td>
+              <td>CDI en cours d'évaluation. Action requise avant la date de fin.</td>
+              <td>Non</td>
+            </tr>
+            <tr>
+              <td><code>ACTIF</code></td>
+              <td><span class="badge badge-actif">Actif</span></td>
+              <td>Contrat en cours d'exécution normale</td>
+              <td>Non</td>
+            </tr>
+            <tr>
+              <td><code>ACTIF_CONFIRME</code></td>
+              <td><span class="badge badge-confirme">Confirmé</span></td>
+              <td>Période d'essai validée, employé confirmé dans son poste</td>
+              <td>Non</td>
+            </tr>
+            <tr>
+              <td><code>RENOUVELE</code></td>
+              <td><span class="badge badge-renouvele">Renouvelé</span></td>
+              <td>CDD renouvelé avec une nouvelle date de fin</td>
+              <td>Non</td>
+            </tr>
+            <tr>
+              <td><code>CONVERTI</code></td>
+              <td><span class="badge badge-converti">Converti en CDI</span></td>
+              <td>CDD/CIVP transformé en CDI — contrat source clôturé</td>
+              <td><strong>Oui</strong></td>
+            </tr>
+            <tr>
+              <td><code>EXPIRE</code></td>
+              <td><span class="badge badge-expire">Expiré</span></td>
+              <td>Date de fin atteinte sans renouvellement</td>
+              <td><strong>Oui</strong></td>
+            </tr>
+            <tr>
+              <td><code>RESILIE</code></td>
+              <td><span class="badge badge-resilie">Résilié</span></td>
+              <td>Contrat résilié (refus d'essai, démission, licenciement…)</td>
+              <td><strong>Oui</strong></td>
+            </tr>
+            <tr>
+              <td><code>INACTIF</code></td>
+              <td><span class="badge badge-inactif">Inactif</span></td>
+              <td>État terminal — dossier archivé</td>
+              <td><strong>Oui</strong></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout callout-error">
+          <div class="callout-icon">🔒</div>
+          <div class="callout-body">
+            <div class="callout-title">Dossier verrouillé</div>
+            <p class="callout-text">
+              Lorsqu'un contrat atteint un état terminal (Expiré, Résilié, Converti, Inactif),
+              le champ <strong>"Dossier verrouillé"</strong> passe à <code>true</code>.
+              Toute tentative de transition ultérieure sera rejetée avec le message :
+              <em>"Ce contrat est verrouillé (état terminal atteint)."</em>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <section id="types-contrat">
+        <h2>Référence — Types de contrats</h2>
+        <table>
+          <thead>
+            <tr><th>Code</th><th>Libellé</th><th>Date fin obligatoire</th><th>Période d'essai</th><th>Champs spécifiques</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-type">CDI</span></td>
+              <td>Contrat à Durée Indéterminée</td>
+              <td>Non</td>
+              <td>Oui (3 ou 6 mois)</td>
+              <td>Profil encadrant</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-type">CDD</span></td>
+              <td>Contrat à Durée Déterminée</td>
+              <td><strong>Oui</strong></td>
+              <td>Non</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-type">CIVP</span></td>
+              <td>Contrat d'Insertion à la Vie Professionnelle</td>
+              <td><strong>Oui</strong></td>
+              <td>Non</td>
+              <td>Référence ANETI, date convention</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-type">STAGE</span></td>
+              <td>Stage académique</td>
+              <td><strong>Oui</strong></td>
+              <td>Non</td>
+              <td>École / Université, ✓ Convention signée</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-type">DETACHEMENT</span></td>
+              <td>Détachement inter-entités</td>
+              <td><strong>Oui</strong></td>
+              <td>Non</td>
+              <td>Date de retour prévu</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-type">PORTAGE</span></td>
+              <td>Portage salarial</td>
+              <td>Non</td>
+              <td>Non</td>
+              <td>—</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <hr class="divider" />
+
+      <section id="machine-etats">
+        <h2>Référence — Machine à états</h2>
+        <p class="section-intro">Les transitions autorisées par type de contrat. Seules ces transitions peuvent être demandées ; toute autre sera rejetée par le backend.</p>
+
+        <h3>CDI</h3>
+        <div class="code-block">
+RECRUTEMENT  →  PERIODE_ESSAI
+PERIODE_ESSAI  →  ACTIF  (approuvé)
+               →  RUPTURE_PE  (refusé)  🔒
+ACTIF  →  ACTIF | SUSPENDU | FIN_CONTRAT | RETRAITE
+SUSPENDU  →  ACTIF | FIN_CONTRAT
+FIN_CONTRAT  →  INACTIF  🔒
+RETRAITE  →  INACTIF  🔒
+        </div>
+
+        <h3>CDD</h3>
+        <div class="code-block">
+RECRUTEMENT  →  PERIODE_ESSAI
+PERIODE_ESSAI  →  ACTIF | RUPTURE_PE  🔒
+ACTIF  →  RENOUVELLEMENT_CDD | CONVERSION_CDI | FIN_CONTRAT  🔒
+RENOUVELLEMENT_CDD  →  ACTIF | FIN_CONTRAT  🔒
+CONVERSION_CDI  →  ACTIF  (nouveau CDI créé)
+FIN_CONTRAT  →  INACTIF  🔒
+        </div>
+
+        <h3>CIVP</h3>
+        <div class="code-block">
+RECRUTEMENT  →  PERIODE_ESSAI
+PERIODE_ESSAI  →  ACTIF | RUPTURE_PE  🔒
+ACTIF  →  CONVERSION_CDI | FIN_CONTRAT  🔒
+FIN_CONTRAT  →  INACTIF  🔒
+        </div>
+
+        <h3>STAGE</h3>
+        <div class="code-block">
+RECRUTEMENT  →  CONVENTION_SIGNEE
+CONVENTION_SIGNEE  →  STAGE_ACTIF
+STAGE_ACTIF  →  FIN_STAGE  🔒 | FIN_CONTRAT  🔒
+FIN_STAGE  →  INACTIF  🔒
+        </div>
+
+        <p><kbd>🔒</kbd> = état terminal — le dossier est verrouillé après cette transition.</p>
+      </section>
+
+      <hr class="divider" />
+
+      <!-- Footer -->
+      <div style="text-align:center;padding:32px 0 16px;color:var(--gray-300);font-size:12px;">
+        <strong style="color:var(--gray-500);">DAF360 RH</strong> · Guide Utilisateur — Cycle de Vie des Contrats · v1.0 · 2026-06-18<br>
+        Pour toute question, contacter l'équipe RH ou consulter la documentation technique dans <code>docs/employee-lifecycle-engine.md</code>
+      </div>
+
+    </div><!-- /content -->
+  </main>
+</div>
+</body>
+</html>

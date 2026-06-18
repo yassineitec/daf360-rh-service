@@ -34,7 +34,9 @@ public interface CandidateMapper {
      * Response DTO — derive label strings and IDs from FK entities.
      * itProvisioning is populated separately in CandidateService after loading ItProvisioning.
      */
-    @Mapping(target = "itProvisioning",      ignore = true)
+    @Mapping(target = "itProvisioning",               ignore = true)
+    @Mapping(target = "recruitmentDemandJobTitle",    ignore = true)
+    @Mapping(target = "employmentTypeLabel",           ignore = true)
     @Mapping(target = "nationalityId",        expression = "java(candidate.getNationality()    != null ? candidate.getNationality().getId()             : null)")
     @Mapping(target = "nationality",          expression = "java(candidate.getNationality()    != null ? candidate.getNationality().getLabelFr()        : null)")
     @Mapping(target = "appliedGradeId",       expression = "java(candidate.getAppliedGrade()   != null ? candidate.getAppliedGrade().getId()            : null)")
@@ -69,15 +71,17 @@ public interface CandidateMapper {
     @Mapping(target = "acceptedAt",      ignore = true)
     @Mapping(target = "createdAt",       ignore = true)
     @Mapping(target = "updatedAt",       ignore = true)
-    @Mapping(target = "cvPath",          ignore = true)
-    @Mapping(target = "cvOriginalName",  ignore = true)
-    @Mapping(target = "cvUploadedAt",    ignore = true)
-    @Mapping(target = "fitScore",        ignore = true)
+    @Mapping(target = "cvPath",                ignore = true)
+    @Mapping(target = "cvOriginalName",        ignore = true)
+    @Mapping(target = "cvUploadedAt",          ignore = true)
+    @Mapping(target = "fitScore",              ignore = true)
+    @Mapping(target = "recruitmentDemandId",   ignore = true)
+    @Mapping(target = "employmentTypeId",      ignore = true)
     // FK dimension fields — resolved by CandidateService after mapping
-    @Mapping(target = "nationality",       ignore = true)
-    @Mapping(target = "appliedGrade",      ignore = true)
-    @Mapping(target = "appliedDiscipline", ignore = true)
-    @Mapping(target = "department",        ignore = true)
+    @Mapping(target = "nationality",           ignore = true)
+    @Mapping(target = "appliedGrade",          ignore = true)
+    @Mapping(target = "appliedDiscipline",     ignore = true)
+    @Mapping(target = "department",            ignore = true)
     void updateEntity(@MappingTarget Candidate candidate, UpdateCandidateRequest request);
 
     // ── Computed helpers ───────────────────────────────────────────────────────

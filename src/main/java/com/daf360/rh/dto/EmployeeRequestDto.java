@@ -28,7 +28,6 @@ public class EmployeeRequestDto {
     private ContractType contractType;
 
     private Long departmentId;
-    private Long managerId;
     private String phone;
     private String position;
     private String azureOid;

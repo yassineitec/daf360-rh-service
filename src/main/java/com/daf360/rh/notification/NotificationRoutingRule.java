@@ -19,7 +19,7 @@ public class NotificationRoutingRule {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "event_type_id", nullable = false)
     private NotificationEventType eventType;
 
