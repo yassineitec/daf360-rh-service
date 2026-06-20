@@ -190,7 +190,7 @@ public class RecruitmentDemandService {
     public List<ApprovedDemandOption> getApprovedOptions(Long paysId) {
         return demandRepo.findByPaysIdAndStatutOrderByJobTitleAsc(paysId, RecruitmentDemandStatus.APPROUVEE)
                 .stream()
-                .map(d -> new ApprovedDemandOption(d.getId(), d.getJobTitle()))
+                .map(d -> new ApprovedDemandOption(d.getId(), d.getJobTitle(), d.getDepartment()))
                 .toList();
     }
 

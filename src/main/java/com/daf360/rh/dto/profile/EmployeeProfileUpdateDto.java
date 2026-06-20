@@ -39,7 +39,7 @@ public class EmployeeProfileUpdateDto {
     private Long nationalityId;
     @Email @Size(max = 255) private String personalEmail;
     @Size(max = 50)  private String phone;
-    @Size(max = 500) private String homeAddress;
+    @Size(max = 500) private String personalAddress;
     @Size(max = 500) private String photoUrl;
 
     // ── Emergency contact ─────────────────────────────────────────────────

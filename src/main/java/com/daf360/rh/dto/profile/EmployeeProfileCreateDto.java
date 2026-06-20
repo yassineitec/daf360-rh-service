@@ -59,7 +59,7 @@ public class EmployeeProfileCreateDto {
 
     @Size(max = 50) private String phone;
 
-    @Size(max = 500) private String homeAddress;
+    @Size(max = 500) private String personalAddress;
 
     // ── Emergency contact ────────────────────────────────────────────────────
     @Size(max = 255) private String emergencyContactName;

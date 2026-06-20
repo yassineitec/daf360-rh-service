@@ -9,4 +9,5 @@ import lombok.Data;
 public class ApprovedDemandOption {
     private Long id;
     private String label;
+    private String department;
 }
