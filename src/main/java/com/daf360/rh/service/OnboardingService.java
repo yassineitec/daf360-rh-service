@@ -402,6 +402,7 @@ public class OnboardingService {
         return OnboardingFormResponse.builder()
                 // Section 1 — Identity
                 .candidateId(c.getId())
+                .paysId(c.getPaysId())
                 .firstName(c.getFirstName())
                 .lastName(c.getLastName())
                 .emailPersonal(c.getEmailPersonal())
@@ -424,15 +425,18 @@ public class OnboardingService {
                 .contractEndDate(hasProfile ? existingProfile.getContractEndDate() : null)
                 .probationEndDate(hasProfile ? existingProfile.getProbationEndDate() : null)
                 .isOnProbation(hasProfile ? existingProfile.getIsOnProbation() : false)
-                // Dimension FK IDs
+                // Dimension FK IDs — profile first, then candidate fallback
                 .gradeId(hasProfile && existingProfile.getGrade() != null
-                        ? existingProfile.getGrade().getId() : null)
+                        ? existingProfile.getGrade().getId()
+                        : c.getAppliedGrade() != null ? c.getAppliedGrade().getId() : null)
                 .disciplineId(hasProfile && existingProfile.getDiscipline() != null
-                        ? existingProfile.getDiscipline().getId() : null)
+                        ? existingProfile.getDiscipline().getId()
+                        : c.getAppliedDiscipline() != null ? c.getAppliedDiscipline().getId() : null)
                 .nogLevelId(hasProfile && existingProfile.getNogLevel() != null
                         ? existingProfile.getNogLevel().getId() : null)
                 .departmentId(hasProfile && existingProfile.getDepartment() != null
-                        ? existingProfile.getDepartment().getId() : null)
+                        ? existingProfile.getDepartment().getId()
+                        : c.getDepartment() != null ? c.getDepartment().getId() : null)
                 // Section 3 — Regime
                 .availableRegimes(regimes.stream().map(this::toRegimeSummary).collect(Collectors.toList()))
                 .selectedRegimeId(hasDraft ? draft.getRegimeTemplateId()
@@ -440,7 +444,8 @@ public class OnboardingService {
                 // Section 4 — Personal & Social
                 .gender(hasProfile ? existingProfile.getGender() : null)
                 .nationalityId(hasProfile && existingProfile.getNationality() != null
-                        ? existingProfile.getNationality().getId() : null)
+                        ? existingProfile.getNationality().getId()
+                        : c.getNationality() != null ? c.getNationality().getId() : null)
                 .passportNumber(hasDraft ? draft.getPassportNumber()
                               : hasProfile ? existingProfile.getPassportNumber() : null)
                 .cnssNumber(hasDraft ? draft.getCnssNumber()
@@ -451,6 +456,8 @@ public class OnboardingService {
                              : hasProfile ? existingProfile.getMaritalStatus() : null)
                 .numberOfChildren(hasDraft ? draft.getNumberOfChildren()
                                 : hasProfile ? existingProfile.getNumberOfChildren() : null)
+                .homeAddress(hasDraft ? draft.getHomeAddress()
+                           : hasProfile ? existingProfile.getHomeAddress() : null)
                 // Section 5 — Bank / RIB
                 .bankId(hasProfile && existingProfile.getBank() != null
                         ? existingProfile.getBank().getId() : null)

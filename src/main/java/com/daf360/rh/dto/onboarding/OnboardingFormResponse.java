@@ -9,6 +9,8 @@ import java.util.List;
 
 @Data @Builder
 public class OnboardingFormResponse {
+    private Long paysId;
+
     // Section 1 — Identity (from candidate)
     private Long candidateId;
     private String firstName;
@@ -46,6 +48,7 @@ public class OnboardingFormResponse {
     private String    gender;
     private Long      nationalityId;
     private String    passportNumber;
+    private String    homeAddress;
     private String    cnssNumber;
     private LocalDate cnssAffiliationDate;
     private String    maritalStatus;
