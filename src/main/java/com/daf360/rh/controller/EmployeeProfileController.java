@@ -13,7 +13,10 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import com.daf360.rh.dto.absence.LeaveBalanceDto;
 import com.daf360.rh.dto.profile.FilterOptionsDto;
+import com.daf360.rh.service.AbsenceService;
+import java.util.List;
 import java.util.Map;
 import org.springframework.data.domain.Page;
 import org.springframework.http.MediaType;
@@ -25,6 +28,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class EmployeeProfileController {
 
     private final EmployeeProfileService profileService;
+    private final AbsenceService         absenceService;
 
     /**
      * POST /api/hr/profiles
@@ -193,6 +197,19 @@ public class EmployeeProfileController {
 
     private Long tryParseLong(String s) {
         try { return Long.valueOf(s); } catch (NumberFormatException e) { return null; }
+    }
+
+    // ── Leave balances ────────────────────────────────────────────────────────
+
+    /**
+     * GET /api/hr/profiles/{id}/leave-balances?annee={year}
+     * Leave balance per type for the given employee and year.
+     */
+    @GetMapping("/{id}/leave-balances")
+    public ResponseEntity<List<LeaveBalanceDto>> getLeaveBalances(
+            @PathVariable Long id,
+            @RequestParam(required = false) Integer annee) {
+        return ResponseEntity.ok(absenceService.getLeaveBalances(id, annee));
     }
 
     // ── Photo ─────────────────────────────────────────────────────────────────

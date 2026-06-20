@@ -52,7 +52,8 @@ public class EmployeeProfileService {
     private final NogLevelRepository     nogLevelRepo;
     private final HrDepartmentRepository departmentRepo;
     private final BankRepository         bankRepo;
-    private final NationalityRepository  nationalityRepo;
+    private final NationalityRepository        nationalityRepo;
+    private final WorkingTimeRegimeRepository  regimeRepo;
 
     // ── Create ────────────────────────────────────────────────────────────────
 
@@ -457,6 +458,16 @@ public class EmployeeProfileService {
                 }, profile.getUserId());
         } catch (Exception ignored) {
             // If Users row not found, leave matricule/fullName null
+        }
+        try {
+            String paysLabel = jdbcTemplate.queryForObject(
+                    "SELECT french_label FROM [dbo].[pays] WHERE id = ?",
+                    String.class, profile.getPaysId());
+            dto.setPaysLabel(paysLabel);
+        } catch (Exception ignored) {}
+        if (profile.getRegimeTemplateId() != null) {
+            regimeRepo.findById(profile.getRegimeTemplateId())
+                    .ifPresent(r -> dto.setRegimeLabelFr(r.getLabelFr()));
         }
         if (!hasSensitiveAccess(auth)) {
             maskSensitiveFields(dto);

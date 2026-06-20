@@ -11,7 +11,7 @@ public class EmployeeProfileResponseDto {
 
     private Long   id;
     private Long   userId;
-    private String   pays;
+    private String   paysLabel;
     private LifecycleStatus lifecycleStatus;
 
     // ── Identité depuis Users ─────────────────────────────────────────────────
@@ -35,6 +35,7 @@ public class EmployeeProfileResponseDto {
     private Long   nogLevelId;
     private String nogLevel;
     private Long   regimeTemplateId;
+    private String regimeLabelFr;
     private LocalDate regimeStartDate;
     private LocalDate regimeEndDate;
     private String regimeReason;
