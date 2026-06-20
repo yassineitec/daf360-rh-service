@@ -48,7 +48,7 @@ public class OnboardingFormResponse {
     private String    gender;
     private Long      nationalityId;
     private String    passportNumber;
-    private String    homeAddress;
+    private String    personalAddress;
     private String    cnssNumber;
     private LocalDate cnssAffiliationDate;
     private String    maritalStatus;

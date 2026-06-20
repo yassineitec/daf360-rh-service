@@ -27,7 +27,7 @@ public class SaveDraftRequest {
     private String nationality;
     private String nationalId;
     private String passportNumber;
-    private String homeAddress;
+    private String personalAddress;
     // Section 5 — Bank / RIB
     private String bankName;
     private String bankAccountNumber;

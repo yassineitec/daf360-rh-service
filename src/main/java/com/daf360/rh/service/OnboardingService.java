@@ -256,7 +256,7 @@ public class OnboardingService {
         profile.setPassportNumber(dto.getPassportNumber());
         // Contact
         profile.setPhone(candidate.getPhone());
-        profile.setHomeAddress(dto.getHomeAddress());
+        profile.setPersonalAddress(dto.getPersonalAddress());
         // Bank / RIB
         profile.setBankAccountNumber(dto.getBankAccountNumber());
         profile.setRib(dto.getRib());
@@ -456,8 +456,8 @@ public class OnboardingService {
                              : hasProfile ? existingProfile.getMaritalStatus() : null)
                 .numberOfChildren(hasDraft ? draft.getNumberOfChildren()
                                 : hasProfile ? existingProfile.getNumberOfChildren() : null)
-                .homeAddress(hasDraft ? draft.getHomeAddress()
-                           : hasProfile ? existingProfile.getHomeAddress() : null)
+                .personalAddress(hasDraft ? draft.getPersonalAddress()
+                               : hasProfile ? existingProfile.getPersonalAddress() : null)
                 // Section 5 — Bank / RIB
                 .bankId(hasProfile && existingProfile.getBank() != null
                         ? existingProfile.getBank().getId() : null)

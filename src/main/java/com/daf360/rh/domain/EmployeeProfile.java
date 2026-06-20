@@ -84,8 +84,8 @@ public class EmployeeProfile {
     @Column(name = "phone", length = 50)
     private String phone;
 
-    @Column(name = "home_address", length = 500, columnDefinition = "nvarchar(500)")
-    private String homeAddress;
+    @Column(name = "personal_address", length = 500, columnDefinition = "nvarchar(500)")
+    private String personalAddress;
 
     @Column(name = "emergency_contact_name", length = 255)
     private String emergencyContactName;

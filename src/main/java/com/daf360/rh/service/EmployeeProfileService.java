@@ -486,7 +486,7 @@ public class EmployeeProfileService {
         String token = "ARCHIVED_" + profile.getId();
         profile.setPersonalEmail(null);
         profile.setPhone(null);
-        profile.setHomeAddress(null);
+        profile.setPersonalAddress(null);
         profile.setDateOfBirth(null);
         profile.setGender(null);
         profile.setNationalId(null);

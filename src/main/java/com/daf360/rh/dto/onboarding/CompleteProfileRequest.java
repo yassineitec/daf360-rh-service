@@ -35,7 +35,7 @@ public class CompleteProfileRequest {
     private String gender;
     private String nationalId;
     private String passportNumber;
-    private String homeAddress;
+    private String personalAddress;
 
     // Section 5 — Bank / RIB (mandatory)
     @NotBlank private String rib;

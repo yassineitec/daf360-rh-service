@@ -46,7 +46,7 @@ public class EmployeeProfileResponseDto {
     private String    nationality;
     private String    personalEmail;
     private String    phone;
-    private String    homeAddress;
+    private String    personalAddress;
     private String    photoUrl;
 
     // ── Emergency contact ─────────────────────────────────────────────────
