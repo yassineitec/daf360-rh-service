@@ -80,6 +80,7 @@ public class SecurityConfig {
         origins.add("http://localhost:8080");
         origins.add("http://localhost:4200");
         origins.add("http://localhost:4201");
+        origins.add("http://localhost:8083");
         origins.addAll(appProperties.getAllowedOrigins());
         cfg.setAllowedOrigins(origins);
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
