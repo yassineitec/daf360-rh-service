@@ -72,13 +72,17 @@ public class ItProvisioningService {
     private final AuditService             auditService;
     private final JdbcTemplate             jdbc;
     private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
-    private final PdfDocumentService pdfDocumentService;
+    private final PdfDocumentService       pdfDocumentService;
+    private final com.daf360.rh.security.TenantService tenantService;
 
     // ── Queries ───────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<ProvisioningListItem> getPendingList() {
-        List<ItProvisioning> provs = itProvRepo.findByStatusIn(OPEN_STATUSES);
+        Long paysId = tenantService.getEffectivePaysId();
+        List<ItProvisioning> provs = paysId != null
+                ? itProvRepo.findByStatusInAndCandidatePaysId(OPEN_STATUSES, paysId)
+                : itProvRepo.findByStatusIn(OPEN_STATUSES);
         if (provs.isEmpty()) return List.of();
 
         Set<Long> candidateIds = provs.stream()

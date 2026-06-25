@@ -45,6 +45,7 @@ public class EmployeeProfileService {
     private final JdbcTemplate              jdbcTemplate;
     private final ObjectMapper              objectMapper;
     private final AppProperties             appProperties;
+    private final com.daf360.rh.security.TenantService tenantService;
 
     // ── Dimension repos injected for FK lookups ───────────────────────────────
     private final GradeRepository        gradeRepo;
@@ -103,8 +104,10 @@ public class EmployeeProfileService {
 
     @Transactional(readOnly = true)
     public Page<EmployeeProfileSummaryDto> listProfiles(ProfileFilterDto filter, Pageable pageable) {
+        Long effectivePaysId = tenantService.getEffectivePaysId();
+        Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : filter.getPaysId();
         return profileRepository.search(
-                filter.getPaysId(),
+                resolvedPaysId,
                 filter.getStatus(),
                 filter.getDepartment(),
                 filter.getGrade(),
@@ -219,7 +222,8 @@ public class EmployeeProfileService {
         String search     = (filter.getSearch() != null && !filter.getSearch().isBlank())
                             ? filter.getSearch().trim() : null;
         String searchLike = search != null ? "%" + search + "%" : null;
-        Long   paysId     = filter.getPaysId();
+        Long   effectivePaysId = tenantService.getEffectivePaysId();
+        Long   paysId          = effectivePaysId != null ? effectivePaysId : filter.getPaysId();
         String status     = (filter.getStatus() != null && !filter.getStatus().isBlank())
                             ? filter.getStatus() : null;
         // TODO: add department / grade label filters once V23 tables are migrated

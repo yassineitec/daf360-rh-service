@@ -36,6 +36,7 @@ public class RecruitmentDemandService {
     private final MailService   mailService;
     private final JdbcTemplate  jdbc;
     private final ObjectMapper  objectMapper;
+    private final com.daf360.rh.security.TenantService tenantService;
 
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
 
@@ -167,9 +168,11 @@ public class RecruitmentDemandService {
 
     @Transactional(readOnly = true)
     public Page<RecruitmentDemandSummary> listByPays(Long paysId, RecruitmentDemandStatus statut, Pageable pageable) {
+        Long effectivePaysId = tenantService.getEffectivePaysId();
+        Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : paysId;
         Page<RecruitmentDemand> page = (statut != null)
-                ? demandRepo.findByPaysIdAndStatutOrderBySubmittedAtDesc(paysId, statut, pageable)
-                : demandRepo.findByPaysIdOrderBySubmittedAtDesc(paysId, pageable);
+                ? demandRepo.findByPaysIdAndStatutOrderBySubmittedAtDesc(resolvedPaysId, statut, pageable)
+                : demandRepo.findByPaysIdOrderBySubmittedAtDesc(resolvedPaysId, pageable);
         return page.map(this::toSummary);
     }
 
@@ -188,7 +191,9 @@ public class RecruitmentDemandService {
 
     @Transactional(readOnly = true)
     public List<ApprovedDemandOption> getApprovedOptions(Long paysId) {
-        return demandRepo.findByPaysIdAndStatutOrderByJobTitleAsc(paysId, RecruitmentDemandStatus.APPROUVEE)
+        Long effectivePaysId = tenantService.getEffectivePaysId();
+        Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : paysId;
+        return demandRepo.findByPaysIdAndStatutOrderByJobTitleAsc(resolvedPaysId, RecruitmentDemandStatus.APPROUVEE)
                 .stream()
                 .map(d -> new ApprovedDemandOption(d.getId(), d.getJobTitle(), d.getDepartment()))
                 .toList();

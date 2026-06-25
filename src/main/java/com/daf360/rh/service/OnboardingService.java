@@ -56,6 +56,7 @@ public class OnboardingService {
     private final JdbcTemplate               jdbc;
     private final ObjectMapper               objectMapper;
     private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
+    private final com.daf360.rh.security.TenantService tenantService;
     // Dimension repos for FK resolution (V23)
     private final com.daf360.rh.repository.GradeRepository        gradeRepo;
     private final com.daf360.rh.repository.DisciplineRepository   disciplineRepo;
@@ -90,7 +91,10 @@ public class OnboardingService {
 
     @Transactional(readOnly = true)
     public List<OnboardingListItem> getPendingList() {
-        List<Candidate> candidates = candidateRepo.findByStatusIn(PENDING_STATUSES);
+        Long paysId = tenantService.getEffectivePaysId();
+        List<Candidate> candidates = paysId != null
+                ? candidateRepo.findByStatusInAndPaysId(PENDING_STATUSES, paysId)
+                : candidateRepo.findByStatusIn(PENDING_STATUSES);
 
         return candidates.stream()
                 .map(c -> {

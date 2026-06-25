@@ -71,6 +71,7 @@ public class CandidateService {
     private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
     private final EmployeeLifecycleService   lifecycleService;
     private final ContractTypeBridge         contractTypeBridge;
+    private final com.daf360.rh.security.TenantService tenantService;
 
     // ── Dimension repos for FK resolution ────────────────────────────────────
     private final NationalityRepository           nationalityRepo;
@@ -281,12 +282,16 @@ public class CandidateService {
     @Transactional(readOnly = true)
     public Page<CandidateListItem> listCandidates(CandidateStatus status, String stage,
                                                    Long paysId, String search, Pageable pageable) {
+        // Enforce tenant isolation: non-admin users can only see their own entity's candidates.
+        Long effectivePaysId = tenantService.getEffectivePaysId();
+        Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : paysId;
+
         if (stage != null && !stage.isBlank()) {
             List<CandidateStatus> statuses = stageToStatuses(stage);
-            return candidateRepo.searchByStatusesAndSearch(statuses, search, pageable)
+            return candidateRepo.searchByStatusesAndSearch(statuses, resolvedPaysId, search, pageable)
                     .map(mapper::toListItem);
         }
-        return candidateRepo.searchPaged(status, paysId, search, pageable)
+        return candidateRepo.searchPaged(status, resolvedPaysId, search, pageable)
                 .map(mapper::toListItem);
     }
 
