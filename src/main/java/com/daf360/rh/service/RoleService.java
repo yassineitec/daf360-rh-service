@@ -48,30 +48,11 @@ public class RoleService {
 
     /**
      * The allowed values for CK_RolePermissions_Permission.
-     * Original 32 values verified from the live DB on 2026-05-31.
-     * 13 onboarding/recruitment codes added 2026-06-01 — requires V4 DB migration to
-     * extend the CHECK CONSTRAINT before any of these values can be persisted.
-     * Do NOT remove existing values without a matching DB migration.
+     * Single source of truth: derived from PermissionCatalog.ALL_CODES so this
+     * set stays in sync automatically when new permissions are added to the catalog.
+     * Any new permission also requires a DB migration to extend the CHECK CONSTRAINT.
      */
-    public static final Set<String> ALLOWED_PERMISSIONS = Set.of(
-            // ── Original 32 ─────────────────────────────────────────────────────
-            "MANAGE_EVENTS",
-            "CREATE_USER", "GET_USERS", "UPDATE_USER", "DELETE_USER",
-            "GET_PAYS", "CREATE_PAYS", "UPDATE_PAYS", "DELETE_PAYS",
-            "GET_HOLIDAYS", "CREATE_HOLIDAY", "UPDATE_HOLIDAY", "DELETE_HOLIDAY",
-            "GET_PERMISSIONS", "GET_ROLES", "CREATE_ROLE", "UPDATE_ROLE", "DELETE_ROLE",
-            "GET_LEAVES", "ADD_LEAVE", "RESPONSE_LEAVE", "GET_GLOBAL_LEAVES",
-            "GET_CATEGORIES", "CREATE_CATEGORY", "UPDATE_CATEGORY", "DELETE_CATEGORY", "SETTLE_LEAVES",
-            "GET_TSR", "CREATE_TSR", "RESPOND_TSR", "GET_GLOBAL_TSR",
-            "VIEW_DASHBOARD",
-            // ── Onboarding / recruitment codes (V4 migration, 2026-06-01) ────────
-            "VIEW_CANDIDATES", "CREATE_CANDIDATE", "EDIT_CANDIDATE", "ACCEPT_REJECT_CANDIDATE",
-            "IT_PROVISIONING", "HR_ONBOARDING", "HR_CREATE_PROFILE", "HR_UPDATE_PROFILE",
-            "HR_ARCHIVE_PROFILE", "VIEW_WORKFLOW", "HR_ADMIN_ROLES", "ADMIN_EVENTS",
-            "VIEW_NOTIFICATIONS",
-            // ── V13+V14 additions ─────────────────────────────────────────────────
-            "ADMIN_LISTS", "ADMIN_NOTIFICATIONS", "ADMIN_ROLES"
-    );
+    public static final Set<String> ALLOWED_PERMISSIONS = PermissionCatalog.ALL_CODES;
 
     private final RoleRepository           roleRepo;
     private final RolePermissionRepository permRepo;

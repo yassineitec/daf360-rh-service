@@ -5,6 +5,7 @@ import com.daf360.rh.domain.enums.LifecycleStatus;
 import com.daf360.rh.dto.dashboard.*;
 import com.daf360.rh.repository.CandidateRepository;
 import com.daf360.rh.repository.EmployeeProfileRepository;
+import com.daf360.rh.security.TenantService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -14,6 +15,7 @@ import java.sql.Date;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.IsoFields;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -26,25 +28,34 @@ public class DashboardService {
     private final EmployeeProfileRepository profileRepository;
     private final CandidateRepository       candidateRepository;
     private final JdbcTemplate              jdbcTemplate;
+    private final TenantService             tenantService;
 
     // ── Page 2: Portail-RH ────────────────────────────────────────────────────
 
     public DashboardStatsDto getStats() {
         LocalDate today = LocalDate.now();
-        long contrats = profileRepository.countContractsEndingSoon(
-                today, today.plusDays(60), LifecycleStatus.ACTIVE);
-        long actifs = profileRepository.countByLifecycleStatus(LifecycleStatus.ACTIVE);
-        // TODO: entretiens and formations require dedicated domains
+        Long paysId = tenantService.getEffectivePaysId();
+        long contrats = paysId != null
+                ? profileRepository.countContractsEndingSoonByPaysId(today, today.plusDays(60), LifecycleStatus.ACTIVE, paysId)
+                : profileRepository.countContractsEndingSoon(today, today.plusDays(60), LifecycleStatus.ACTIVE);
+        long actifs = paysId != null
+                ? profileRepository.countByPaysIdAndLifecycleStatus(paysId, LifecycleStatus.ACTIVE)
+                : profileRepository.countByLifecycleStatus(LifecycleStatus.ACTIVE);
         return new DashboardStatsDto(0L, contrats, actifs, 0L, 0L);
     }
 
     public WorkforceStatsDto getWorkforceStats() {
-        long total = profileRepository.countByLifecycleStatus(LifecycleStatus.ACTIVE);
+        Long paysId = tenantService.getEffectivePaysId();
+        long total = paysId != null
+                ? profileRepository.countByPaysIdAndLifecycleStatus(paysId, LifecycleStatus.ACTIVE)
+                : profileRepository.countByLifecycleStatus(LifecycleStatus.ACTIVE);
         if (total == 0) return new WorkforceStatsDto(0, 0, 0, 0, 0.0, 0.0);
 
-        Map<String, Long> byGender = profileRepository
-                .countByGenderAndLifecycleStatus(LifecycleStatus.ACTIVE)
-                .stream()
+        List<Object[]> genderRows = paysId != null
+                ? profileRepository.countByGenderAndLifecycleStatusAndPaysId(LifecycleStatus.ACTIVE, paysId)
+                : profileRepository.countByGenderAndLifecycleStatus(LifecycleStatus.ACTIVE);
+
+        Map<String, Long> byGender = genderRows.stream()
                 .collect(Collectors.toMap(
                         row -> row[0] != null ? row[0].toString().toUpperCase() : "NON_DEFINI",
                         row -> ((Number) row[1]).longValue(),
@@ -61,8 +72,13 @@ public class DashboardService {
     }
 
     public ProfileCompletionDto getCompletion() {
-        long done  = profileRepository.countByOnboardingCompletedTrue();
-        long total = profileRepository.count();
+        Long paysId = tenantService.getEffectivePaysId();
+        long done  = paysId != null
+                ? profileRepository.countByPaysIdAndOnboardingCompletedTrue(paysId)
+                : profileRepository.countByOnboardingCompletedTrue();
+        long total = paysId != null
+                ? profileRepository.countByPaysId(paysId)
+                : profileRepository.count();
         long todo  = total - done;
         double rate = total == 0 ? 0.0 : Math.round((double) done / total * 1000.0) / 10.0;
         return new ProfileCompletionDto(rate, done, todo);
@@ -71,16 +87,24 @@ public class DashboardService {
     public List<ProbationAlertDto> getProbationAlerts(int joursMax) {
         LocalDate today = LocalDate.now();
         LocalDate limit = today.plusDays(joursMax);
+        Long paysId = tenantService.getEffectivePaysId();
 
-        return jdbcTemplate.query(
-                "SELECT ep.id, u.fullName, ep.photo_url, ep.probation_end_date " +
-                "FROM [dbo].[employee_profiles] ep " +
-                "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
-                "WHERE ep.is_on_probation = 1 " +
-                "  AND ep.probation_end_date >= ? " +
-                "  AND ep.probation_end_date <= ? " +
-                "  AND ep.deleted = 0 " +
-                "ORDER BY ep.probation_end_date ASC",
+        String sql = "SELECT ep.id, u.fullName, ep.photo_url, ep.probation_end_date " +
+                     "FROM [dbo].[employee_profiles] ep " +
+                     "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
+                     "WHERE ep.is_on_probation = 1 " +
+                     "  AND ep.probation_end_date >= ? " +
+                     "  AND ep.probation_end_date <= ? " +
+                     "  AND ep.deleted = 0 " +
+                     (paysId != null ? "  AND ep.pays_id = ? " : "") +
+                     "ORDER BY ep.probation_end_date ASC";
+
+        List<Object> params = new ArrayList<>();
+        params.add(Date.valueOf(today));
+        params.add(Date.valueOf(limit));
+        if (paysId != null) params.add(paysId);
+
+        return jdbcTemplate.query(sql,
                 (rs, rowNum) -> {
                     Date d = rs.getDate("probation_end_date");
                     LocalDate endDate = d != null ? d.toLocalDate() : today;
@@ -91,22 +115,28 @@ public class DashboardService {
                             endDate,
                             ChronoUnit.DAYS.between(today, endDate));
                 },
-                Date.valueOf(today),
-                Date.valueOf(limit));
+                params.toArray());
     }
 
     public List<AnniversaireDto> getAnniversaires(int mois) {
         LocalDate today = LocalDate.now();
+        Long paysId = tenantService.getEffectivePaysId();
 
-        return jdbcTemplate.query(
-                "SELECT ep.id, u.fullName, ep.photo_url, ep.date_of_birth " +
-                "FROM [dbo].[employee_profiles] ep " +
-                "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
-                "WHERE MONTH(ep.date_of_birth) = ? " +
-                "  AND ep.lifecycle_status = 'ACTIVE' " +
-                "  AND ep.deleted = 0 " +
-                "  AND ep.date_of_birth IS NOT NULL " +
-                "ORDER BY DAY(ep.date_of_birth) ASC",
+        String sql = "SELECT ep.id, u.fullName, ep.photo_url, ep.date_of_birth " +
+                     "FROM [dbo].[employee_profiles] ep " +
+                     "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
+                     "WHERE MONTH(ep.date_of_birth) = ? " +
+                     "  AND ep.lifecycle_status = 'ACTIVE' " +
+                     "  AND ep.deleted = 0 " +
+                     "  AND ep.date_of_birth IS NOT NULL " +
+                     (paysId != null ? "  AND ep.pays_id = ? " : "") +
+                     "ORDER BY DAY(ep.date_of_birth) ASC";
+
+        List<Object> params = new ArrayList<>();
+        params.add(mois);
+        if (paysId != null) params.add(paysId);
+
+        return jdbcTemplate.query(sql,
                 (rs, rowNum) -> {
                     Date d = rs.getDate("date_of_birth");
                     LocalDate dob = d != null ? d.toLocalDate() : null;
@@ -123,22 +153,29 @@ public class DashboardService {
                             dob,
                             joursAvant);
                 },
-                mois);
+                params.toArray());
     }
 
     public List<NouvelEmployeDto> getNouveauxEmployes(int limit) {
         int safeLimit = Math.max(1, Math.min(limit, 100));
-        return jdbcTemplate.query(
-                "SELECT ep.id, u.fullName, ep.photo_url, ep.hire_date, " +
-                "       d.label_fr AS department_label, g.label_fr AS grade_label " +
-                "FROM [dbo].[employee_profiles] ep " +
-                "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
-                "LEFT JOIN [dbo].[departments] d ON d.id = ep.department_id " +
-                "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
-                "WHERE ep.lifecycle_status = 'ACTIVE' " +
-                "  AND ep.deleted = 0 " +
-                "ORDER BY ep.hire_date DESC " +
-                "OFFSET 0 ROWS FETCH NEXT " + safeLimit + " ROWS ONLY",
+        Long paysId = tenantService.getEffectivePaysId();
+
+        String sql = "SELECT ep.id, u.fullName, ep.photo_url, ep.hire_date, " +
+                     "       d.label_fr AS department_label, g.label_fr AS grade_label " +
+                     "FROM [dbo].[employee_profiles] ep " +
+                     "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
+                     "LEFT JOIN [dbo].[departments] d ON d.id = ep.department_id " +
+                     "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
+                     "WHERE ep.lifecycle_status = 'ACTIVE' " +
+                     "  AND ep.deleted = 0 " +
+                     (paysId != null ? "  AND ep.pays_id = ? " : "") +
+                     "ORDER BY ep.hire_date DESC " +
+                     "OFFSET 0 ROWS FETCH NEXT " + safeLimit + " ROWS ONLY";
+
+        List<Object> params = new ArrayList<>();
+        if (paysId != null) params.add(paysId);
+
+        return jdbcTemplate.query(sql,
                 (rs, rowNum) -> {
                     Date d = rs.getDate("hire_date");
                     return new NouvelEmployeDto(
@@ -148,7 +185,8 @@ public class DashboardService {
                             d != null ? d.toLocalDate() : null,
                             rs.getString("department_label"),
                             rs.getString("grade_label"));
-                });
+                },
+                params.toArray());
     }
 
     // ── Page 1: Tableau de bord RH ────────────────────────────────────────────
@@ -167,7 +205,10 @@ public class DashboardService {
                 CandidateStatus.EMAIL_RECEIVED,
                 CandidateStatus.HR_IN_PROGRESS);
 
-        long recrutements = candidateRepository.countByStatusIn(activeStatuses);
+        Long paysId = tenantService.getEffectivePaysId();
+        long recrutements = paysId != null
+                ? candidateRepository.countByStatusInAndPaysId(activeStatuses, paysId)
+                : candidateRepository.countByStatusIn(activeStatuses);
 
         LocalDate now = LocalDate.now();
         Long congesCount = jdbcTemplate.queryForObject(
@@ -182,12 +223,19 @@ public class DashboardService {
     public List<RecentActivityDto> getRecentActivity(int size) {
         // TODO: replace with unified audit log when activity tracking is added
         int safeSize = Math.max(1, Math.min(size, 50));
-        return jdbcTemplate.query(
-                "SELECT TOP " + safeSize + " ep.id, u.fullName, ep.updated_at " +
-                "FROM [dbo].[employee_profiles] ep " +
-                "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
-                "WHERE ep.deleted = 0 " +
-                "ORDER BY ep.updated_at DESC",
+        Long paysId = tenantService.getEffectivePaysId();
+
+        String sql = "SELECT TOP " + safeSize + " ep.id, u.fullName, ep.updated_at " +
+                     "FROM [dbo].[employee_profiles] ep " +
+                     "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
+                     "WHERE ep.deleted = 0 " +
+                     (paysId != null ? "  AND ep.pays_id = ? " : "") +
+                     "ORDER BY ep.updated_at DESC";
+
+        List<Object> params = new ArrayList<>();
+        if (paysId != null) params.add(paysId);
+
+        return jdbcTemplate.query(sql,
                 (rs, rowNum) -> {
                     java.sql.Timestamp ts = rs.getTimestamp("updated_at");
                     LocalDate date = ts != null ? ts.toLocalDateTime().toLocalDate() : LocalDate.now();
@@ -197,6 +245,7 @@ public class DashboardService {
                             "Profil mis à jour",
                             date,
                             "profil");
-                });
+                },
+                params.toArray());
     }
 }

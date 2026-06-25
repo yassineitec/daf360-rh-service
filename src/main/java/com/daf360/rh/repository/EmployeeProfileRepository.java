@@ -81,7 +81,7 @@ public interface EmployeeProfileRepository
 
     long countByPaysIdAndRegimeTemplateIdNotNullAndDeletedFalse(Long paysId);
 
-    // ── Dashboard queries ─────────────────────────────────────────────────────
+    // ── Dashboard queries (admin — unfiltered) ───────────────────────────────
 
     long countByLifecycleStatus(LifecycleStatus status);
 
@@ -103,4 +103,41 @@ public interface EmployeeProfileRepository
             @Param("today")  LocalDate today,
             @Param("limit")  LocalDate limit,
             @Param("status") LifecycleStatus status);
+
+    // ── Dashboard queries (tenant-filtered) ──────────────────────────────────
+
+    long countByPaysIdAndLifecycleStatus(Long paysId, LifecycleStatus status);
+
+    long countByPaysId(Long paysId);
+
+    long countByPaysIdAndOnboardingCompletedTrue(Long paysId);
+
+    @Query("""
+            SELECT COUNT(e) FROM EmployeeProfile e
+            WHERE e.paysId = :paysId
+              AND (e.onboardingCompleted = false OR e.onboardingCompleted IS NULL)
+            """)
+    long countIncompletedByPaysId(@Param("paysId") Long paysId);
+
+    @Query("""
+            SELECT e.gender, COUNT(e) FROM EmployeeProfile e
+            WHERE e.lifecycleStatus = :status AND e.paysId = :paysId
+            GROUP BY e.gender
+            """)
+    List<Object[]> countByGenderAndLifecycleStatusAndPaysId(
+            @Param("status") LifecycleStatus status,
+            @Param("paysId") Long paysId);
+
+    @Query("""
+            SELECT COUNT(e) FROM EmployeeProfile e
+            WHERE e.contractEndDate IS NOT NULL
+              AND e.contractEndDate BETWEEN :today AND :limit
+              AND e.lifecycleStatus = :status
+              AND e.paysId = :paysId
+            """)
+    long countContractsEndingSoonByPaysId(
+            @Param("today")  LocalDate today,
+            @Param("limit")  LocalDate limit,
+            @Param("status") LifecycleStatus status,
+            @Param("paysId") Long paysId);
 }

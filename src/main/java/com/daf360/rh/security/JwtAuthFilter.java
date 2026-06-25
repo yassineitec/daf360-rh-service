@@ -98,12 +98,23 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                                 claims.getSubject(), null, authorities);
                 auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(auth);
-                log.debug("JWT authenticated: sub={}, permissions={}", claims.getSubject(), permissions);
+
+                // Store paysId in ThreadLocal for multi-tenant filtering downstream.
+                // The portal puts this claim in every JWT via AzureOAuth2SuccessHandler.
+                Number paysIdClaim = claims.get("paysId", Number.class);
+                if (paysIdClaim != null) {
+                    TenantContext.set(paysIdClaim.longValue());
+                }
+
+                log.debug("JWT authenticated: sub={}, paysId={}, permissions={}",
+                        claims.getSubject(), paysIdClaim, permissions);
             }
+            filterChain.doFilter(request, response);
         } catch (Exception e) {
             log.debug("JWT filter error: {}", e.getMessage());
+            filterChain.doFilter(request, response);
+        } finally {
+            TenantContext.clear();
         }
-
-        filterChain.doFilter(request, response);
     }
 }
