@@ -3,6 +3,8 @@ package com.daf360.rh.service;
 import com.daf360.rh.domain.enums.CandidateStatus;
 import com.daf360.rh.dto.pipeline.KanbanCandidateDto;
 import com.daf360.rh.dto.pipeline.KanbanColumnDto;
+import com.daf360.rh.dto.pipeline.PipelineActivityDto;
+import com.daf360.rh.dto.pipeline.PipelineObjectiveDto;
 import com.daf360.rh.dto.pipeline.PipelineStatsDto;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
@@ -16,8 +18,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -116,15 +120,140 @@ public class PipelineService {
                 urgent);
     }
 
+    // ── Recent activity ────────────────────────────────────────────────────────
+
+    public List<PipelineActivityDto> getRecentActivity() {
+        String sql = """
+            SELECT TOP 20
+                al.id,
+                al.entity_id     AS candidate_id,
+                al.action,
+                al.timestamp,
+                al.user_id       AS actor_id,
+                c.first_name, c.last_name,
+                u.fullName       AS actor_name
+            FROM [dbo].[audit_log] al
+            LEFT JOIN [dbo].[candidates] c ON c.id = TRY_CAST(al.entity_id AS BIGINT)
+            LEFT JOIN [dbo].[Users]      u ON u.id = TRY_CAST(al.user_id   AS BIGINT)
+            WHERE al.entity_type = 'CANDIDATE'
+            ORDER BY al.timestamp DESC
+            """;
+
+        return jdbc.queryForList(sql).stream()
+                .map(r -> {
+                    String action = str(r, "action");
+                    String firstName = str(r, "first_name");
+                    String lastName  = str(r, "last_name");
+                    String name = ((firstName != null ? firstName : "") + " " + (lastName != null ? lastName : "")).trim();
+                    return new PipelineActivityDto(
+                            toLong(r.get("id")),
+                            toLong(r.get("candidate_id")),
+                            name.isEmpty() ? null : name,
+                            action,
+                            deriveActionLabel(action),
+                            deriveStageFromAction(action),
+                            formatTimestamp(r.get("timestamp")),
+                            str(r, "actor_name")
+                    );
+                })
+                .toList();
+    }
+
+    private static String deriveActionLabel(String action) {
+        if (action == null) return "Événement";
+        return switch (action) {
+            case "CREATE"                  -> "Candidature créée";
+            case "UPDATE"                  -> "Profil mis à jour";
+            case "ACCEPT"                  -> "Candidat accepté";
+            case "REJECT"                  -> "Candidat rejeté";
+            case "HIRE_CANDIDATE"          -> "Candidat recruté";
+            case "UPLOAD_CV"               -> "CV téléversé";
+            case "COMPLETE_IT_PROVISIONING"-> "Provisioning IT terminé";
+            default                        -> action.replace('_', ' ');
+        };
+    }
+
+    private static String deriveStageFromAction(String action) {
+        if (action == null) return "SCREENING";
+        return switch (action) {
+            case "CREATE"                   -> "SCREENING";
+            case "ACCEPT"                   -> "ENTRETIEN";
+            case "HIRE_CANDIDATE"           -> "RECRUTE";
+            case "REJECT"                   -> "REJETE";
+            case "COMPLETE_IT_PROVISIONING" -> "OFFRE";
+            default                         -> "SCREENING";
+        };
+    }
+
+    private static String formatTimestamp(Object v) {
+        if (v instanceof OffsetDateTime odt) {
+            return odt.format(DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm", Locale.FRENCH));
+        }
+        if (v instanceof java.sql.Timestamp ts) {
+            return ts.toLocalDateTime()
+                     .format(DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm", Locale.FRENCH));
+        }
+        return v != null ? v.toString() : null;
+    }
+
+    // ── Objectives ─────────────────────────────────────────────────────────────
+
+    public List<PipelineObjectiveDto> getObjectives() {
+        // Actuals: HIRED candidates grouped by month of updated_at (last 6 months)
+        String actualsSql = """
+            SELECT FORMAT(updated_at, 'yyyy-MM') AS ym, COUNT(*) AS cnt
+            FROM [dbo].[candidates]
+            WHERE status = 'HIRED'
+              AND updated_at >= DATEADD(month, -6, GETDATE())
+            GROUP BY FORMAT(updated_at, 'yyyy-MM')
+            """;
+
+        Map<String, Integer> actuals = new HashMap<>();
+        jdbc.queryForList(actualsSql).forEach(r ->
+                actuals.put(str(r, "ym"), (int) toLong(r.get("cnt"))));
+
+        // Targets: sum headcount from recruitment_demands by target_start_date month
+        String targetsSql = """
+            SELECT FORMAT(target_start_date, 'yyyy-MM') AS ym, SUM(headcount) AS total
+            FROM [dbo].[recruitment_demands]
+            WHERE target_start_date >= DATEADD(month, -6, GETDATE())
+              AND target_start_date <= DATEADD(month, 1, GETDATE())
+            GROUP BY FORMAT(target_start_date, 'yyyy-MM')
+            """;
+
+        Map<String, Integer> targets = new HashMap<>();
+        jdbc.queryForList(targetsSql).forEach(r ->
+                targets.put(str(r, "ym"), (int) toLong(r.get("total"))));
+
+        // Build last 6 months (oldest → newest)
+        YearMonth now = YearMonth.now();
+        List<PipelineObjectiveDto> result = new ArrayList<>();
+        for (int i = 5; i >= 0; i--) {
+            YearMonth ym  = now.minusMonths(i);
+            String key    = ym.format(DateTimeFormatter.ofPattern("yyyy-MM"));
+            String label  = ym.format(DateTimeFormatter.ofPattern("MMM yyyy", Locale.FRENCH));
+            result.add(new PipelineObjectiveDto(
+                    key,
+                    label,
+                    targets.getOrDefault(key, 0),
+                    actuals.getOrDefault(key, 0)
+            ));
+        }
+        return result;
+    }
+
     // ── Kanban ─────────────────────────────────────────────────────────────────
 
     public List<KanbanColumnDto> getKanban() {
         String sql = """
-            SELECT id, first_name, last_name, applied_position, status,
-                   expected_start_date, notes, email_personal, created_at
-            FROM [dbo].[candidates]
-            WHERE status IN (""" + KANBAN_IN + ")\n" +
-            "ORDER BY created_at DESC";
+            SELECT c.id, c.first_name, c.last_name, c.applied_position, c.status,
+                   c.expected_start_date, c.notes, c.email_personal, c.created_at,
+                   ep.gender, ep.contract_type
+            FROM [dbo].[candidates] c
+            LEFT JOIN [dbo].[employee_profiles] ep
+                   ON ep.candidate_id = c.id AND ep.deleted = 0
+            WHERE c.status IN (""" + KANBAN_IN + ")\n" +
+            "ORDER BY c.created_at DESC";
 
         List<Map<String, Object>> rows = jdbc.queryForList(sql);
 
@@ -150,31 +279,34 @@ public class PipelineService {
         String inClause = resolveInClause(stage);
         boolean hasSearch = search != null && !search.isBlank();
 
-        StringBuilder where = new StringBuilder("WHERE status IN (").append(inClause).append(")");
+        StringBuilder where = new StringBuilder("WHERE c.status IN (").append(inClause).append(")");
         List<Object> args = new ArrayList<>();
 
         if (hasSearch) {
             String like = "%" + search.trim() + "%";
-            where.append(" AND (first_name LIKE ? OR last_name LIKE ? OR applied_position LIKE ?)");
+            where.append(" AND (c.first_name LIKE ? OR c.last_name LIKE ? OR c.applied_position LIKE ?)");
             args.add(like); args.add(like); args.add(like);
         }
 
-        // Count query
+        // Count query (no JOIN needed)
         long total = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM [dbo].[candidates] " + where,
+                "SELECT COUNT(*) FROM [dbo].[candidates] c " + where,
                 Long.class,
                 args.toArray());
 
         // Data query — FETCH NEXT inlined (SQL Server JDBC rejects bound param)
         int offset   = (int) pageable.getOffset();
         int pageSize = pageable.getPageSize();
-        String dataArgs = where +
-                " ORDER BY created_at DESC" +
+        String pagination = " ORDER BY c.created_at DESC" +
                 " OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";
 
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT id, first_name, last_name, applied_position, status, expected_start_date, notes," +
-                " email_personal, created_at FROM [dbo].[candidates] " + dataArgs,
+                "SELECT c.id, c.first_name, c.last_name, c.applied_position, c.status," +
+                " c.expected_start_date, c.notes, c.email_personal, c.created_at," +
+                " ep.gender, ep.contract_type" +
+                " FROM [dbo].[candidates] c" +
+                " LEFT JOIN [dbo].[employee_profiles] ep ON ep.candidate_id = c.id AND ep.deleted = 0 " +
+                where + pagination,
                 args.toArray());
 
         List<KanbanCandidateDto> content = rows.stream()
@@ -188,11 +320,22 @@ public class PipelineService {
 
     @Transactional
     public KanbanCandidateDto moveToStage(Long id, String stage) {
-        String newStatus = STAGE_TO_STATUS.get(stage.toUpperCase());
-        if (newStatus == null) {
-            throw new AppException(ErrorCode.CANDIDATE_STATUS_INVALID,
-                    "Stage inconnu : " + stage + ". Valeurs acceptées : "
-                    + String.join(", ", STAGE_TO_STATUS.keySet()));
+        String input = stage.trim().toUpperCase();
+
+        // Accept raw CandidateStatus values (PENDING, ACCEPTED, IT_IN_PROGRESS…)
+        // and fall back to kanban stage names (SCREENING, ENTRETIEN…) for compatibility.
+        String newStatus;
+        try {
+            CandidateStatus.valueOf(input);
+            newStatus = input;
+        } catch (IllegalArgumentException e) {
+            newStatus = STAGE_TO_STATUS.get(input);
+            if (newStatus == null) {
+                String validStatuses = java.util.Arrays.stream(CandidateStatus.values())
+                        .map(Enum::name).collect(Collectors.joining(", "));
+                throw new AppException(ErrorCode.CANDIDATE_STATUS_INVALID,
+                        "Statut inconnu : " + stage + ". Valeurs acceptées : " + validStatuses);
+            }
         }
 
         int updated = jdbc.update(
@@ -204,8 +347,12 @@ public class PipelineService {
         }
 
         Map<String, Object> row = jdbc.queryForMap(
-                "SELECT id, first_name, last_name, applied_position, status, expected_start_date, notes," +
-                " email_personal, created_at FROM [dbo].[candidates] WHERE id = ?", id);
+                "SELECT c.id, c.first_name, c.last_name, c.applied_position, c.status," +
+                " c.expected_start_date, c.notes, c.email_personal, c.created_at," +
+                " ep.gender, ep.contract_type" +
+                " FROM [dbo].[candidates] c" +
+                " LEFT JOIN [dbo].[employee_profiles] ep ON ep.candidate_id = c.id AND ep.deleted = 0" +
+                " WHERE c.id = ?", id);
 
         return rowToKanbanDto(row);
     }
@@ -254,7 +401,9 @@ public class PipelineService {
                 stageLabel,
                 applicationDate,
                 str(r, "email_personal"),
-                status
+                status,
+                str(r, "gender"),
+                str(r, "contract_type")
         );
     }
 

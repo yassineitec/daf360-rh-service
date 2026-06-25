@@ -10,4 +10,5 @@ import java.util.List;
 public interface DisciplineRepository extends JpaRepository<Discipline, Long> {
 
     List<Discipline> findByPaysIdAndIsActiveTrueOrderBySortOrderAsc(Long paysId);
+    List<Discipline> findByIsActiveTrueOrderBySortOrderAsc();
 }

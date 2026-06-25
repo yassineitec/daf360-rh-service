@@ -10,6 +10,7 @@ import java.util.List;
 public interface HrDepartmentRepository extends JpaRepository<HrDepartment, Long> {
 
     List<HrDepartment> findByPaysIdAndIsActiveTrueOrderByLabelFrAsc(Long paysId);
+    List<HrDepartment> findByIsActiveTrueOrderByLabelFrAsc();
 
     List<HrDepartment> findByPaysIdAndParentIdIsNullAndIsActiveTrue(Long paysId);
 }

@@ -6,10 +6,13 @@ import com.daf360.rh.service.ReferenceDataService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/hr/ref")
@@ -17,12 +20,13 @@ import java.util.List;
 public class ReferenceDataController {
 
     private final ReferenceDataService refService;
+    private final JdbcTemplate         jdbc;
 
     // ── Grades ────────────────────────────────────────────────────────────────
 
     @GetMapping("/grades")
     //@PreAuthorize("isAuthenticated()")
-    public List<RefDataItemDto> getGrades(@RequestParam Long paysId) {
+    public List<RefDataItemDto> getGrades(@RequestParam(required = false) Long paysId) {
         return refService.getGrades(paysId);
     }
 
@@ -43,7 +47,7 @@ public class ReferenceDataController {
 
     @GetMapping("/disciplines")
     //@PreAuthorize("isAuthenticated()")
-    public List<RefDataItemDto> getDisciplines(@RequestParam Long paysId) {
+    public List<RefDataItemDto> getDisciplines(@RequestParam(required = false) Long paysId) {
         return refService.getDisciplines(paysId);
     }
 
@@ -64,7 +68,7 @@ public class ReferenceDataController {
 
     @GetMapping("/nog-levels")
     //@PreAuthorize("isAuthenticated()")
-    public List<RefDataItemDto> getNogLevels(@RequestParam Long paysId) {
+    public List<RefDataItemDto> getNogLevels(@RequestParam(required = false) Long paysId) {
         return refService.getNogLevels(paysId);
     }
 
@@ -85,7 +89,7 @@ public class ReferenceDataController {
 
     @GetMapping("/departments")
     //@PreAuthorize("isAuthenticated()")
-    public List<RefDataItemDto> getDepartments(@RequestParam Long paysId) {
+    public List<RefDataItemDto> getDepartments(@RequestParam(required = false) Long paysId) {
         return refService.getDepartments(paysId);
     }
 
@@ -106,7 +110,7 @@ public class ReferenceDataController {
 
     @GetMapping("/banks")
     //@PreAuthorize("isAuthenticated()")
-    public List<RefDataItemDto> getBanks(@RequestParam Long paysId) {
+    public List<RefDataItemDto> getBanks(@RequestParam(required = false) Long paysId) {
         return refService.getBanks(paysId);
     }
 
@@ -163,5 +167,37 @@ public class ReferenceDataController {
     public ResponseEntity<Void> deleteItAssetType(@PathVariable Long id) {
         refService.deleteItAssetType(id);
         return ResponseEntity.noContent().build();
+    }
+
+    // ── Diagnostic (remove after debug) ──────────────────────────────────────
+
+    @GetMapping("/debug")
+    public Map<String, Object> debug(@RequestParam(defaultValue = "178") Long paysId) {
+        Map<String, Object> result = new LinkedHashMap<>();
+
+        // 1. Does this pays exist?
+        result.put("pays_" + paysId, jdbc.queryForList(
+                "SELECT id, french_label, iso_code, deleted FROM [dbo].[pays] WHERE id = ?", paysId));
+
+        // 2. All active pays in the table
+        result.put("all_active_pays", jdbc.queryForList(
+                "SELECT id, french_label, iso_code FROM [dbo].[pays] WHERE deleted = 0 ORDER BY id"));
+
+        // 3. Row counts per table for this paysId
+        result.put("grades_count",      jdbc.queryForObject("SELECT COUNT(*) FROM [dbo].[grades]      WHERE pays_id = ? AND is_active = 1", Long.class, paysId));
+        result.put("disciplines_count", jdbc.queryForObject("SELECT COUNT(*) FROM [dbo].[disciplines]  WHERE pays_id = ? AND is_active = 1", Long.class, paysId));
+        result.put("departments_count", jdbc.queryForObject("SELECT COUNT(*) FROM [dbo].[departments]  WHERE pays_id = ? AND is_active = 1", Long.class, paysId));
+        result.put("nationalities_count", jdbc.queryForObject("SELECT COUNT(*) FROM [dbo].[nationalities] WHERE is_active = 1", Long.class));
+
+        // 4. Which paysIds actually have data
+        result.put("grades_pays_ids",      jdbc.queryForList("SELECT DISTINCT pays_id FROM [dbo].[grades]      ORDER BY pays_id", Long.class));
+        result.put("disciplines_pays_ids", jdbc.queryForList("SELECT DISTINCT pays_id FROM [dbo].[disciplines]  ORDER BY pays_id", Long.class));
+        result.put("departments_pays_ids", jdbc.queryForList("SELECT DISTINCT pays_id FROM [dbo].[departments]  ORDER BY pays_id", Long.class));
+
+        // 5. Flyway migration status for V23
+        result.put("flyway_v23", jdbc.queryForList(
+                "SELECT version, description, success, installed_on FROM [dbo].[flyway_schema_history] WHERE version LIKE '23%' ORDER BY installed_rank"));
+
+        return result;
     }
 }

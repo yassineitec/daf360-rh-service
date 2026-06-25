@@ -17,7 +17,8 @@
       "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/profiles/1/contrats\")",
       "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/profiles/1/documents\")",
       "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/profiles/1/leave-balances?annee=2026\")",
-      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/absences?profileId=1&page=0&size=5\")"
+      "Bash(curl -s --max-time 5 \"http://localhost:8888/api/hr/absences?profileId=1&page=0&size=5\")",
+      "PowerShell(Head -15)"
     ]
   }
 }

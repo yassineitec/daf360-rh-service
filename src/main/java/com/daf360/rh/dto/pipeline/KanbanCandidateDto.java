@@ -22,5 +22,7 @@ public record KanbanCandidateDto(
         String stageLabel,
         String applicationDate,
         String email,
-        String status
+        String status,
+        String gender,
+        String contractType
 ) {}

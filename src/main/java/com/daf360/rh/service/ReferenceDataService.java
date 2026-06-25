@@ -28,8 +28,10 @@ public class ReferenceDataService {
 
     @Transactional(readOnly = true)
     public List<RefDataItemDto> getGrades(Long paysId) {
-        return gradeRepo.findByPaysIdAndIsActiveTrueOrderBySortOrderAsc(paysId)
-                .stream().map(this::toDto).collect(Collectors.toList());
+        var list = (paysId != null)
+                ? gradeRepo.findByPaysIdAndIsActiveTrueOrderBySortOrderAsc(paysId)
+                : gradeRepo.findByIsActiveTrueOrderBySortOrderAsc();
+        return list.stream().map(this::toDto).collect(Collectors.toList());
     }
 
     public RefDataItemDto createGrade(CreateRefDataRequest req) {
@@ -51,8 +53,10 @@ public class ReferenceDataService {
 
     @Transactional(readOnly = true)
     public List<RefDataItemDto> getDisciplines(Long paysId) {
-        return disciplineRepo.findByPaysIdAndIsActiveTrueOrderBySortOrderAsc(paysId)
-                .stream().map(this::toDto).collect(Collectors.toList());
+        var list = (paysId != null)
+                ? disciplineRepo.findByPaysIdAndIsActiveTrueOrderBySortOrderAsc(paysId)
+                : disciplineRepo.findByIsActiveTrueOrderBySortOrderAsc();
+        return list.stream().map(this::toDto).collect(Collectors.toList());
     }
 
     public RefDataItemDto createDiscipline(CreateRefDataRequest req) {
@@ -74,8 +78,10 @@ public class ReferenceDataService {
 
     @Transactional(readOnly = true)
     public List<RefDataItemDto> getNogLevels(Long paysId) {
-        return nogLevelRepo.findByPaysIdAndIsActiveTrueOrderByLevelOrderAsc(paysId)
-                .stream().map(this::toNogDto).collect(Collectors.toList());
+        var list = (paysId != null)
+                ? nogLevelRepo.findByPaysIdAndIsActiveTrueOrderByLevelOrderAsc(paysId)
+                : nogLevelRepo.findByIsActiveTrueOrderByLevelOrderAsc();
+        return list.stream().map(this::toNogDto).collect(Collectors.toList());
     }
 
     public RefDataItemDto createNogLevel(CreateRefDataRequest req) {
@@ -97,8 +103,10 @@ public class ReferenceDataService {
 
     @Transactional(readOnly = true)
     public List<RefDataItemDto> getDepartments(Long paysId) {
-        return deptRepo.findByPaysIdAndIsActiveTrueOrderByLabelFrAsc(paysId)
-                .stream().map(this::toDeptDto).collect(Collectors.toList());
+        var list = (paysId != null)
+                ? deptRepo.findByPaysIdAndIsActiveTrueOrderByLabelFrAsc(paysId)
+                : deptRepo.findByIsActiveTrueOrderByLabelFrAsc();
+        return list.stream().map(this::toDeptDto).collect(Collectors.toList());
     }
 
     public RefDataItemDto createDepartment(CreateRefDataRequest req) {
@@ -120,8 +128,10 @@ public class ReferenceDataService {
 
     @Transactional(readOnly = true)
     public List<RefDataItemDto> getBanks(Long paysId) {
-        return bankRepo.findByPaysIdAndIsActiveTrueOrderByLabelFrAsc(paysId)
-                .stream().map(this::toBankDto).collect(Collectors.toList());
+        var list = (paysId != null)
+                ? bankRepo.findByPaysIdAndIsActiveTrueOrderByLabelFrAsc(paysId)
+                : bankRepo.findByIsActiveTrueOrderByLabelFrAsc();
+        return list.stream().map(this::toBankDto).collect(Collectors.toList());
     }
 
     public RefDataItemDto createBank(CreateRefDataRequest req) {

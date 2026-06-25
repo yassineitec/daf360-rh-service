@@ -3,13 +3,16 @@ package com.daf360.rh.service;
 import com.daf360.rh.config.AppProperties;
 import com.daf360.rh.domain.Candidate;
 import com.daf360.rh.domain.EmployeeProfile;
+import com.daf360.rh.domain.ItAsset;
 import com.daf360.rh.domain.ItProvisioning;
 import com.daf360.rh.domain.WorkingTimeRegime;
 import com.daf360.rh.domain.enums.CandidateStatus;
+import com.daf360.rh.domain.enums.ItProvisioningStatus;
 import com.daf360.rh.domain.enums.LifecycleStatus;
 import com.daf360.rh.dto.onboarding.CompleteProfileRequest;
 import com.daf360.rh.dto.onboarding.CompletionResult;
 import com.daf360.rh.dto.onboarding.OnboardingFormResponse;
+import com.daf360.rh.dto.onboarding.OnboardingKpiDto;
 import com.daf360.rh.dto.onboarding.OnboardingListItem;
 import com.daf360.rh.dto.onboarding.RegimeSummary;
 import com.daf360.rh.dto.onboarding.SaveDraftRequest;
@@ -102,6 +105,48 @@ public class OnboardingService {
     }
 
     // =========================================================================
+    // getKpi
+    // =========================================================================
+
+    @Transactional(readOnly = true)
+    public OnboardingKpiDto getKpi() {
+        long pendingCount = candidateRepo.countByStatusIn(PENDING_STATUSES);
+
+        Long createdTodayRaw = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[employee_profiles] " +
+                "WHERE CAST(created_at AS DATE) = CAST(GETDATE() AS DATE) AND deleted = 0",
+                Long.class);
+        long profilesCreatedToday = createdTodayRaw != null ? createdTodayRaw : 0L;
+
+        Long incompleteRaw = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[employee_profiles] " +
+                "WHERE deleted = 0 " +
+                "  AND lifecycle_status NOT IN ('TERMINATED', 'ARCHIVED') " +
+                "  AND (hire_date IS NULL OR contract_type IS NULL OR contract_type = '' " +
+                "       OR cnss_number IS NULL OR cnss_number = '' " +
+                "       OR rib IS NULL OR rib = '')",
+                Long.class);
+        long incompleteProfiles = incompleteRaw != null ? incompleteRaw : 0L;
+
+        Double avgCreationMinutes = jdbc.queryForObject(
+                "SELECT AVG(CAST(DATEDIFF(MINUTE, ip.ms365_email_created_at, ep.onboarding_completed_at) AS FLOAT)) " +
+                "FROM [dbo].[it_provisioning] ip " +
+                "JOIN [dbo].[employee_profiles] ep ON ep.candidate_id = ip.candidate_id " +
+                "WHERE ep.onboarding_completed = 1 " +
+                "  AND ep.onboarding_completed_at >= DATEADD(day, -30, SYSDATETIMEOFFSET()) " +
+                "  AND ip.ms365_email_created_at IS NOT NULL " +
+                "  AND ep.deleted = 0",
+                Double.class);
+
+        return OnboardingKpiDto.builder()
+                .pendingCount(pendingCount)
+                .profilesCreatedToday(profilesCreatedToday)
+                .incompleteProfiles(incompleteProfiles)
+                .avgCreationMinutes(avgCreationMinutes)
+                .build();
+    }
+
+    // =========================================================================
     // getOnboardingForm
     // =========================================================================
 
@@ -111,7 +156,7 @@ public class OnboardingService {
                 .orElseThrow(() -> new AppException(ErrorCode.CANDIDATE_NOT_FOUND));
 
         ItProvisioning prov = itProvisioningRepo.findByCandidateId(candidateId)
-                .orElseThrow(() -> new AppException(ErrorCode.IT_PROVISIONING_NOT_FOUND));
+                .orElse(null);
 
         List<WorkingTimeRegime> regimes =
                 regimeRepo.findByPaysIdAndIsActiveTrue(candidate.getPaysId());
@@ -141,7 +186,7 @@ public class OnboardingService {
         }
 
         // Load existing employee profile if it exists (may have been pre-filled from Profiles page)
-        EmployeeProfile existingProfile = prov.getUserId() != null
+        EmployeeProfile existingProfile = (prov != null && prov.getUserId() != null)
                 ? profileRepo.findByUserId(prov.getUserId()).orElse(null)
                 : null;
 
@@ -376,6 +421,29 @@ public class OnboardingService {
                 .build();
     }
 
+    private String buildLicenseLabel(ItProvisioning prov) {
+        java.util.List<String> licenses = new java.util.ArrayList<>();
+        if (Boolean.TRUE.equals(prov.getLicenseOffice365()))  licenses.add("Microsoft 365");
+        if (Boolean.TRUE.equals(prov.getLicenseAutocad()))    licenses.add("AutoCAD");
+        if (Boolean.TRUE.equals(prov.getLicenseRevit()))      licenses.add("Revit");
+        if (Boolean.TRUE.equals(prov.getLicenseAutodesk()))   licenses.add("Autodesk");
+        if (Boolean.TRUE.equals(prov.getLicenseKaspersky()))  licenses.add("Kaspersky");
+        if (prov.getLicenseOther() != null && !prov.getLicenseOther().isBlank()) {
+            licenses.add(prov.getLicenseOther());
+        }
+        return licenses.isEmpty() ? null : String.join(", ", licenses);
+    }
+
+    private String provisioningStatusLabel(ItProvisioningStatus status) {
+        if (status == null) return null;
+        return switch (status) {
+            case PENDING       -> "En attente";
+            case IN_PROGRESS   -> "En cours";
+            case EMAIL_CREATED -> "Email créé";
+            case COMPLETED     -> "Complété";
+        };
+    }
+
     private SaveDraftRequest deserializeDraft(String json) {
         if (json == null || json.isBlank()) {
             return null;
@@ -397,6 +465,16 @@ public class OnboardingService {
         boolean hasDraft   = draft != null;
         boolean hasProfile = existingProfile != null;
 
+        String matricule = hasProfile ? String.format("EMP-%05d", existingProfile.getId()) : null;
+
+        String itDeviceName = prov != null
+                ? prov.getAssets().stream()
+                        .filter(a -> a.getBrandModel() != null && !a.getBrandModel().isBlank())
+                        .findFirst()
+                        .map(ItAsset::getBrandModel)
+                        .orElse(null)
+                : null;
+
         // Priority: draft > existing profile > blank
         // Helper: return draft value, or profile value, or null
         return OnboardingFormResponse.builder()
@@ -412,7 +490,7 @@ public class OnboardingService {
                 .nationality(c.getNationality() != null ? c.getNationality().getLabelFr() : null)
                 .nationalId(hasDraft ? draft.getNationalId()
                           : hasProfile ? existingProfile.getNationalId() : c.getNationalId())
-                .ms365Email(prov.getMs365Email())
+                .ms365Email(prov != null ? prov.getMs365Email() : null)
                 // Section 2 — Employment
                 .appliedPosition(c.getAppliedPosition())
                 .appliedGrade(c.getAppliedGrade() != null ? c.getAppliedGrade().getLabelFr() : null)
@@ -483,6 +561,14 @@ public class OnboardingService {
                                      : hasProfile ? existingProfile.getEmergencyContactPhone() : null)
                 // Section 7 — Document slots
                 .requiredDocumentSlots(REQUIRED_DOCUMENT_SLOTS)
+                // Section 8 — Provisioning & HR timeline
+                .matricule(matricule)
+                .itDeviceName(itDeviceName)
+                .ms365LicenseType(prov != null ? buildLicenseLabel(prov) : null)
+                .itProvisioningStatus(prov != null ? provisioningStatusLabel(prov.getStatus()) : null)
+                .requestValidatedAt(c.getAcceptedAt())
+                .itAccountCreatedAt(prov != null ? prov.getMs365EmailCreatedAt() : null)
+                .equipmentAssignedAt(prov != null ? prov.getCompletedAt() : null)
                 // Meta
                 .candidateStatus(c.getStatus())
                 .hasDraft(hasDraft)

@@ -10,4 +10,5 @@ import java.util.List;
 public interface NogLevelRepository extends JpaRepository<NogLevel, Long> {
 
     List<NogLevel> findByPaysIdAndIsActiveTrueOrderByLevelOrderAsc(Long paysId);
+    List<NogLevel> findByIsActiveTrueOrderByLevelOrderAsc();
 }

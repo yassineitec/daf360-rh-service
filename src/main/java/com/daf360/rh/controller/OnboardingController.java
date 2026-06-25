@@ -18,6 +18,12 @@ public class OnboardingController {
 
     private final OnboardingService onboardingService;
 
+    @GetMapping("/kpi")
+    //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
+    public OnboardingKpiDto getKpi() {
+        return onboardingService.getKpi();
+    }
+
     @GetMapping("/pending")
     //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
     public List<OnboardingListItem> getPendingList() {

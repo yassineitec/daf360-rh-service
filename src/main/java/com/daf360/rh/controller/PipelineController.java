@@ -2,6 +2,8 @@ package com.daf360.rh.controller;
 
 import com.daf360.rh.dto.pipeline.KanbanCandidateDto;
 import com.daf360.rh.dto.pipeline.KanbanColumnDto;
+import com.daf360.rh.dto.pipeline.PipelineActivityDto;
+import com.daf360.rh.dto.pipeline.PipelineObjectiveDto;
 import com.daf360.rh.dto.pipeline.PipelineStatsDto;
 import com.daf360.rh.service.PipelineService;
 import lombok.RequiredArgsConstructor;
@@ -64,5 +66,24 @@ public class PipelineController {
             @RequestBody String stage) {
 
         return ResponseEntity.ok(pipelineService.moveToStage(id, stage));
+    }
+
+    /**
+     * GET /api/hr/pipeline/activity
+     * 20 most recent stage-change events sourced from the audit_log table.
+     */
+    @GetMapping("/activity")
+    public ResponseEntity<List<PipelineActivityDto>> getActivity() {
+        return ResponseEntity.ok(pipelineService.getRecentActivity());
+    }
+
+    /**
+     * GET /api/hr/pipeline/objectives
+     * Monthly recruitment targets (from recruitment_demands.headcount) vs
+     * actuals (HIRED candidates) for the last 6 months.
+     */
+    @GetMapping("/objectives")
+    public ResponseEntity<List<PipelineObjectiveDto>> getObjectives() {
+        return ResponseEntity.ok(pipelineService.getObjectives());
     }
 }

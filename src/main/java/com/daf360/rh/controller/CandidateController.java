@@ -118,11 +118,11 @@ public class CandidateController {
 
     /** JWT sub = String.valueOf(userId) — see portal JwtTokenService. */
     private Long actorId(Authentication auth) {
-        if (auth == null || auth.getPrincipal() == null) return null;
+        if (auth == null || auth.getPrincipal() == null) return 1L;
         try {
             return Long.valueOf(auth.getPrincipal().toString());
         } catch (NumberFormatException e) {
-            return null;
+            return 1L;
         }
     }
 }

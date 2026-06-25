@@ -10,4 +10,5 @@ import java.util.List;
 public interface BankRepository extends JpaRepository<Bank, Long> {
 
     List<Bank> findByPaysIdAndIsActiveTrueOrderByLabelFrAsc(Long paysId);
+    List<Bank> findByIsActiveTrueOrderByLabelFrAsc();
 }

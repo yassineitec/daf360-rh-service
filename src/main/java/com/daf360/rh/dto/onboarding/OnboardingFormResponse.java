@@ -70,6 +70,15 @@ public class OnboardingFormResponse {
     // Section 7 — Documents (labels for upload slots)
     private List<String> requiredDocumentSlots;
 
+    // Section 8 — Provisioning & HR timeline (nullable — absent until data is available)
+    private String          matricule;
+    private String          itDeviceName;
+    private String          ms365LicenseType;
+    private String          itProvisioningStatus;
+    private OffsetDateTime  requestValidatedAt;
+    private OffsetDateTime  itAccountCreatedAt;
+    private OffsetDateTime  equipmentAssignedAt;
+
     // Meta
     private CandidateStatus candidateStatus;
     private boolean hasDraft;
