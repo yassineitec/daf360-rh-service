@@ -454,7 +454,8 @@ public class PipelineService {
 
     private static long toLong(Object v) {
         if (v == null) return 0L;
-        return ((Number) v).longValue();
+        if (v instanceof Number n) return n.longValue();
+        try { return Long.parseLong(v.toString().trim()); } catch (NumberFormatException e) { return 0L; }
     }
 
     private static double toDouble(Object v) {

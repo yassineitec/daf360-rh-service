@@ -6,7 +6,7 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:sqlserver://localhost:1433;databaseName=daf360_hr;encrypt=true;trustServerCertificate=true}
     username: ${DB_USER:sa}
-    password: ${DB_PASS:YourStrong!Passw0rd}
+    password: ${DB_PASS:Timesheetdev2026!**}
     driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
 
   jpa:
