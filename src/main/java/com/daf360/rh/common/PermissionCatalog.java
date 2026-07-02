@@ -69,6 +69,10 @@ public final class PermissionCatalog {
     public static final String RH_CREATE_RECRUITMENT_DEMAND = "RH_CREATE_RECRUITMENT_DEMAND";
     public static final String RH_APPROVE_RECRUITMENT_DEMAND= "RH_APPROVE_RECRUITMENT_DEMAND";
 
+    // ── Entretiens (V37) ──────────────────────────────────────────────────────
+    public static final String RH_ADMIN_INTERVIEW_TYPES     = "RH_ADMIN_INTERVIEW_TYPES";
+    public static final String RH_MANAGE_INTERVIEWS         = "RH_MANAGE_INTERVIEWS";
+
     // ── Employee Lifecycle Engine (V32) ───────────────────────────────────────
     public static final String RH_VIEW_CONTRACTS            = "RH_VIEW_CONTRACTS";
     public static final String RH_CREATE_CONTRACT           = "RH_CREATE_CONTRACT";
@@ -100,6 +104,7 @@ public final class PermissionCatalog {
         new PermGroup("Timesheets",          List.of(GET_TSR, CREATE_TSR, RESPOND_TSR, GET_GLOBAL_TSR)),
         new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND)),
         new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS)),
+        new PermGroup("Entretiens",          List.of(RH_ADMIN_INTERVIEW_TYPES, RH_MANAGE_INTERVIEWS)),
         new PermGroup("Module IT",           List.of(IT_PROVISIONING)),
         new PermGroup("Administration",      List.of(ADMIN_LISTS, ADMIN_NOTIFICATIONS, ADMIN_ROLES))
     );
