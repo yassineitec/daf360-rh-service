@@ -41,6 +41,8 @@ public class EmployeeProfileUpdateDto {
     @Size(max = 50)  private String phone;
     @Size(max = 500) private String personalAddress;
     @Size(max = 500) private String photoUrl;
+    @Size(max = 30)  private String maritalStatus;  // valeur libre — ex: Célibataire, Marié(e), Divorcé(e), Veuf(ve)
+    private Integer numberOfChildren;
 
     // ── Emergency contact ─────────────────────────────────────────────────
     @Size(max = 255) private String emergencyContactName;
@@ -57,6 +59,8 @@ public class EmployeeProfileUpdateDto {
     @Size(max = 100) private String passportNumber;
     @Size(max = 100) private String socialSecurityNumber;
     @Size(max = 100) private String taxId;
+    @Size(max = 100) private String cnssNumber;
+    private LocalDate cnssAffiliationDate;
 
     // ── Salaires proposés ─────────────────────────────────────────────────────
     private java.math.BigDecimal salaireNetCandidat;

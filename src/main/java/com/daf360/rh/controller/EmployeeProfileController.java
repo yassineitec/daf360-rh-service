@@ -89,7 +89,7 @@ public class EmployeeProfileController {
      * Required: HR_MANAGER or HR_VIEWER (read-only roles cannot update).
      */
     @PatchMapping("/{id}")
-    //@PreAuthorize("hasAuthority('HR_UPDATE_PROFILE')")
+    @PreAuthorize("hasAuthority('HR_UPDATE_PROFILE')")
     public ResponseEntity<EmployeeProfileResponseDto> update(
             @PathVariable Long id,
             @Valid @RequestBody EmployeeProfileUpdateDto dto,

@@ -132,6 +132,8 @@ public class EmployeeProfileService {
             dto.setNationalId(null);
             dto.setPassportNumber(null);
             dto.setTaxId(null);
+            dto.setCnssNumber(null);
+            dto.setCnssAffiliationDate(null);
         }
 
         String before = safeJson(profile);
@@ -139,24 +141,44 @@ public class EmployeeProfileService {
         // Apply non-dimension scalar fields via MapStruct (PATCH semantics)
         mapper.updateEntityFromDto(dto, profile);
 
-        // Resolve and apply dimension FK fields explicitly
+        // Resolve and apply dimension FK fields explicitly.
+        // The frontend always echoes the form's full current state for these ids, so an
+        // explicit null means "clear this relation", not "leave untouched" — unlike the
+        // scalar fields above, which MapStruct ignores when null (see class doc).
         if (dto.getNationalityId() != null) {
             nationalityRepo.findById(dto.getNationalityId()).ifPresent(profile::setNationality);
+        } else {
+            profile.setNationality(null);
         }
         if (dto.getGradeId() != null) {
             gradeRepo.findById(dto.getGradeId()).ifPresent(profile::setGrade);
+        } else {
+            profile.setGrade(null);
         }
         if (dto.getDisciplineId() != null) {
             disciplineRepo.findById(dto.getDisciplineId()).ifPresent(profile::setDiscipline);
+        } else {
+            profile.setDiscipline(null);
         }
         if (dto.getNogLevelId() != null) {
             nogLevelRepo.findById(dto.getNogLevelId()).ifPresent(profile::setNogLevel);
+        } else {
+            profile.setNogLevel(null);
         }
         if (dto.getDepartmentId() != null) {
             departmentRepo.findById(dto.getDepartmentId()).ifPresent(profile::setDepartment);
+        } else {
+            profile.setDepartment(null);
         }
-        if (dto.getBankId() != null) {
-            bankRepo.findById(dto.getBankId()).ifPresent(profile::setBank);
+        // Bank is sensitive — the guard above always nulls dto.bankId for non-privileged
+        // callers, so only treat null as "clear" when the caller actually has sensitive
+        // access; otherwise an unrelated field-only edit would silently wipe the bank link.
+        if (hasSensitiveAccess(auth)) {
+            if (dto.getBankId() != null) {
+                bankRepo.findById(dto.getBankId()).ifPresent(profile::setBank);
+            } else {
+                profile.setBank(null);
+            }
         }
 
         if (dto.getSalaireNetCandidat() != null) profile.setSalaireNetCandidat(dto.getSalaireNetCandidat());
