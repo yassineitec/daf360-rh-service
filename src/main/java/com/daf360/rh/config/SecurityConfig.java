@@ -82,7 +82,10 @@ public class SecurityConfig {
         origins.add("http://localhost:4201");
         origins.add("http://localhost:8083");
         origins.addAll(appProperties.getAllowedOrigins());
-        cfg.setAllowedOrigins(origins);
+        // setAllowedOriginPatterns (not setAllowedOrigins) so CORS_ORIGINS may contain
+        // host/port wildcards (e.g. https://192.168.1.233:*) and still work with
+        // allowCredentials=true. Exact origins continue to match as-is.
+        cfg.setAllowedOriginPatterns(origins);
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         // Explicit header list required when allowCredentials=true in Spring Security 7
         cfg.setAllowedHeaders(List.of(
