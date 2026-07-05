@@ -128,7 +128,7 @@ public class PipelineService {
                 al.id,
                 al.entity_id     AS candidate_id,
                 al.action,
-                al.timestamp,
+                CONVERT(datetime2, al.timestamp) AS timestamp,
                 al.user_id       AS actor_id,
                 c.first_name, c.last_name,
                 u.fullName       AS actor_name

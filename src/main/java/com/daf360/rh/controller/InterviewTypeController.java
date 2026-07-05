@@ -53,7 +53,13 @@ public class InterviewTypeController {
         return service.activate(id, actorId(auth));
     }
 
+    /** JWT sub = String.valueOf(userId). Null-safe: request may arrive without a valid token. */
     private Long actorId(Authentication auth) {
-        return Long.valueOf(auth.getName());
+        if (auth == null || auth.getName() == null) return null;
+        try {
+            return Long.valueOf(auth.getName());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

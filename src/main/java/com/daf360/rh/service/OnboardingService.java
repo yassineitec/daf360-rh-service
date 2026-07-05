@@ -335,9 +335,12 @@ public class OnboardingService {
         // STEP 3 — Delete onboarding draft
         jdbc.update("DELETE FROM [dbo].[onboarding_drafts] WHERE candidate_id = ?", candidateId);
 
-        // STEP 4 — Create workflow instance
+        // STEP 4 — Create workflow instance.
+        // triggered_by is NOT NULL + FK → Users(id); hrOfficerId is null when the request
+        // carries no valid JWT, so fall back to the (guaranteed non-null) provisioned user id.
+        Long triggeredBy = hrOfficerId != null ? hrOfficerId : prov.getUserId();
         Long workflowId = workflowInstanceService.createOnboardingInstance(
-                saved.getId(), hrOfficerId, candidate.getPaysId(), dto.getHireDate());
+                saved.getId(), triggeredBy, candidate.getPaysId(), dto.getHireDate());
 
         // STEP 5 — Send welcome email (non-fatal)
         try {
@@ -374,9 +377,9 @@ public class OnboardingService {
         saved = profileRepo.save(saved);
         log.info("Onboarding completed: profileId={} userId={} now ACTIVE", saved.getId(), saved.getUserId());
 
-        // STEP 8 — Audit log
+        // STEP 8 — Audit log (hrOfficerId is null when the request carries no valid JWT)
         auditService.log(
-                hrOfficerId.toString(),
+                hrOfficerId != null ? hrOfficerId.toString() : "SYSTEM",
                 "COMPLETE_ONBOARDING_PROFILE",
                 "EMPLOYEE_PROFILE",
                 saved.getId(),
