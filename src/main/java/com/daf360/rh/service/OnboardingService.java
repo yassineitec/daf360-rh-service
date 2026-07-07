@@ -1,6 +1,7 @@
 package com.daf360.rh.service;
 
 import com.daf360.rh.config.AppProperties;
+import com.daf360.rh.common.GenderNormalizer;
 import com.daf360.rh.domain.Candidate;
 import com.daf360.rh.domain.EmployeeProfile;
 import com.daf360.rh.domain.ItAsset;
@@ -300,7 +301,7 @@ public class OnboardingService {
         profile.setMaritalStatus(dto.getMaritalStatus());
         profile.setNumberOfChildren(dto.getNumberOfChildren());
         profile.setDateOfBirth(dto.getDateOfBirth());
-        profile.setGender(dto.getGender());
+        profile.setGender(GenderNormalizer.normalize(dto.getGender()));
         profile.setNationalId(dto.getNationalId());
         profile.setPassportNumber(dto.getPassportNumber());
         // Contact

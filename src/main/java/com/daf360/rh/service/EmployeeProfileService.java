@@ -1,5 +1,6 @@
 package com.daf360.rh.service;
 
+import com.daf360.rh.common.GenderNormalizer;
 import com.daf360.rh.config.AppProperties;
 import com.daf360.rh.domain.EmployeeProfile;
 import com.daf360.rh.domain.enums.LifecycleStatus;
@@ -140,6 +141,12 @@ public class EmployeeProfileService {
 
         // Apply non-dimension scalar fields via MapStruct (PATCH semantics)
         mapper.updateEntityFromDto(dto, profile);
+
+        // Keep gender canonical (MALE/FEMALE/OTHER/UNSPECIFIED) regardless of what the
+        // client sent — the detail edit form historically posted French labels.
+        if (dto.getGender() != null) {
+            profile.setGender(GenderNormalizer.normalize(profile.getGender()));
+        }
 
         // Resolve and apply dimension FK fields explicitly.
         // The frontend always echoes the form's full current state for these ids, so an
