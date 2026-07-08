@@ -5,7 +5,6 @@ import lombok.*;
 
 /**
  * Maps the [dbo].[departments] dimension table (V23 migration).
- * Not to be confused with the legacy [dbo].[departements] table mapped by {@link Department}.
  */
 @Entity
 @Table(name = "departments")
