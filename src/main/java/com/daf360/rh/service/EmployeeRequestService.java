@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,6 +57,7 @@ public class EmployeeRequestService {
     private final NotificationService          notificationService;
     private final NotificationRoutingService   notificationRoutingService;
     private final AuditService                 auditService;
+    private final JdbcTemplate                 jdbc;
 
     // ── Submit ────────────────────────────────────────────────────────────────
 
@@ -327,6 +329,7 @@ public class EmployeeRequestService {
             dto.setTypeCode(type.getTypeCode());
             dto.setTypeDisplayNameFr(type.getDisplayNameFr());
         }
+        dto.setEmployeeName(resolveEmployeeName(r.getEmployeeProfileId()));
         dto.setPaysId(r.getPaysId());
         dto.setSubmissionDate(r.getSubmissionDate());
         dto.setSubmissionChannel(r.getSubmissionChannel());
@@ -354,5 +357,20 @@ public class EmployeeRequestService {
     private String actorId(Authentication auth) {
         return auth != null && auth.getPrincipal() != null
                 ? auth.getPrincipal().toString() : "SYSTEM";
+    }
+
+    /** Resolves the requesting employee's display name via profile → Users. Null-safe. */
+    private String resolveEmployeeName(Long profileId) {
+        if (profileId == null) return null;
+        try {
+            return jdbc.queryForObject(
+                    "SELECT COALESCE(u.fullName, u.username, u.email) " +
+                    "FROM [dbo].[employee_profiles] ep " +
+                    "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
+                    "WHERE ep.id = ?",
+                    String.class, profileId);
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
