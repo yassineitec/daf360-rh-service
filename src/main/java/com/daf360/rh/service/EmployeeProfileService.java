@@ -284,7 +284,11 @@ public class EmployeeProfileService {
             "ep.lifecycle_status AS lifecycle_status, ep.contract_type AS contract_type, " +
             "ep.hire_date AS hire_date, ep.photo_url AS photo_url, ep.gender AS gender " +
             baseFrom + baseWhere +
-            "ORDER BY u.fullName " +
+            // Tiebreakers make OFFSET/FETCH deterministic: fullName is not unique
+            // (duplicate names exist), and a user could join >1 profile row — without
+            // u.id + ep.id the paged order shuffles, so the same row can return a
+            // different profile/gender (or null) between identical requests.
+            "ORDER BY u.fullName, u.id, ep.id " +
             "OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";
 
         List<EmployeeListItemDto> rows = jdbcTemplate.query(
