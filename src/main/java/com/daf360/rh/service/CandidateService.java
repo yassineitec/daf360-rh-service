@@ -286,13 +286,32 @@ public class CandidateService {
         Long effectivePaysId = tenantService.getEffectivePaysId();
         Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : paysId;
 
-        if (stage != null && !stage.isBlank()) {
-            List<CandidateStatus> statuses = stageToStatuses(stage);
-            return candidateRepo.searchByStatusesAndSearch(statuses, resolvedPaysId, search, pageable)
-                    .map(mapper::toListItem);
-        }
-        return candidateRepo.searchPaged(status, resolvedPaysId, search, pageable)
-                .map(mapper::toListItem);
+        Page<Candidate> page = (stage != null && !stage.isBlank())
+                ? candidateRepo.searchByStatusesAndSearch(stageToStatuses(stage), resolvedPaysId, search, pageable)
+                : candidateRepo.searchPaged(status, resolvedPaysId, search, pageable);
+
+        Map<Long, String> contractLabels = resolveEmploymentTypeLabels(page.getContent());
+
+        return page.map(candidate -> {
+            CandidateListItem item = mapper.toListItem(candidate);
+            if (candidate.getEmploymentTypeId() != null) {
+                item.setContractType(contractLabels.get(candidate.getEmploymentTypeId()));
+            }
+            return item;
+        });
+    }
+
+    /** Batch-loads employment-type labels for a page of candidates (avoids N+1). */
+    private Map<Long, String> resolveEmploymentTypeLabels(List<Candidate> candidates) {
+        Set<Long> typeIds = candidates.stream()
+                .map(Candidate::getEmploymentTypeId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        if (typeIds.isEmpty()) return Map.of();
+        Map<Long, String> labels = new java.util.HashMap<>();
+        listValueRepo.findAllById(typeIds).forEach(v ->
+                labels.put(v.getId(), v.getLabelFr() != null ? v.getLabelFr() : v.getLabelEn()));
+        return labels;
     }
 
     private static List<CandidateStatus> stageToStatuses(String stage) {

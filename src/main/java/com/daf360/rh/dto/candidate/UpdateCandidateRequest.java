@@ -1,6 +1,8 @@
 package com.daf360.rh.dto.candidate;
 
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -41,4 +43,10 @@ public class UpdateCandidateRequest {
 
     @Size(max = 1000)
     private String notes;
+
+    @Min(0) @Max(60)
+    private Integer experienceYears;
+
+    @Size(max = 150)
+    private String location;
 }

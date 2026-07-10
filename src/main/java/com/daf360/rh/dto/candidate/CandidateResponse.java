@@ -48,4 +48,7 @@ public class CandidateResponse {
 
     private Long recruitmentDemandId;
     private String recruitmentDemandJobTitle;
+
+    private Integer experienceYears;
+    private String location;
 }

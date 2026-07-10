@@ -1,6 +1,7 @@
 package com.daf360.rh.service;
 
 import com.daf360.rh.domain.enums.CandidateStatus;
+import com.daf360.rh.pipeline.PipelineSupport;
 import com.daf360.rh.dto.pipeline.KanbanCandidateDto;
 import com.daf360.rh.dto.pipeline.KanbanColumnDto;
 import com.daf360.rh.dto.pipeline.PipelineActivityDto;
@@ -45,16 +46,8 @@ public class PipelineService {
     private static final List<String> STAGE_ORDER = List.of(
             "SCREENING", "ENTRETIEN", "OFFRE", "RECRUTE", "REJETE");
 
-    private static final Map<String, String> STATUS_TO_STAGE = Map.of(
-            "PENDING",        "SCREENING",
-            "ACCEPTED",       "ENTRETIEN",
-            "HR_IN_PROGRESS", "ENTRETIEN",
-            "IT_IN_PROGRESS", "OFFRE",
-            "EMAIL_RECEIVED", "OFFRE",
-            "HIRED",          "RECRUTE",
-            "REJECTED",       "REJETE",
-            "ARCHIVED",       "REJETE"
-    );
+    // Status→stage, stage labels and the fit-score heuristic live in PipelineSupport
+    // so the Kanban and the candidate list stay consistent.
 
     private static final Map<String, String> STAGE_TO_STATUS = Map.of(
             "SCREENING", "PENDING",
@@ -64,13 +57,36 @@ public class PipelineService {
             "REJETE",    "REJECTED"
     );
 
-    private static final Map<String, String> STAGE_LABELS = Map.of(
-            "SCREENING", "Candidatures",
-            "ENTRETIEN", "Entretiens",
-            "OFFRE",     "Offres",
-            "RECRUTE",   "Recrutés",
-            "REJETE",    "Rejetés"
-    );
+    // ── Shared Kanban query fragments (enriched card data) ───────────────────────
+
+    /** Columns feeding {@link #rowToKanbanDto}. */
+    private static final String KANBAN_COLUMNS = """
+            c.id, c.first_name, c.last_name, c.applied_position, c.status,
+            c.expected_start_date, c.notes, c.email_personal, c.created_at,
+            c.experience_years, c.location, c.cv_path,
+            ep.gender, ep.contract_type, ep.onboarding_completed,
+            rd.budget_range, rd.technical_skills,
+            ni.scheduled_at AS next_interview_at, itp.name AS next_interview_type,
+            ipv.status AS prov_status
+            """;
+
+    /** FROM + joins: employee profile, linked demand, IT provisioning and next planned interview. */
+    private static final String KANBAN_FROM = """
+             FROM [dbo].[candidates] c
+             LEFT JOIN [dbo].[employee_profiles] ep ON ep.candidate_id = c.id AND ep.deleted = 0
+             LEFT JOIN [dbo].[recruitment_demands] rd ON rd.id = c.recruitment_demand_id
+             LEFT JOIN [dbo].[it_provisioning] ipv ON ipv.candidate_id = c.id
+             OUTER APPLY (
+                 SELECT TOP 1 ci.scheduled_at, ci.interview_type_id
+                 FROM [dbo].[candidate_interviews] ci
+                 WHERE ci.candidate_id = c.id AND ci.status = 'PLANNED' AND ci.scheduled_at >= GETDATE()
+                 ORDER BY ci.scheduled_at ASC
+             ) ni
+             LEFT JOIN [dbo].[interview_types] itp ON itp.id = ni.interview_type_id
+            """;
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     /** Statuses considered "active" (in-pipeline, not yet hired or rejected). */
     private static final String ACTIVE_IN = "'PENDING','ACCEPTED','HR_IN_PROGRESS','IT_IN_PROGRESS','EMAIL_RECEIVED'";
@@ -95,7 +111,8 @@ public class PipelineService {
                          THEN CAST(DATEDIFF(day, created_at, GETDATE()) AS FLOAT)
                          END)                                                    AS avg_days,
                 SUM(CASE WHEN expected_start_date IS NOT NULL
-                              AND expected_start_date <= DATEADD(day, 30, GETDATE())
+                              AND expected_start_date <= DATEADD(day, """ + PipelineSupport.URGENT_WINDOW_DAYS + """
+                              , GETDATE())
                               AND status IN ('PENDING','ACCEPTED','HR_IN_PROGRESS',
                                             'IT_IN_PROGRESS','EMAIL_RECEIVED')
                          THEN 1 ELSE 0 END)                                      AS urgent
@@ -245,28 +262,21 @@ public class PipelineService {
     // ── Kanban ─────────────────────────────────────────────────────────────────
 
     public List<KanbanColumnDto> getKanban() {
-        String sql = """
-            SELECT c.id, c.first_name, c.last_name, c.applied_position, c.status,
-                   c.expected_start_date, c.notes, c.email_personal, c.created_at,
-                   ep.gender, ep.contract_type
-            FROM [dbo].[candidates] c
-            LEFT JOIN [dbo].[employee_profiles] ep
-                   ON ep.candidate_id = c.id AND ep.deleted = 0
-            WHERE c.status IN (""" + KANBAN_IN + ")\n" +
-            "ORDER BY c.created_at DESC";
+        String sql = "SELECT " + KANBAN_COLUMNS + KANBAN_FROM +
+                " WHERE c.status IN (" + KANBAN_IN + ") ORDER BY c.created_at DESC";
 
         List<Map<String, Object>> rows = jdbc.queryForList(sql);
 
         Map<String, List<KanbanCandidateDto>> byStage = rows.stream()
                 .collect(Collectors.groupingBy(
-                        r -> STATUS_TO_STAGE.getOrDefault(str(r, "status"), "SCREENING"),
+                        r -> PipelineSupport.stageKey(str(r, "status")),
                         Collectors.mapping(this::rowToKanbanDto, Collectors.toList())
                 ));
 
         return STAGE_ORDER.stream()
                 .map(stage -> new KanbanColumnDto(
                         stage,
-                        STAGE_LABELS.getOrDefault(stage, stage),
+                        PipelineSupport.stageLabelForKey(stage),
                         byStage.getOrDefault(stage, List.of()).size(),
                         byStage.getOrDefault(stage, List.of())
                 ))
@@ -301,12 +311,7 @@ public class PipelineService {
                 " OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";
 
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT c.id, c.first_name, c.last_name, c.applied_position, c.status," +
-                " c.expected_start_date, c.notes, c.email_personal, c.created_at," +
-                " ep.gender, ep.contract_type" +
-                " FROM [dbo].[candidates] c" +
-                " LEFT JOIN [dbo].[employee_profiles] ep ON ep.candidate_id = c.id AND ep.deleted = 0 " +
-                where + pagination,
+                "SELECT " + KANBAN_COLUMNS + KANBAN_FROM + " " + where + pagination,
                 args.toArray());
 
         List<KanbanCandidateDto> content = rows.stream()
@@ -347,12 +352,7 @@ public class PipelineService {
         }
 
         Map<String, Object> row = jdbc.queryForMap(
-                "SELECT c.id, c.first_name, c.last_name, c.applied_position, c.status," +
-                " c.expected_start_date, c.notes, c.email_personal, c.created_at," +
-                " ep.gender, ep.contract_type" +
-                " FROM [dbo].[candidates] c" +
-                " LEFT JOIN [dbo].[employee_profiles] ep ON ep.candidate_id = c.id AND ep.deleted = 0" +
-                " WHERE c.id = ?", id);
+                "SELECT " + KANBAN_COLUMNS + KANBAN_FROM + " WHERE c.id = ?", id);
 
         return rowToKanbanDto(row);
     }
@@ -361,10 +361,10 @@ public class PipelineService {
 
     private KanbanCandidateDto rowToKanbanDto(Map<String, Object> r) {
         String status   = str(r, "status");
-        String stage    = STATUS_TO_STAGE.getOrDefault(status, "SCREENING");
-        String stageLabel = STAGE_LABELS.getOrDefault(stage, stage);
+        String stage    = PipelineSupport.stageKey(status);
+        String stageLabel = PipelineSupport.stageLabelForKey(stage);
         LocalDate esd   = toLocalDate(r.get("expected_start_date"));
-        boolean urgent  = esd != null && !esd.isAfter(LocalDate.now().plusDays(14));
+        boolean urgent  = esd != null && !esd.isAfter(LocalDate.now().plusDays(PipelineSupport.URGENT_WINDOW_DAYS));
 
         String firstName = str(r, "first_name");
         String lastName  = str(r, "last_name");
@@ -372,14 +372,19 @@ public class PipelineService {
 
         String initials = deriveInitials(fullName);
 
-        String applicationDate = null;
-        Object createdAt = r.get("created_at");
-        if (createdAt instanceof OffsetDateTime odt) {
-            applicationDate = odt.format(DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.FRENCH));
-        } else if (createdAt instanceof java.sql.Timestamp ts) {
-            applicationDate = ts.toLocalDateTime()
-                    .format(DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.FRENCH));
-        }
+        String applicationDate = formatDateFr(r.get("created_at"), "dd MMM yyyy");
+
+        // ── Enriched card data ──────────────────────────────────────────────────
+        Integer experienceYears = toIntOrNull(r.get("experience_years"));
+        String experience = experienceYears != null ? experienceYears + " ans exp." : null;
+        String location   = str(r, "location");
+        boolean hasCv     = str(r, "cv_path") != null;
+        int fitScore      = PipelineSupport.fitScore(status, hasCv, experienceYears);
+        List<String> skills = parseSkills(str(r, "technical_skills"));
+        String salary     = str(r, "budget_range");
+        String nextEvent  = buildNextEvent(r.get("next_interview_at"), str(r, "next_interview_type"));
+        Integer progressPercent = PipelineSupport.progressPercent(
+                status, str(r, "prov_status"), toBool(r.get("onboarding_completed")));
 
         return new KanbanCandidateDto(
                 toLong(r.get("id")),
@@ -387,15 +392,15 @@ public class PipelineService {
                 initials,
                 null,
                 str(r, "applied_position"),
-                0,
+                fitScore,
                 deriveBadge(status, urgent),
                 deriveBadgeType(status, urgent),
-                null,
-                null,
-                List.of(),
+                experience,
+                location,
+                skills,
                 str(r, "notes"),
-                null,
-                null,
+                nextEvent,
+                salary,
                 urgent,
                 stage,
                 stageLabel,
@@ -403,8 +408,47 @@ public class PipelineService {
                 str(r, "email_personal"),
                 status,
                 str(r, "gender"),
-                str(r, "contract_type")
+                str(r, "contract_type"),
+                progressPercent
         );
+    }
+
+    /** Parses a JSON array string (e.g. {@code ["Java","AWS"]}) into a list; empty on any failure. */
+    private static List<String> parseSkills(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return JSON.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /** Builds a compact "Type · 12 juil. 14:00" label for the next planned interview. */
+    private static String buildNextEvent(Object scheduledAt, String typeName) {
+        String when = formatDateFr(scheduledAt, "dd MMM HH:mm");
+        if (when == null) return null;
+        return typeName != null && !typeName.isBlank() ? typeName + " · " + when : when;
+    }
+
+    private static String formatDateFr(Object v, String pattern) {
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern(pattern, Locale.FRENCH);
+        if (v instanceof OffsetDateTime odt) return odt.format(fmt);
+        if (v instanceof java.sql.Timestamp ts) return ts.toLocalDateTime().format(fmt);
+        return null;
+    }
+
+    private static Integer toIntOrNull(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.intValue();
+        try { return Integer.parseInt(v.toString().trim()); } catch (NumberFormatException e) { return null; }
+    }
+
+    private static Boolean toBool(Object v) {
+        if (v == null) return null;
+        if (v instanceof Boolean b) return b;
+        if (v instanceof Number n) return n.intValue() != 0;
+        String s = v.toString().trim();
+        return "1".equals(s) || "true".equalsIgnoreCase(s);
     }
 
     private static String deriveInitials(String fullName) {

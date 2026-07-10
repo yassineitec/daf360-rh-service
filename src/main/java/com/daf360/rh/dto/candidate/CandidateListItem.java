@@ -28,4 +28,10 @@ public class CandidateListItem {
     private String stage;
     private Integer fitScore;
     private String applicationDate;
+
+    // --- enriched card fields ---
+    private Integer experienceYears;
+    private String location;
+    /** Resolved employment-type label (e.g. CDI / CDD) — set by CandidateService. */
+    private String contractType;
 }

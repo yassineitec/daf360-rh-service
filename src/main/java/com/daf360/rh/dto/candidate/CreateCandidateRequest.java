@@ -47,4 +47,10 @@ public class CreateCandidateRequest {
     private Long recruitmentDemandId;
 
     private Long employmentTypeId;
+
+    @Min(0) @Max(60)
+    private Integer experienceYears;
+
+    @Size(max = 150)
+    private String location;
 }

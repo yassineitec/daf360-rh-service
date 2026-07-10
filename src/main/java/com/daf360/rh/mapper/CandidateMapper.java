@@ -53,6 +53,8 @@ public interface CandidateMapper {
     @Mapping(target = "colorIndex",      expression = "java((int)(Math.abs(candidate.getId() == null ? 0L : candidate.getId()) % 8))")
     @Mapping(target = "poste",           source = "appliedPosition")
     @Mapping(target = "stage",           expression = "java(mapStage(candidate.getStatus()))")
+    @Mapping(target = "fitScore",        expression = "java(com.daf360.rh.pipeline.PipelineSupport.fitScore(candidate.getStatus() != null ? candidate.getStatus().name() : null, candidate.getCvPath() != null, candidate.getExperienceYears()))")
+    @Mapping(target = "contractType",    ignore = true) // resolved from employmentTypeId in CandidateService
     @Mapping(target = "applicationDate", expression = "java(candidate.getCreatedAt() != null ? candidate.getCreatedAt().toLocalDate().toString() : null)")
     CandidateListItem toListItem(Candidate candidate);
 
@@ -100,15 +102,8 @@ public interface CandidateMapper {
         return fi + li;
     }
 
+    /** Canonical stage label — delegates to PipelineSupport so the list and Kanban agree. */
     default String mapStage(CandidateStatus status) {
-        if (status == null) return "Candidature";
-        return switch (status) {
-            case PENDING                    -> "Candidature";
-            case ACCEPTED, HR_IN_PROGRESS   -> "Screening RH";
-            case IT_IN_PROGRESS             -> "Entretien Technique";
-            case EMAIL_RECEIVED             -> "Offre Envoyée";
-            case HIRED                      -> "Recruté";
-            case REJECTED, ARCHIVED         -> "Rejeté";
-        };
+        return com.daf360.rh.pipeline.PipelineSupport.stageLabel(status);
     }
 }

@@ -117,6 +117,14 @@ public class Candidate {
     @Column(name = "employment_type_id")
     private Long employmentTypeId;
 
+    /** Years of professional experience (V39). */
+    @Column(name = "experience_years")
+    private Integer experienceYears;
+
+    /** Candidate location / city (V39). */
+    @Column(name = "location", length = 150, columnDefinition = "nvarchar(150)")
+    private String location;
+
     // TODO: run migration: ALTER TABLE [dbo].[candidates] ADD fit_score INT NULL;
     // @Column(name = "fit_score") -- re-enable after migration
     @jakarta.persistence.Transient

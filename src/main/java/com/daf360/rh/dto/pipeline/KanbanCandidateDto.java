@@ -24,5 +24,6 @@ public record KanbanCandidateDto(
         String email,
         String status,
         String gender,
-        String contractType
+        String contractType,
+        Integer progressPercent
 ) {}
