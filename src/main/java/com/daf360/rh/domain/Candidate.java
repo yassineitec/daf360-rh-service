@@ -54,6 +54,15 @@ public class Candidate {
     @Column(name = "national_id", length = 100)
     private String nationalId;
 
+    /**
+     * Candidate gender — canonical GENDER list value_code (MALE/FEMALE/OTHER/
+     * UNSPECIFIED). Free-form string column with no DB constraint; kept canonical
+     * on write via {@link com.daf360.rh.common.GenderNormalizer}. Flows through to
+     * the employee profile at onboarding time. (V40)
+     */
+    @Column(name = "gender", length = 30)
+    private String gender;
+
     @Column(name = "applied_position", length = 255, columnDefinition = "nvarchar(255)")
     private String appliedPosition;
 

@@ -14,6 +14,8 @@ public class CandidateListItem {
     private String firstName;
     private String lastName;
     private String emailPersonal;
+    /** Canonical GENDER code (MALE/FEMALE/…) — drives the avatar shown on kanban/list cards. */
+    private String gender;
     private String appliedPosition;
     private String appliedGrade;
     private LocalDate expectedStartDate;
@@ -34,4 +36,10 @@ public class CandidateListItem {
     private String location;
     /** Resolved employment-type label (e.g. CDI / CDD) — set by CandidateService. */
     private String contractType;
+
+    // --- next planned interview (for the kanban card footer) ---
+    /** Earliest PLANNED interview datetime for this candidate, or null if none scheduled. */
+    private OffsetDateTime nextInterviewAt;
+    /** Location of that next planned interview (may be null even when a date exists). */
+    private String nextInterviewLocation;
 }

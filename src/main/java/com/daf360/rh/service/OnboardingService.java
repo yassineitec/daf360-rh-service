@@ -528,7 +528,11 @@ public class OnboardingService {
                 .selectedRegimeId(hasDraft ? draft.getRegimeTemplateId()
                                 : hasProfile ? existingProfile.getRegimeTemplateId() : null)
                 // Section 4 — Personal & Social
-                .gender(hasProfile ? existingProfile.getGender() : null)
+                // Gender: draft > existing profile > candidate (gender is now captured on
+                // the candidate itself, so onboarding pre-fills instead of asking afresh).
+                .gender(hasDraft ? draft.getGender()
+                       : hasProfile ? existingProfile.getGender()
+                       : GenderNormalizer.normalize(c.getGender()))
                 .nationalityId(hasProfile && existingProfile.getNationality() != null
                         ? existingProfile.getNationality().getId()
                         : c.getNationality() != null ? c.getNationality().getId() : null)

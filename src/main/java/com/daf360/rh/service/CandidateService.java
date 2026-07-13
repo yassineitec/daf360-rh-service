@@ -14,7 +14,10 @@ import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.lifecycle.ContractTypeBridge;
 import com.daf360.rh.lifecycle.EmployeeLifecycleService;
 import com.daf360.rh.mapper.CandidateMapper;
+import com.daf360.rh.domain.CandidateInterview;
+import com.daf360.rh.repository.CandidateInterviewRepository;
 import com.daf360.rh.repository.CandidateRepository;
+import com.daf360.rh.repository.RecruitmentDemandRepository;
 import com.daf360.rh.repository.DisciplineRepository;
 import com.daf360.rh.repository.EmployeeProfileRepository;
 import com.daf360.rh.repository.GradeRepository;
@@ -61,7 +64,9 @@ public class CandidateService {
     );
     private static final long MAX_CV_SIZE = 10 * 1024 * 1024L; // 10 MB
 
-    private final CandidateRepository        candidateRepo;
+    private final CandidateRepository          candidateRepo;
+    private final CandidateInterviewRepository interviewRepo;
+    private final RecruitmentDemandRepository  recruitmentDemandRepo;
     private final ItProvisioningRepository   itProvRepo;
     private final EmployeeProfileRepository  profileRepo;
     private final CandidateMapper            mapper;
@@ -106,6 +111,7 @@ public class CandidateService {
         }
 
         Candidate candidate = mapper.toEntity(request);
+        candidate.setGender(com.daf360.rh.common.GenderNormalizer.normalize(request.getGender()));
         applyDimensionFks(candidate,
                 request.getNationalityId(), request.getAppliedGradeId(),
                 request.getAppliedDisciplineId(), request.getDepartmentId());
@@ -131,6 +137,9 @@ public class CandidateService {
 
         String before = "status=" + candidate.getStatus();
         mapper.updateEntity(candidate, request);
+        if (request.getGender() != null) {
+            candidate.setGender(com.daf360.rh.common.GenderNormalizer.normalize(request.getGender()));
+        }
         applyDimensionFks(candidate,
                 request.getNationalityId(), request.getAppliedGradeId(),
                 request.getAppliedDisciplineId(), request.getDepartmentId());
@@ -291,14 +300,38 @@ public class CandidateService {
                 : candidateRepo.searchPaged(status, resolvedPaysId, search, pageable);
 
         Map<Long, String> contractLabels = resolveEmploymentTypeLabels(page.getContent());
+        Map<Long, CandidateInterview> nextInterviews = resolveNextInterviews(page.getContent());
 
         return page.map(candidate -> {
             CandidateListItem item = mapper.toListItem(candidate);
             if (candidate.getEmploymentTypeId() != null) {
                 item.setContractType(contractLabels.get(candidate.getEmploymentTypeId()));
             }
+            CandidateInterview next = nextInterviews.get(candidate.getId());
+            if (next != null) {
+                item.setNextInterviewAt(next.getScheduledAt());
+                item.setNextInterviewLocation(next.getLocation());
+            }
             return item;
         });
+    }
+
+    /**
+     * Batch-loads each candidate's next PLANNED interview (earliest scheduledAt).
+     * One query for the whole page — avoids an N+1 per card on the kanban.
+     */
+    private Map<Long, CandidateInterview> resolveNextInterviews(List<Candidate> candidates) {
+        Set<Long> ids = candidates.stream()
+                .map(Candidate::getId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        if (ids.isEmpty()) return Map.of();
+        Map<Long, CandidateInterview> earliest = new java.util.HashMap<>();
+        // Query returns rows ordered by scheduledAt ASC → first seen per candidate is the earliest.
+        for (CandidateInterview ci : interviewRepo.findPlannedByCandidateIds(ids)) {
+            earliest.putIfAbsent(ci.getCandidateId(), ci);
+        }
+        return earliest;
     }
 
     /** Batch-loads employment-type labels for a page of candidates (avoids N+1). */
@@ -312,6 +345,74 @@ public class CandidateService {
         listValueRepo.findAllById(typeIds).forEach(v ->
                 labels.put(v.getId(), v.getLabelFr() != null ? v.getLabelFr() : v.getLabelEn()));
         return labels;
+    }
+
+    /**
+     * KPI tiles for the /candidates dashboard: total (+ 30-day growth), average
+     * recruitment delay (+ 90-day trend) and urgent open positions. All figures
+     * are tenant-scoped when the caller resolves to a specific pays.
+     */
+    @Transactional(readOnly = true)
+    public CandidateDashboardStats getDashboardStats() {
+        Long paysId = tenantService.getEffectivePaysId();
+        String scope    = paysId != null ? " AND pays_id = ?" : "";
+        Object[] args   = paysId != null ? new Object[]{ paysId } : new Object[]{};
+
+        long total  = firstLong("SELECT COUNT(*) FROM [dbo].[candidates] WHERE 1=1" + scope, args);
+
+        long curr30 = firstLong(
+                "SELECT COUNT(*) FROM [dbo].[candidates] " +
+                "WHERE created_at >= DATEADD(DAY,-30,SYSDATETIMEOFFSET())" + scope, args);
+        long prev30 = firstLong(
+                "SELECT COUNT(*) FROM [dbo].[candidates] " +
+                "WHERE created_at >= DATEADD(DAY,-60,SYSDATETIMEOFFSET()) " +
+                "  AND created_at <  DATEADD(DAY,-30,SYSDATETIMEOFFSET())" + scope, args);
+        Double monthGrowthPct = prev30 > 0 ? (curr30 - prev30) * 100.0 / prev30
+                                           : (curr30 > 0 ? 100.0 : null);
+
+        Double avgAll  = firstDouble(
+                "SELECT AVG(CAST(DATEDIFF(DAY, created_at, accepted_at) AS FLOAT)) " +
+                "FROM [dbo].[candidates] WHERE accepted_at IS NOT NULL" + scope, args);
+        Double avgCurr = firstDouble(
+                "SELECT AVG(CAST(DATEDIFF(DAY, created_at, accepted_at) AS FLOAT)) " +
+                "FROM [dbo].[candidates] WHERE accepted_at IS NOT NULL " +
+                "  AND accepted_at >= DATEADD(DAY,-90,SYSDATETIMEOFFSET())" + scope, args);
+        Double avgPrev = firstDouble(
+                "SELECT AVG(CAST(DATEDIFF(DAY, created_at, accepted_at) AS FLOAT)) " +
+                "FROM [dbo].[candidates] WHERE accepted_at IS NOT NULL " +
+                "  AND accepted_at >= DATEADD(DAY,-180,SYSDATETIMEOFFSET()) " +
+                "  AND accepted_at <  DATEADD(DAY,-90,SYSDATETIMEOFFSET())" + scope, args);
+        Double avgDelta = (avgCurr != null && avgPrev != null) ? avgCurr - avgPrev : null;
+
+        long urgent = paysId != null
+                ? recruitmentDemandRepo.countPendingByPays(paysId)
+                : firstLong("SELECT COUNT(*) FROM [dbo].[recruitment_demands] WHERE statut = 'EN_ATTENTE'", new Object[]{});
+
+        return CandidateDashboardStats.builder()
+                .totalCandidates(total)
+                .monthGrowthPct(monthGrowthPct)
+                .avgRecruitmentDays(avgAll)
+                .avgRecruitmentDaysDelta(avgDelta)
+                .urgentPositions(urgent)
+                .build();
+    }
+
+    private long firstLong(String sql, Object[] args) {
+        try {
+            Long v = jdbc.queryForObject(sql, Long.class, args);
+            return v != null ? v : 0L;
+        } catch (Exception ex) {
+            log.warn("Dashboard stat query failed: {}", ex.getMessage());
+            return 0L;
+        }
+    }
+
+    private Double firstDouble(String sql, Object[] args) {
+        try {
+            return jdbc.queryForObject(sql, Double.class, args);
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     private static List<CandidateStatus> stageToStatuses(String stage) {

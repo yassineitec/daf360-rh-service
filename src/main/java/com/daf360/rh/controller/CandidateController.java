@@ -47,6 +47,12 @@ public class CandidateController {
         return candidateService.listCandidates(status, stage, paysId, search, pageable);
     }
 
+    /** KPI tiles for the /candidates dashboard (total + growth, avg delay, urgent positions). */
+    @GetMapping("/stats/dashboard")
+    public CandidateDashboardStats dashboardStats() {
+        return candidateService.getDashboardStats();
+    }
+
     @GetMapping("/{id}")
     //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING') or hasPermission(null, 'IT_PROVISIONING')")
     public CandidateResponse get(@PathVariable Long id) {

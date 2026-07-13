@@ -55,6 +55,8 @@ public interface CandidateMapper {
     @Mapping(target = "stage",           expression = "java(mapStage(candidate.getStatus()))")
     @Mapping(target = "fitScore",        expression = "java(com.daf360.rh.pipeline.PipelineSupport.fitScore(candidate.getStatus() != null ? candidate.getStatus().name() : null, candidate.getCvPath() != null, candidate.getExperienceYears()))")
     @Mapping(target = "contractType",    ignore = true) // resolved from employmentTypeId in CandidateService
+    @Mapping(target = "nextInterviewAt",       ignore = true) // batch-loaded in CandidateService
+    @Mapping(target = "nextInterviewLocation", ignore = true) // batch-loaded in CandidateService
     @Mapping(target = "applicationDate", expression = "java(candidate.getCreatedAt() != null ? candidate.getCreatedAt().toLocalDate().toString() : null)")
     CandidateListItem toListItem(Candidate candidate);
 

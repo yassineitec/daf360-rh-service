@@ -30,6 +30,10 @@ public class UpdateCandidateRequest {
     @Size(max = 100)
     private String nationalId;
 
+    /** Canonical GENDER list code (MALE/FEMALE/OTHER/UNSPECIFIED); normalized on write. */
+    @Size(max = 30)
+    private String gender;
+
     @Size(max = 255)
     private String appliedPosition;
 
