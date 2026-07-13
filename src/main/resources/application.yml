@@ -76,6 +76,7 @@ app:
   company-name:     ${COMPANY_NAME:DAF360}
   portal-url: ${PORTAL_URL:http://localhost:8080}
   mail-from: ${MAIL_FROM:noreply@daf360.com}
+  pdf-service-url: ${PDF_SERVICE_URL:http://localhost:3000}
 
 mail:
   enabled: ${MAIL_ENABLED:false}

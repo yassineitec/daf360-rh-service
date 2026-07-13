@@ -516,8 +516,10 @@ public class PdfDocumentService {
                 .verificationCode(rs.getString("verification_code"))
                 .generatedAt(rs.getObject("generated_at", OffsetDateTime.class))
                 .generatedBy(rs.getObject("generated_by") != null ? rs.getLong("generated_by") : null)
-                .downloadUrl(appProperties.getPdfServiceUrl()
-                        + "/api/hr/documents/download/" + rs.getLong("id"))
+                // Relative to the HR API (rh-service), NOT the Node pdf-service.
+                // The frontend prepends its hrApiUrl. (Was wrongly using
+                // getPdfServiceUrl(), which pointed downloads at the PDF generator.)
+                .downloadUrl("/api/hr/documents/download/" + rs.getLong("id"))
                 .build();
     }
 }
