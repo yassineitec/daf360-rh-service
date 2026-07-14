@@ -15,6 +15,7 @@ public class RequestResponseDto {
     private String                  typeDisplayNameFr;
     private String                  employeeName;
     private Long                    paysId;
+    private String                  paysName;
     private OffsetDateTime          submissionDate;
     private String                  submissionChannel;
     private RequestStatus           status;

@@ -331,6 +331,7 @@ public class EmployeeRequestService {
         }
         dto.setEmployeeName(resolveEmployeeName(r.getEmployeeProfileId()));
         dto.setPaysId(r.getPaysId());
+        dto.setPaysName(resolvePaysName(r.getPaysId()));
         dto.setSubmissionDate(r.getSubmissionDate());
         dto.setSubmissionChannel(r.getSubmissionChannel());
         dto.setStatus(r.getStatus());
@@ -358,6 +359,17 @@ public class EmployeeRequestService {
     private String actorId(Authentication auth) {
         return auth != null && auth.getPrincipal() != null
                 ? auth.getPrincipal().toString() : "SYSTEM";
+    }
+
+    /** Resolves the entity (pays) display name. Null-safe. */
+    private String resolvePaysName(Long paysId) {
+        if (paysId == null) return null;
+        try {
+            return jdbc.queryForObject(
+                    "SELECT french_label FROM [dbo].[pays] WHERE id = ?", String.class, paysId);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** Resolves the assigned officer's display name from Users. Null-safe. */
