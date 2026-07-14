@@ -335,6 +335,7 @@ public class EmployeeRequestService {
         dto.setSubmissionChannel(r.getSubmissionChannel());
         dto.setStatus(r.getStatus());
         dto.setAssignedOfficerId(r.getAssignedOfficerId());
+        dto.setAssignedOfficerName(resolveOfficerName(r.getAssignedOfficerId()));
         dto.setResolutionDate(r.getResolutionDate());
         dto.setClosureComment(r.getClosureComment());
         dto.setAttachmentUrl(r.getAttachmentUrl());
@@ -357,6 +358,18 @@ public class EmployeeRequestService {
     private String actorId(Authentication auth) {
         return auth != null && auth.getPrincipal() != null
                 ? auth.getPrincipal().toString() : "SYSTEM";
+    }
+
+    /** Resolves the assigned officer's display name from Users. Null-safe. */
+    private String resolveOfficerName(Long userId) {
+        if (userId == null) return null;
+        try {
+            return jdbc.queryForObject(
+                    "SELECT COALESCE(u.fullName, u.username, u.email) FROM [dbo].[Users] u WHERE u.id = ?",
+                    String.class, userId);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** Resolves the requesting employee's display name via profile → Users. Null-safe. */

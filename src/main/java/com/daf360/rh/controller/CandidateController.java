@@ -2,7 +2,11 @@ package com.daf360.rh.controller;
 
 import com.daf360.rh.domain.enums.CandidateStatus;
 import com.daf360.rh.dto.candidate.*;
+import com.daf360.rh.dto.offer.CreateOfferRequest;
+import com.daf360.rh.dto.offer.OfferResponse;
+import com.daf360.rh.dto.offer.RejectOfferRequest;
 import com.daf360.rh.service.CandidateService;
+import com.daf360.rh.service.OfferService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
@@ -27,6 +31,7 @@ import org.springframework.data.web.PageableDefault;
 public class CandidateController {
 
     private final CandidateService candidateService;
+    private final OfferService offerService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -113,6 +118,44 @@ public class CandidateController {
                                       @Valid @RequestBody HireCandidateRequest request,
                                       Authentication auth) {
         return candidateService.hireCandidate(id, request, actorId(auth));
+    }
+
+    // ── Offer / negotiation stage ───────────────────────────────────────────
+    /** Current job offer for a candidate (404 if none was sent). */
+    @GetMapping("/{id}/offer")
+    public OfferResponse getOffer(@PathVariable Long id) {
+        return offerService.getByCandidate(id);
+    }
+
+    /** Send an offer to an ACCEPTED candidate → status OFFER_SENT. */
+    @PostMapping("/{id}/offer")
+    @ResponseStatus(HttpStatus.CREATED)
+    public OfferResponse sendOffer(@PathVariable Long id,
+                                   @Valid @RequestBody CreateOfferRequest request,
+                                   Authentication auth) {
+        return offerService.sendOffer(id, request, actorId(auth));
+    }
+
+    /** Renegotiate a still-open offer (revise salary/terms, keeps it SENT). */
+    @PutMapping("/{id}/offer")
+    public OfferResponse renegotiateOffer(@PathVariable Long id,
+                                          @Valid @RequestBody CreateOfferRequest request,
+                                          Authentication auth) {
+        return offerService.renegotiateOffer(id, request, actorId(auth));
+    }
+
+    /** Candidate accepts the offer → begins IT provisioning. */
+    @PostMapping("/{id}/offer/accept")
+    public OfferResponse acceptOffer(@PathVariable Long id, Authentication auth) {
+        return offerService.acceptOffer(id, actorId(auth));
+    }
+
+    /** Candidate declines (or RH withdraws) the offer → candidate REJECTED. */
+    @PostMapping("/{id}/offer/reject")
+    public OfferResponse rejectOffer(@PathVariable Long id,
+                                     @Valid @RequestBody RejectOfferRequest request,
+                                     Authentication auth) {
+        return offerService.rejectOffer(id, request, actorId(auth));
     }
 
     @GetMapping("/{id}/history")

@@ -25,5 +25,12 @@ public record KanbanCandidateDto(
         String status,
         String gender,
         String contractType,
-        Integer progressPercent
+        Integer progressPercent,
+        // ── Entretien column ──
+        String interviewLocation,
+        // ── Offre column ──
+        String askedSalary,
+        String proposedSalary,
+        String offerExpiry,
+        String offerStatus
 ) {}

@@ -24,6 +24,7 @@ public final class PipelineSupport {
         put("PENDING",        "SCREENING");
         put("ACCEPTED",       "ENTRETIEN");
         put("HR_IN_PROGRESS", "ENTRETIEN");
+        put("OFFER_SENT",     "OFFRE");
         put("IT_IN_PROGRESS", "OFFRE");
         put("EMAIL_RECEIVED", "OFFRE");
         put("HIRED",          "RECRUTE");
@@ -68,6 +69,7 @@ public final class PipelineSupport {
             case "PENDING"        -> 45;
             case "ACCEPTED"       -> 60;
             case "HR_IN_PROGRESS" -> 68;
+            case "OFFER_SENT"     -> 80;
             case "IT_IN_PROGRESS" -> 74;
             case "EMAIL_RECEIVED" -> 85;
             case "HIRED"          -> 100;

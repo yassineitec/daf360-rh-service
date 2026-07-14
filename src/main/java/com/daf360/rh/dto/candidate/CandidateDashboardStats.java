@@ -27,4 +27,14 @@ public class CandidateDashboardStats {
 
     /** Open positions requiring HR action — pending recruitment demands (EN_ATTENTE). */
     private long urgentPositions;
+
+    // ── Funnel-health KPIs (Pipeline RH page) ───────────────────────────────────
+    /** Candidates still moving through the pipeline (not hired, rejected or archived). */
+    private long activeCandidates;
+
+    /** Total candidates recruited (status HIRED). */
+    private long hiredTotal;
+
+    /** Offer acceptance rate (%) among decided offers; null when no offer decided yet. */
+    private Double offerAcceptanceRate;
 }

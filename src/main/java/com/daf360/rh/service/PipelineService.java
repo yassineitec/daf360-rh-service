@@ -52,9 +52,25 @@ public class PipelineService {
     private static final Map<String, String> STAGE_TO_STATUS = Map.of(
             "SCREENING", "PENDING",
             "ENTRETIEN", "ACCEPTED",
-            "OFFRE",     "HR_IN_PROGRESS",
+            "OFFRE",     "OFFER_SENT",
             "RECRUTE",   "HIRED",
             "REJETE",    "REJECTED"
+    );
+
+    /**
+     * Allowed candidate status transitions — mirrors the guarded workflow so the
+     * generic {@link #moveToStage} endpoint can't jump to an arbitrary status
+     * (e.g. PENDING → HIRED). Same-status is always a no-op.
+     */
+    private static final Map<String, java.util.Set<String>> ALLOWED_TRANSITIONS = Map.of(
+            "PENDING",        java.util.Set.of("ACCEPTED", "REJECTED"),
+            "ACCEPTED",       java.util.Set.of("OFFER_SENT", "REJECTED"),
+            "OFFER_SENT",     java.util.Set.of("IT_IN_PROGRESS", "REJECTED"),
+            "IT_IN_PROGRESS", java.util.Set.of("EMAIL_RECEIVED", "REJECTED"),
+            "EMAIL_RECEIVED", java.util.Set.of("HR_IN_PROGRESS", "HIRED", "REJECTED"),
+            "HR_IN_PROGRESS", java.util.Set.of("HIRED", "REJECTED"),
+            "HIRED",          java.util.Set.of("ARCHIVED"),
+            "REJECTED",       java.util.Set.of("ARCHIVED")
     );
 
     // ── Shared Kanban query fragments (enriched card data) ───────────────────────
@@ -66,8 +82,11 @@ public class PipelineService {
             c.experience_years, c.location, c.cv_path,
             ep.gender, ep.contract_type, ep.onboarding_completed,
             rd.budget_range, rd.technical_skills,
-            ni.scheduled_at AS next_interview_at, itp.name AS next_interview_type,
-            ipv.status AS prov_status
+            CONVERT(datetime2, ni.scheduled_at) AS next_interview_at, ni.location AS next_interview_location,
+            itp.name AS next_interview_type,
+            ipv.status AS prov_status,
+            jo.asked_salary AS offer_asked_salary, jo.proposed_salary AS offer_salary,
+            jo.expiry_date AS offer_expiry, jo.status AS offer_status
             """;
 
     /** FROM + joins: employee profile, linked demand, IT provisioning and next planned interview. */
@@ -77,43 +96,44 @@ public class PipelineService {
              LEFT JOIN [dbo].[recruitment_demands] rd ON rd.id = c.recruitment_demand_id
              LEFT JOIN [dbo].[it_provisioning] ipv ON ipv.candidate_id = c.id
              OUTER APPLY (
-                 SELECT TOP 1 ci.scheduled_at, ci.interview_type_id
+                 SELECT TOP 1 ci.scheduled_at, ci.interview_type_id, ci.location
                  FROM [dbo].[candidate_interviews] ci
                  WHERE ci.candidate_id = c.id AND ci.status = 'PLANNED' AND ci.scheduled_at >= GETDATE()
                  ORDER BY ci.scheduled_at ASC
              ) ni
              LEFT JOIN [dbo].[interview_types] itp ON itp.id = ni.interview_type_id
+             LEFT JOIN [dbo].[job_offers] jo ON jo.candidate_id = c.id
             """;
 
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
             new com.fasterxml.jackson.databind.ObjectMapper();
 
     /** Statuses considered "active" (in-pipeline, not yet hired or rejected). */
-    private static final String ACTIVE_IN = "'PENDING','ACCEPTED','HR_IN_PROGRESS','IT_IN_PROGRESS','EMAIL_RECEIVED'";
+    private static final String ACTIVE_IN = "'PENDING','ACCEPTED','OFFER_SENT','HR_IN_PROGRESS','IT_IN_PROGRESS','EMAIL_RECEIVED'";
 
     /** Statuses shown in the Kanban (all except ARCHIVED). */
-    private static final String KANBAN_IN = "'PENDING','ACCEPTED','HR_IN_PROGRESS','IT_IN_PROGRESS','EMAIL_RECEIVED','HIRED','REJECTED'";
+    private static final String KANBAN_IN = "'PENDING','ACCEPTED','OFFER_SENT','HR_IN_PROGRESS','IT_IN_PROGRESS','EMAIL_RECEIVED','HIRED','REJECTED'";
 
     // ── Stats ──────────────────────────────────────────────────────────────────
 
     public PipelineStatsDto getStats() {
         String sql = """
             SELECT
-                SUM(CASE WHEN status IN ('PENDING','ACCEPTED','HR_IN_PROGRESS',
+                SUM(CASE WHEN status IN ('PENDING','ACCEPTED','OFFER_SENT','HR_IN_PROGRESS',
                                          'IT_IN_PROGRESS','EMAIL_RECEIVED')
                          THEN 1 ELSE 0 END)                                      AS total,
                 SUM(CASE WHEN status IN ('ACCEPTED','HR_IN_PROGRESS')
                          THEN 1 ELSE 0 END)                                      AS en_entretien,
                 CAST(NULL AS FLOAT)                                              AS score_moyen,
                 SUM(CASE WHEN status = 'HIRED' THEN 1 ELSE 0 END)               AS recrutements_clos,
-                AVG(CASE WHEN status IN ('PENDING','ACCEPTED','HR_IN_PROGRESS',
+                AVG(CASE WHEN status IN ('PENDING','ACCEPTED','OFFER_SENT','HR_IN_PROGRESS',
                                          'IT_IN_PROGRESS','EMAIL_RECEIVED')
                          THEN CAST(DATEDIFF(day, created_at, GETDATE()) AS FLOAT)
                          END)                                                    AS avg_days,
                 SUM(CASE WHEN expected_start_date IS NOT NULL
                               AND expected_start_date <= DATEADD(day, """ + PipelineSupport.URGENT_WINDOW_DAYS + """
                               , GETDATE())
-                              AND status IN ('PENDING','ACCEPTED','HR_IN_PROGRESS',
+                              AND status IN ('PENDING','ACCEPTED','OFFER_SENT','HR_IN_PROGRESS',
                                             'IT_IN_PROGRESS','EMAIL_RECEIVED')
                          THEN 1 ELSE 0 END)                                      AS urgent
             FROM [dbo].[candidates]
@@ -343,6 +363,20 @@ public class PipelineService {
             }
         }
 
+        // Validate the transition against the real workflow — no arbitrary jumps.
+        String current;
+        try {
+            current = jdbc.queryForObject(
+                    "SELECT status FROM [dbo].[candidates] WHERE id = ?", String.class, id);
+        } catch (org.springframework.dao.EmptyResultDataAccessException e) {
+            throw new AppException(ErrorCode.CANDIDATE_NOT_FOUND, "Candidat introuvable : " + id);
+        }
+        if (!newStatus.equals(current)
+                && !ALLOWED_TRANSITIONS.getOrDefault(current, java.util.Set.of()).contains(newStatus)) {
+            throw new AppException(ErrorCode.CANDIDATE_STATUS_INVALID,
+                    "Transition interdite : " + current + " → " + newStatus);
+        }
+
         int updated = jdbc.update(
                 "UPDATE [dbo].[candidates] SET status = ?, updated_at = SYSDATETIMEOFFSET() WHERE id = ?",
                 newStatus, id);
@@ -386,6 +420,13 @@ public class PipelineService {
         Integer progressPercent = PipelineSupport.progressPercent(
                 status, str(r, "prov_status"), toBool(r.get("onboarding_completed")));
 
+        // ── Entretien / Offre per-column card data ──────────────────────────────
+        String interviewLocation = str(r, "next_interview_location");
+        String askedSalary = formatSalary(r.get("offer_asked_salary"));
+        String proposedSalary = formatSalary(r.get("offer_salary"));
+        String offerExpiry = formatDateFr(r.get("offer_expiry"), "dd/MM/yyyy");
+        String offerStatus = str(r, "offer_status");
+
         return new KanbanCandidateDto(
                 toLong(r.get("id")),
                 fullName,
@@ -409,7 +450,12 @@ public class PipelineService {
                 status,
                 str(r, "gender"),
                 str(r, "contract_type"),
-                progressPercent
+                progressPercent,
+                interviewLocation,
+                askedSalary,
+                proposedSalary,
+                offerExpiry,
+                offerStatus
         );
     }
 
@@ -434,7 +480,18 @@ public class PipelineService {
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern(pattern, Locale.FRENCH);
         if (v instanceof OffsetDateTime odt) return odt.format(fmt);
         if (v instanceof java.sql.Timestamp ts) return ts.toLocalDateTime().format(fmt);
+        if (v instanceof java.sql.Date d) return d.toLocalDate().format(fmt);
+        if (v instanceof LocalDate ld) return ld.format(fmt);
         return null;
+    }
+
+    /** Formats a numeric salary as a compact French label, e.g. {@code 65000 → "65 000 DT"}. */
+    private static String formatSalary(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) {
+            return String.format(Locale.FRENCH, "%,.0f DT", n.doubleValue());
+        }
+        return v.toString();
     }
 
     private static Integer toIntOrNull(Object v) {
@@ -465,7 +522,7 @@ public class PipelineService {
         return switch (stage.toUpperCase()) {
             case "SCREENING" -> "'PENDING'";
             case "ENTRETIEN" -> "'ACCEPTED','HR_IN_PROGRESS'";
-            case "OFFRE"     -> "'IT_IN_PROGRESS','EMAIL_RECEIVED'";
+            case "OFFRE"     -> "'OFFER_SENT','IT_IN_PROGRESS','EMAIL_RECEIVED'";
             case "RECRUTE"   -> "'HIRED'";
             case "REJETE"    -> "'REJECTED','ARCHIVED'";
             default          -> ACTIVE_IN;
@@ -476,7 +533,8 @@ public class PipelineService {
         return switch (status) {
             case "PENDING"                       -> urgent ? "Urgent" : "Nouveau";
             case "ACCEPTED", "HR_IN_PROGRESS"    -> "En cours";
-            case "IT_IN_PROGRESS",
+            case "OFFER_SENT",
+                 "IT_IN_PROGRESS",
                  "EMAIL_RECEIVED"                -> "Offre Envoyée";
             case "HIRED"                         -> "Confirmé";
             default                              -> "Rejeté";
@@ -487,7 +545,8 @@ public class PipelineService {
         return switch (status) {
             case "PENDING"                       -> urgent ? "urgent" : "new";
             case "ACCEPTED", "HR_IN_PROGRESS"    -> "in_progress";
-            case "IT_IN_PROGRESS",
+            case "OFFER_SENT",
+                 "IT_IN_PROGRESS",
                  "EMAIL_RECEIVED"                -> "offer";
             case "HIRED"                         -> "hired";
             default                              -> "rejected";

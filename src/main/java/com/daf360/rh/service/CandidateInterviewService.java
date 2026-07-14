@@ -7,6 +7,7 @@ import com.daf360.rh.domain.enums.InterviewResult;
 import com.daf360.rh.domain.enums.InterviewStatus;
 import com.daf360.rh.dto.interview.CandidateInterviewDto;
 import com.daf360.rh.dto.interview.CreateInterviewRequest;
+import com.daf360.rh.dto.interview.MyInterviewEventDto;
 import com.daf360.rh.dto.interview.UpdateInterviewRequest;
 import com.daf360.rh.dto.interview.UserPickerDto;
 import com.daf360.rh.exception.BusinessRuleException;
@@ -88,6 +89,9 @@ public class CandidateInterviewService {
                     + "Terminez ou annulez l'entretien existant avant d'en créer un nouveau.");
         }
 
+        // Prevent double-booking the interviewer at the same time slot.
+        assertInterviewerFree(req.interviewerUserId(), req.scheduledAt(), null);
+
         int sequenceNumber = (int) (interviewRepo.countByCandidateId(candidateId) + 1);
 
         CandidateInterview interview = CandidateInterview.builder()
@@ -133,13 +137,84 @@ public class CandidateInterviewService {
         if (req.result() != null)           interview.setResult(InterviewResult.valueOf(req.result()));
         interview.setUpdatedAt(OffsetDateTime.now());
 
+        // Re-check double-booking if it's still a planned interview (time/interviewer may have changed).
+        if (interview.getStatus() == InterviewStatus.PLANNED) {
+            assertInterviewerFree(interview.getInterviewerUserId(), interview.getScheduledAt(), interview.getId());
+        }
+
         CandidateInterview saved = interviewRepo.save(interview);
         String typeName = typeRepo.findById(saved.getInterviewTypeId())
                 .map(InterviewType::getName).orElse(null);
         return toDto(saved, typeName);
     }
 
+    /**
+     * Interviews assigned to a given interviewer (the current user) within a date
+     * range, as calendar events — used by the shell home calendar. Self-scoped, so
+     * no RH_MANAGE_INTERVIEWS permission required. Returns [] when userId is null.
+     * {@code from}/{@code to} are inclusive ISO dates (yyyy-MM-dd).
+     */
+    @Transactional(readOnly = true)
+    public List<MyInterviewEventDto> listMyInterviews(Long userId, String from, String to) {
+        if (userId == null) return List.of();
+        String sql = """
+            SELECT ci.id, ci.candidate_id, ci.scheduled_at, ci.location,
+                   c.first_name, c.last_name, c.applied_position, it.name AS type_name
+              FROM [dbo].[candidate_interviews] ci
+              JOIN [dbo].[candidates] c ON c.id = ci.candidate_id
+              LEFT JOIN [dbo].[interview_types] it ON it.id = ci.interview_type_id
+             WHERE ci.interviewer_user_id = ?
+               AND ci.status = 'PLANNED'
+               AND ci.scheduled_at >= ?
+               AND ci.scheduled_at <  DATEADD(day, 1, ?)
+             ORDER BY ci.scheduled_at ASC
+            """;
+        return jdbcTemplate.query(sql, (rs, rn) -> {
+            String first = rs.getString("first_name");
+            String last  = rs.getString("last_name");
+            String name  = ((first != null ? first : "") + " " + (last != null ? last : "")).trim();
+            String type  = rs.getString("type_name");
+            OffsetDateTime when = rs.getObject("scheduled_at", OffsetDateTime.class);
+            String title = (type != null && !type.isBlank() ? type : "Entretien") + " · " + name;
+            return new MyInterviewEventDto(
+                    rs.getLong("id"),
+                    rs.getLong("candidate_id"),
+                    name,
+                    rs.getString("applied_position"),
+                    when,
+                    rs.getString("location"),
+                    title);
+        }, userId, from, to);
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    private static final int INTERVIEW_SLOT_MINUTES = 60;
+    private static final java.time.format.DateTimeFormatter FR_DATETIME =
+            java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy 'à' HH:mm");
+
+    /**
+     * Rejects the operation if the interviewer already has a PLANNED interview within
+     * one slot (~{@value #INTERVIEW_SLOT_MINUTES} min) of {@code scheduledAt}.
+     * {@code excludeId} skips a given interview (used on update). No-op when no
+     * interviewer or time is provided.
+     */
+    private void assertInterviewerFree(Long interviewerUserId, OffsetDateTime scheduledAt, Long excludeId) {
+        if (interviewerUserId == null || scheduledAt == null) return;
+        OffsetDateTime from = scheduledAt.minusMinutes(INTERVIEW_SLOT_MINUTES - 1L);
+        OffsetDateTime to   = scheduledAt.plusMinutes(INTERVIEW_SLOT_MINUTES - 1L);
+        List<CandidateInterview> conflicts = interviewRepo.findInterviewerConflicts(interviewerUserId, from, to)
+                .stream()
+                .filter(ci -> excludeId == null || !excludeId.equals(ci.getId()))
+                .toList();
+        if (!conflicts.isEmpty()) {
+            String when = conflicts.get(0).getScheduledAt().format(FR_DATETIME);
+            throw new BusinessRuleException(
+                    "Cet intervieweur a déjà un entretien planifié le " + when
+                    + " (créneau d'environ " + INTERVIEW_SLOT_MINUTES + " min). "
+                    + "Choisissez un autre horaire ou un autre intervieweur.");
+        }
+    }
 
     private Candidate loadCandidateWithTenantCheck(Long candidateId) {
         Candidate candidate = candidateRepo.findById(candidateId)

@@ -19,6 +19,7 @@ public class RequestResponseDto {
     private String                  submissionChannel;
     private RequestStatus           status;
     private Long                    assignedOfficerId;
+    private String                  assignedOfficerName;
     private OffsetDateTime          resolutionDate;
     private String                  closureComment;
     private String                  attachmentUrl;

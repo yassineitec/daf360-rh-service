@@ -388,12 +388,35 @@ public class CandidateService {
                 ? recruitmentDemandRepo.countPendingByPays(paysId)
                 : firstLong("SELECT COUNT(*) FROM [dbo].[recruitment_demands] WHERE statut = 'EN_ATTENTE'", new Object[]{});
 
+        // ── Funnel-health KPIs ──────────────────────────────────────────────────
+        long active = firstLong(
+                "SELECT COUNT(*) FROM [dbo].[candidates] WHERE status IN " +
+                "('PENDING','ACCEPTED','OFFER_SENT','IT_IN_PROGRESS','EMAIL_RECEIVED','HR_IN_PROGRESS')" + scope, args);
+        long hiredTotal = firstLong(
+                "SELECT COUNT(*) FROM [dbo].[candidates] WHERE status = 'HIRED'" + scope, args);
+
+        // Offer acceptance rate — only if the job_offers table exists (V41 applied);
+        // checked via sys.tables so a missing table can't poison the transaction.
+        Double offerAcceptanceRate = null;
+        if (firstLong("SELECT COUNT(*) FROM sys.tables WHERE name = 'job_offers'", new Object[]{}) > 0) {
+            String offerScope = paysId != null ? " AND c.pays_id = ?" : "";
+            offerAcceptanceRate = firstDouble(
+                    "SELECT CASE WHEN SUM(CASE WHEN jo.status IN ('ACCEPTED','REJECTED') THEN 1 ELSE 0 END) = 0 THEN NULL " +
+                    "  ELSE 100.0 * SUM(CASE WHEN jo.status = 'ACCEPTED' THEN 1 ELSE 0 END) " +
+                    "       / SUM(CASE WHEN jo.status IN ('ACCEPTED','REJECTED') THEN 1 ELSE 0 END) END " +
+                    "FROM [dbo].[job_offers] jo JOIN [dbo].[candidates] c ON c.id = jo.candidate_id " +
+                    "WHERE 1=1" + offerScope, args);
+        }
+
         return CandidateDashboardStats.builder()
                 .totalCandidates(total)
                 .monthGrowthPct(monthGrowthPct)
                 .avgRecruitmentDays(avgAll)
                 .avgRecruitmentDaysDelta(avgDelta)
                 .urgentPositions(urgent)
+                .activeCandidates(active)
+                .hiredTotal(hiredTotal)
+                .offerAcceptanceRate(offerAcceptanceRate)
                 .build();
     }
 
