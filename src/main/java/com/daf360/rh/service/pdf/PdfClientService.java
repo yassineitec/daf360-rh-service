@@ -4,6 +4,7 @@ import com.daf360.rh.config.AppProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -16,7 +17,22 @@ import java.util.Map;
 public class PdfClientService {
 
     private final AppProperties appProperties;
-    private final RestClient restClient = RestClient.create();
+
+    /**
+     * Uses SimpleClientHttpRequestFactory (classic HttpURLConnection) instead of the
+     * JDK HttpClient default, which is incompatible with the Express-based pdf-service.
+     * Generous read timeout — PDF rendering (Playwright/Chromium) can take a few seconds.
+     */
+    private final RestClient restClient = RestClient.builder()
+            .requestFactory(pdfRequestFactory())
+            .build();
+
+    private static SimpleClientHttpRequestFactory pdfRequestFactory() {
+        SimpleClientHttpRequestFactory f = new SimpleClientHttpRequestFactory();
+        f.setConnectTimeout(5_000);
+        f.setReadTimeout(60_000);
+        return f;
+    }
 
     public byte[] generatePdf(String templateSlug, Map<String, Object> data) {
         String url = appProperties.getPdfServiceUrl() + "/pdf/api/arx/" + templateSlug;

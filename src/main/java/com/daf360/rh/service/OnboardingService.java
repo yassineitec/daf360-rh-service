@@ -65,6 +65,7 @@ public class OnboardingService {
     private final com.daf360.rh.repository.HrDepartmentRepository deptRepo;
     private final com.daf360.rh.repository.NationalityRepository  natRepo;
     private final com.daf360.rh.repository.BankRepository         bankRepo;
+    private final com.daf360.rh.lifecycle.ContractTypeBridge      contractTypeBridge;
 
     // ─── Valid statuses for the onboarding pending list ──────────────────────
     private static final Set<CandidateStatus> PENDING_STATUSES =
@@ -416,6 +417,25 @@ public class OnboardingService {
                 .build();
     }
 
+    /**
+     * Pre-fills the onboarding contract type from the candidate's employment type.
+     * The candidate's employment type uses the lifecycle vocabulary (CDI/CDD/…)
+     * while the onboarding form uses PERMANENT/FIXED_TERM/INTERN/CONSULTANT, so we
+     * map the known ones and leave the rest blank (the user then picks).
+     */
+    private String onboardingContractTypeFromCandidate(Long employmentTypeId) {
+        if (employmentTypeId == null) return null;
+        String code = contractTypeBridge.resolveContractTypeCode(employmentTypeId);
+        if (code == null) return null;
+        return switch (code) {
+            case "CDI"                 -> "PERMANENT";
+            case "CDD"                 -> "FIXED_TERM";
+            case "STAGE", "CIVP"       -> "INTERN";
+            case "PORTAGE", "FREELANCE" -> "CONSULTANT";
+            default                    -> null; // DETACHEMENT / unknown → let the user choose
+        };
+    }
+
     private RegimeSummary toRegimeSummary(WorkingTimeRegime r) {
         return RegimeSummary.builder()
                 .id(r.getId())
@@ -505,7 +525,8 @@ public class OnboardingService {
                 .appliedDiscipline(c.getAppliedDiscipline() != null ? c.getAppliedDiscipline().getLabelFr() : null)
                 .department(c.getDepartment() != null ? c.getDepartment().getLabelFr() : null)
                 .contractType(hasDraft ? draft.getContractType()
-                            : hasProfile ? existingProfile.getContractType() : null)
+                            : hasProfile ? existingProfile.getContractType()
+                            : onboardingContractTypeFromCandidate(c.getEmploymentTypeId()))
                 .expectedStartDate(c.getExpectedStartDate())
                 .hireDate(hasProfile ? existingProfile.getHireDate() : null)
                 .contractEndDate(hasProfile ? existingProfile.getContractEndDate() : null)
