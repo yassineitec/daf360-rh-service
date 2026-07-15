@@ -23,6 +23,12 @@ public class ItProvisioningController {
         return provisioningService.getPendingList();
     }
 
+    @GetMapping("/all")
+    //@PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
+    public List<ProvisioningListItem> getAllList() {
+        return provisioningService.getAllList();
+    }
+
     @GetMapping("/{id}")
     //@PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
     public ProvisioningResponse getOne(@PathVariable Long id) {

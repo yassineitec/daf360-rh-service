@@ -230,6 +230,28 @@ public class EmployeeProfileService {
         return toResponseDto(saved, auth);
     }
 
+    public void transitionLifecycleByActor(Long id, LifecycleTransitionDto dto, Long actorUserId) {
+        EmployeeProfile profile = findOrThrow(id);
+        LifecycleStatus current = profile.getLifecycleStatus();
+        LifecycleStatus next    = dto.getNewStatus();
+
+        if (!current.canTransitionTo(next)) {
+            throw new AppException(
+                    com.daf360.rh.exception.ErrorCode.LIFECYCLE_TRANSITION_INVALID,
+                    "Transition interdite: " + current + " → " + next);
+        }
+        if (next == LifecycleStatus.ARCHIVED) {
+            pseudonymise(profile);
+        }
+        profile.setLifecycleStatus(next);
+        profile.setUpdatedAt(OffsetDateTime.now(PARIS));
+        profileRepository.save(profile);
+
+        String actor = actorUserId != null ? actorUserId.toString() : "SYSTEM";
+        auditService.log(actor, "LIFECYCLE_" + next, "EmployeeProfile", id,
+                current.name(), next.name() + " | " + dto.getReason());
+    }
+
     // ── Archive (soft delete + pseudonymise) ─────────────────────────────────
 
     public void archiveProfile(Long id, Authentication auth) {

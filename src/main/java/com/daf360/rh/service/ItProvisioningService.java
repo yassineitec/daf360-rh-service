@@ -41,6 +41,12 @@ public class ItProvisioningService {
             ItProvisioningStatus.IN_PROGRESS,
             ItProvisioningStatus.EMAIL_CREATED);
 
+    private static final List<ItProvisioningStatus> ALL_STATUSES = List.of(
+            ItProvisioningStatus.PENDING,
+            ItProvisioningStatus.IN_PROGRESS,
+            ItProvisioningStatus.EMAIL_CREATED,
+            ItProvisioningStatus.COMPLETED);
+
     private static final String CHECK_USERNAME_SQL =
         "SELECT COUNT(*) FROM [dbo].[Users] WHERE username = ?";
 
@@ -109,34 +115,58 @@ public class ItProvisioningService {
                 .collect(Collectors.toList());
     }
 
+    @Transactional(readOnly = true)
+    public List<ProvisioningListItem> getAllList() {
+        Long paysId = tenantService.getEffectivePaysId();
+        List<ItProvisioning> provs = paysId != null
+                ? itProvRepo.findByStatusInAndCandidatePaysId(ALL_STATUSES, paysId)
+                : itProvRepo.findByStatusIn(ALL_STATUSES);
+        if (provs.isEmpty()) return List.of();
+
+        Set<Long> candidateIds = provs.stream()
+                .map(ItProvisioning::getCandidateId).collect(Collectors.toSet());
+        Map<Long, Candidate> candidateMap = candidateRepo.findAllById(candidateIds).stream()
+                .collect(Collectors.toMap(Candidate::getId, c -> c));
+
+        Set<Long> provIds = provs.stream().map(ItProvisioning::getId).collect(Collectors.toSet());
+        Map<Long, List<ItAsset>> assetsByProv = new HashMap<>();
+        for (Long provId : provIds) {
+            assetsByProv.put(provId, assetRepo.findByProvisioningId(provId));
+        }
+
+        return provs.stream()
+                .sorted(Comparator.comparing(p -> {
+                    Candidate c = candidateMap.get(p.getCandidateId());
+                    return c != null && c.getAcceptedAt() != null
+                            ? c.getAcceptedAt()
+                            : OffsetDateTime.MIN;
+                }))
+                .map(p -> toListItem(p, candidateMap.get(p.getCandidateId()),
+                        assetsByProv.getOrDefault(p.getId(), List.of())))
+                .collect(Collectors.toList());
+    }
+
     public ProvisioningResponse getProvisioning(Long id) {
         ItProvisioning prov = findOrThrow(id);
         Candidate candidate = candidateRepo.findById(prov.getCandidateId())
                 .orElseThrow(() -> new AppException(ErrorCode.CANDIDATE_NOT_FOUND));
-        List<ItAsset> assets = assetRepo.findByProvisioningId(id);
-        // Auto-create asset slots for all active types if none exist yet (new provisioning post-V23)
-        if (assets.isEmpty()) {
-            assets = initDefaultAssets(prov);
-        }
+        List<ItAsset> saved = assetRepo.findByProvisioningId(id);
+        List<ItAsset> assets = mergeWithAllTypes(prov, saved);
         return toResponse(prov, candidate, assets);
     }
 
-    /** Creates one ItAsset row per active ItAssetType for the given provisioning. */
-    private List<ItAsset> initDefaultAssets(ItProvisioning prov) {
-        List<com.daf360.rh.domain.ItAssetType> types =
-                assetTypeRepo.findAllByIsActiveTrueOrderBySortOrderAsc();
-        List<ItAsset> created = new ArrayList<>();
-        for (com.daf360.rh.domain.ItAssetType type : types) {
-            ItAsset asset = ItAsset.builder()
-                    .provisioning(prov)
-                    .assetType(type)
-                    .provided(false)
-                    .status("BON_ETAT")
-                    .build();
-            created.add(assetRepo.save(asset));
-        }
-        log.info("Initialized {} default asset slots for provisioningId={}", created.size(), prov.getId());
-        return created;
+    /** Returns saved assets merged with all active asset types. Types with no saved row appear as
+     *  transient (unsaved) empty slots so the form always shows the full hardware list. */
+    private List<ItAsset> mergeWithAllTypes(ItProvisioning prov, List<ItAsset> saved) {
+        List<ItAssetType> allTypes = assetTypeRepo.findAllByIsActiveTrueOrderBySortOrderAsc();
+        Map<String, ItAsset> savedByCode = saved.stream()
+                .filter(a -> a.getAssetType() != null)
+                .collect(Collectors.toMap(a -> a.getAssetType().getCode(), a -> a));
+        return allTypes.stream()
+                .map(type -> savedByCode.containsKey(type.getCode())
+                        ? savedByCode.get(type.getCode())
+                        : ItAsset.builder().provisioning(prov).assetType(type).provided(false).build())
+                .collect(Collectors.toList());
     }
 
     // ── Updates ───────────────────────────────────────────────────────────────
@@ -195,7 +225,16 @@ public class ItProvisioningService {
                 if (assetReq.getBrandModel()    != null) asset.setBrandModel(assetReq.getBrandModel());
                 if (assetReq.getAssetTag()      != null) asset.setAssetTag(assetReq.getAssetTag());
                 if (assetReq.getStatus()        != null) asset.setStatus(assetReq.getStatus());
-                updatedAssets.add(assetRepo.save(asset));
+
+                boolean empty = !Boolean.TRUE.equals(asset.getProvided())
+                        && (asset.getSerialNumber() == null || asset.getSerialNumber().isBlank())
+                        && (asset.getBrandModel()   == null || asset.getBrandModel().isBlank())
+                        && (asset.getAssetTag()     == null || asset.getAssetTag().isBlank());
+                if (empty) {
+                    if (asset.getId() != null) assetRepo.delete(asset);
+                } else {
+                    updatedAssets.add(assetRepo.save(asset));
+                }
             }
         } else {
             updatedAssets = assetRepo.findByProvisioningId(prov.getId());
@@ -214,7 +253,7 @@ public class ItProvisioningService {
 
         Candidate candidate = candidateRepo.findById(prov.getCandidateId())
                 .orElseThrow(() -> new AppException(ErrorCode.CANDIDATE_NOT_FOUND));
-        return toResponse(prov, candidate, updatedAssets);
+        return toResponse(prov, candidate, mergeWithAllTypes(prov, updatedAssets));
     }
 
     public ProvisioningResponse submitEmail(Long id, String ms365Email, Long itManagerId) {
@@ -350,7 +389,7 @@ public class ItProvisioningService {
                 .candidateAcceptedAt(c != null ? c.getAcceptedAt() : null)
                 .status(p.getStatus())
                 .ms365Email(p.getMs365Email())
-                .assetsProvided((int) assets.stream().filter(ItAsset::getProvided).count())
+                .assetsProvided((int) assets.stream().filter(a -> Boolean.TRUE.equals(a.getProvided())).count())
                 .licenseOffice365(p.getLicenseOffice365())
                 .licenseAutocad(p.getLicenseAutocad())
                 .licenseRevit(p.getLicenseRevit())

@@ -144,12 +144,12 @@ public class PdfDocumentService {
         data.put("cinCity",    cinCity != null ? cinCity : "________");
         data.put("cinDate",    cinDate);
         // Hardware
-        data.put("laptop_provided",          Boolean.TRUE.equals(prov.get("laptop_provided")));
-        data.put("mouse_provided",           Boolean.TRUE.equals(prov.get("mouse_provided")));
-        data.put("keyboard_provided",        Boolean.TRUE.equals(prov.get("keyboard_provided")));
-        data.put("screen_provided",          Boolean.TRUE.equals(prov.get("screen_provided")));
-        data.put("headset_provided",         Boolean.TRUE.equals(prov.get("headset_provided")));
-        data.put("docking_station_provided", Boolean.TRUE.equals(prov.get("docking_station_provided")));
+        data.put("laptop_provided",          Integer.valueOf(1).equals(prov.get("laptop_provided")));
+        data.put("mouse_provided",           Integer.valueOf(1).equals(prov.get("mouse_provided")));
+        data.put("keyboard_provided",        Integer.valueOf(1).equals(prov.get("keyboard_provided")));
+        data.put("screen_provided",          Integer.valueOf(1).equals(prov.get("screen_provided")));
+        data.put("headset_provided",         Integer.valueOf(1).equals(prov.get("headset_provided")));
+        data.put("docking_station_provided", Integer.valueOf(1).equals(prov.get("docking_station_provided")));
         data.put("laptopBrand",   prov.getOrDefault("laptop_brand",  ""));
         data.put("laptopSn",      prov.getOrDefault("laptop_sn",     ""));
         data.put("screenBrand",   prov.getOrDefault("screen_brand",  ""));
