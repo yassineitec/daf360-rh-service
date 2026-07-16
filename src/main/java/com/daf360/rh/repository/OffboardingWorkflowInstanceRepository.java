@@ -25,4 +25,11 @@ public interface OffboardingWorkflowInstanceRepository
             ORDER BY w.triggerDate ASC
             """)
     List<OffboardingWorkflowInstance> findActiveByPays(@Param("paysId") Long paysId);
+
+    @Query("""
+            SELECT w FROM OffboardingWorkflowInstance w
+            WHERE w.status IN ('IN_PROGRESS','BLOCKED')
+            ORDER BY w.triggerDate ASC
+            """)
+    List<OffboardingWorkflowInstance> findAllActive();
 }

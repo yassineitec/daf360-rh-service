@@ -87,6 +87,9 @@ public class OffboardingWorkflowInstance {
     @Column(name = "updated_at", columnDefinition = "datetimeoffset(6)")
     private OffsetDateTime updatedAt;
 
+    @Column(name = "handover_manager_profile_id")
+    private Long handoverManagerProfileId;
+
     @OneToMany(mappedBy = "workflowInstance", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
     @Builder.Default
     private List<OffboardingTask> tasks = new ArrayList<>();

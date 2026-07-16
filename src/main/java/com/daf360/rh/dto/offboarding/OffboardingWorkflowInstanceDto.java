@@ -31,4 +31,8 @@ public class OffboardingWorkflowInstanceDto {
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
     private List<OffboardingTaskDto> tasks;
+
+    private String employeeFullName;
+    private Long   handoverManagerProfileId;
+    private String handoverManagerName;
 }

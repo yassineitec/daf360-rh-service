@@ -1,6 +1,7 @@
 -- ============================================================
--- V38 — Offboarding Workflow
--- Created: 2026-07-02
+-- V44 — Offboarding Workflow (replaces conflicting V38)
+-- Delete V38__offboarding_workflow.sql after applying this.
+-- Created: 2026-07-15
 -- ============================================================
 
 -- ── Table 1: offboarding_task_catalog ───────────────────────

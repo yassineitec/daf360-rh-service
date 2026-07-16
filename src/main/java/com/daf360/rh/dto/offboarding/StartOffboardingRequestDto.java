@@ -24,4 +24,7 @@ public class StartOffboardingRequestDto {
     private String departureReason;
 
     private String departureNotes;
+
+    /** Profile ID of the manager responsible for the KNOWLEDGE_TRANSFER task. */
+    private Long handoverManagerProfileId;
 }
