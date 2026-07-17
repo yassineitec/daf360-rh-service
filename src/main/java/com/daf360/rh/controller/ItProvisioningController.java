@@ -18,25 +18,25 @@ public class ItProvisioningController {
     private final ItProvisioningService provisioningService;
 
     @GetMapping("/pending")
-    //@PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
+    @PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
     public List<ProvisioningListItem> getPendingList() {
         return provisioningService.getPendingList();
     }
 
     @GetMapping("/all")
-    //@PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
+    @PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
     public List<ProvisioningListItem> getAllList() {
         return provisioningService.getAllList();
     }
 
     @GetMapping("/{id}")
-    //@PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
+    @PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
     public ProvisioningResponse getOne(@PathVariable Long id) {
         return provisioningService.getProvisioning(id);
     }
 
     @PatchMapping("/{id}")
-    //@PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
+    @PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
     public ProvisioningResponse update(@PathVariable Long id,
                                        @Valid @RequestBody UpdateProvisioningRequest request,
                                        Authentication auth) {
@@ -44,7 +44,7 @@ public class ItProvisioningController {
     }
 
     @PostMapping("/{id}/submit-email")
-    //@PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
+    @PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
     public ProvisioningResponse submitEmail(@PathVariable Long id,
                                             @Valid @RequestBody SubmitEmailRequest request,
                                             Authentication auth) {
@@ -52,7 +52,7 @@ public class ItProvisioningController {
     }
 
     @PostMapping("/{id}/complete")
-    //@PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
+    @PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
     public ProvisioningResponse complete(@PathVariable Long id, Authentication auth) {
         return provisioningService.completeProvisioning(id, actorId(auth));
     }

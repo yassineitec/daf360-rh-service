@@ -51,7 +51,10 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/hr/profiles/*/photo").permitAll()
                 // Internal service-to-service sync endpoint (facturation-service reads every 15 min)
                 .requestMatchers(HttpMethod.GET, "/api/hr/users-for-sync").permitAll()
-                .anyRequest().permitAll()
+                // Baseline: every other endpoint requires a valid session. Privileged
+                // actions add a specific @PreAuthorize on top; the rest are simply
+                // authenticated-only (any logged-in user).
+                .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .exceptionHandling(ex -> ex

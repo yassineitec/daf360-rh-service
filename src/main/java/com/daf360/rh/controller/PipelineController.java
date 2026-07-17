@@ -7,6 +7,7 @@ import com.daf360.rh.dto.pipeline.PipelineObjectiveDto;
 import com.daf360.rh.dto.pipeline.PipelineStatsDto;
 import com.daf360.rh.service.PipelineService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -61,6 +62,7 @@ public class PipelineController {
      * stage: SCREENING | ENTRETIEN | OFFRE | RECRUTE | REJETE
      */
     @PutMapping("/candidates/{id}/stage")
+    @PreAuthorize("hasAnyAuthority('EDIT_CANDIDATE','HR_ONBOARDING')")
     public ResponseEntity<KanbanCandidateDto> moveToStage(
             @PathVariable Long id,
             @RequestBody String stage) {

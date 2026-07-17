@@ -35,14 +35,14 @@ public class CandidateController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
+    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
     public CandidateResponse create(@Valid @RequestBody CreateCandidateRequest request,
                                     Authentication auth) {
         return candidateService.createCandidate(request, actorId(auth));
     }
 
     @GetMapping
-    //@PreAuthorize("hasAnyAuthority('VIEW_CANDIDATES','HR_ONBOARDING','IT_PROVISIONING','ADMIN_ROLES')")
+    @PreAuthorize("hasAnyAuthority('VIEW_CANDIDATES','HR_ONBOARDING','IT_PROVISIONING','ADMIN_ROLES')")
     public Page<CandidateListItem> list(
             @RequestParam(required = false) CandidateStatus status,
             @RequestParam(required = false) String stage,
@@ -59,13 +59,13 @@ public class CandidateController {
     }
 
     @GetMapping("/{id}")
-    //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING') or hasPermission(null, 'IT_PROVISIONING')")
+    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING') or hasPermission(null, 'IT_PROVISIONING')")
     public CandidateResponse get(@PathVariable Long id) {
         return candidateService.getCandidate(id);
     }
 
     @PutMapping("/{id}")
-    //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
+    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
     public CandidateResponse update(@PathVariable Long id,
                                     @Valid @RequestBody UpdateCandidateRequest request,
                                     Authentication auth) {
@@ -73,13 +73,13 @@ public class CandidateController {
     }
 
     @PostMapping("/{id}/accept")
-    //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
+    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
     public CandidateResponse accept(@PathVariable Long id, Authentication auth) {
         return candidateService.acceptCandidate(id, actorId(auth));
     }
 
     @PostMapping("/{id}/reject")
-    //@PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
+    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
     public CandidateResponse reject(@PathVariable Long id,
                                     @Valid @RequestBody RejectCandidateRequest request,
                                     Authentication auth) {
@@ -88,7 +88,7 @@ public class CandidateController {
 
     /** Upload CV (PDF / DOC / DOCX, max 10 MB). Replaces any previous file. */
     @PostMapping(value = "/{id}/cv", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    //@PreAuthorize("hasPermission(null, 'EDIT_CANDIDATE') or hasPermission(null, 'HR_ONBOARDING')")
+    @PreAuthorize("hasPermission(null, 'EDIT_CANDIDATE') or hasPermission(null, 'HR_ONBOARDING')")
     public CandidateResponse uploadCv(@PathVariable Long id,
                                       @RequestParam("file") MultipartFile file,
                                       Authentication auth) {
@@ -97,7 +97,7 @@ public class CandidateController {
 
     /** Download the candidate's CV file. */
     @GetMapping("/{id}/cv")
-    //@PreAuthorize("hasPermission(null, 'VIEW_CANDIDATES') or hasPermission(null, 'HR_ONBOARDING')")
+    @PreAuthorize("hasPermission(null, 'VIEW_CANDIDATES') or hasPermission(null, 'HR_ONBOARDING')")
     public ResponseEntity<Resource> downloadCv(@PathVariable Long id) {
         Resource resource = candidateService.downloadCv(id);
         String filename  = resource.getFilename() != null ? resource.getFilename() : "cv";
@@ -130,6 +130,7 @@ public class CandidateController {
     /** Send an offer to an ACCEPTED candidate → status OFFER_SENT. */
     @PostMapping("/{id}/offer")
     @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasPermission(null, 'RH_HIRE_CANDIDATE')")
     public OfferResponse sendOffer(@PathVariable Long id,
                                    @Valid @RequestBody CreateOfferRequest request,
                                    Authentication auth) {
@@ -138,6 +139,7 @@ public class CandidateController {
 
     /** Renegotiate a still-open offer (revise salary/terms, keeps it SENT). */
     @PutMapping("/{id}/offer")
+    @PreAuthorize("hasPermission(null, 'RH_HIRE_CANDIDATE')")
     public OfferResponse renegotiateOffer(@PathVariable Long id,
                                           @Valid @RequestBody CreateOfferRequest request,
                                           Authentication auth) {
@@ -146,12 +148,14 @@ public class CandidateController {
 
     /** Candidate accepts the offer → begins IT provisioning. */
     @PostMapping("/{id}/offer/accept")
+    @PreAuthorize("hasPermission(null, 'RH_HIRE_CANDIDATE')")
     public OfferResponse acceptOffer(@PathVariable Long id, Authentication auth) {
         return offerService.acceptOffer(id, actorId(auth));
     }
 
     /** Candidate declines (or RH withdraws) the offer → candidate REJECTED. */
     @PostMapping("/{id}/offer/reject")
+    @PreAuthorize("hasPermission(null, 'RH_HIRE_CANDIDATE')")
     public OfferResponse rejectOffer(@PathVariable Long id,
                                      @Valid @RequestBody RejectOfferRequest request,
                                      Authentication auth) {
@@ -159,7 +163,7 @@ public class CandidateController {
     }
 
     @GetMapping("/{id}/history")
-    //@PreAuthorize("hasAnyAuthority('VIEW_CANDIDATES','HR_ONBOARDING','IT_PROVISIONING','HR_UPDATE_PROFILE','ADMIN_ROLES')")
+    @PreAuthorize("hasAnyAuthority('VIEW_CANDIDATES','HR_ONBOARDING','IT_PROVISIONING','HR_UPDATE_PROFILE','ADMIN_ROLES')")
     public ResponseEntity<List<CandidateHistoryItem>> getHistory(
             @PathVariable Long id, Authentication auth) {
         return ResponseEntity.ok(candidateService.getHistory(id));

@@ -53,7 +53,7 @@ public class PdfDocumentController {
     // -------------------------------------------------------------------------
 
     @PostMapping("/decharge-responsabilite")
-    //@PreAuthorize("hasAnyAuthority('IT_PROVISIONING', 'HR_ONBOARDING')")
+    @PreAuthorize("hasAnyAuthority('IT_PROVISIONING', 'HR_ONBOARDING')")
     public ResponseEntity<Object> generateDecharge(
             @RequestBody Map<String, Object> body,
             Authentication auth) {
@@ -66,7 +66,7 @@ public class PdfDocumentController {
     }
 
     @PostMapping("/attestation-travail")
-    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE', 'HR_ONBOARDING')")
+    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE', 'HR_ONBOARDING')")
     public ResponseEntity<Object> generateAttestationTravail(
             @RequestBody Map<String, Object> body,
             Authentication auth) {
@@ -78,7 +78,7 @@ public class PdfDocumentController {
     }
 
     @PostMapping("/attestation-salaire")
-    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE')")
+    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE')")
     public ResponseEntity<Object> generateAttestationSalaire(
             @RequestBody Map<String, Object> body,
             Authentication auth) {
@@ -90,7 +90,7 @@ public class PdfDocumentController {
     }
 
     @PostMapping("/attestation-non-benefice-pret")
-    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE')")
+    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE')")
     public ResponseEntity<Object> generateAttestationNonBeneficePret(
             @RequestBody Map<String, Object> body,
             Authentication auth) {
@@ -102,7 +102,7 @@ public class PdfDocumentController {
     }
 
     @PostMapping("/attestation-titularisation")
-    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE')")
+    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE')")
     public ResponseEntity<Object> generateAttestationTitularisation(
             @RequestBody Map<String, Object> body,
             Authentication auth) {
@@ -114,7 +114,7 @@ public class PdfDocumentController {
     }
 
     @PostMapping("/attestation-domiciliation-salaire")
-    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE')")
+    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE')")
     public ResponseEntity<Object> generateAttestationDomiciliationSalaire(
             @RequestBody Map<String, Object> body,
             Authentication auth) {
@@ -126,7 +126,7 @@ public class PdfDocumentController {
     }
 
     @GetMapping("/by-request/{requestId}")
-    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE', 'HR_ONBOARDING')")
+    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE', 'HR_ONBOARDING')")
     public ResponseEntity<GeneratedDocumentResponse> getByRequest(@PathVariable Long requestId) {
         return pdfService.findByRequest(requestId)
                 .map(ResponseEntity::ok)
@@ -134,13 +134,13 @@ public class PdfDocumentController {
     }
 
     @GetMapping("/by-profile/{profileId}")
-    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE')")
+    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE')")
     public ResponseEntity<List<GeneratedDocumentResponse>> getByProfile(@PathVariable Long profileId) {
         return ResponseEntity.ok(pdfService.listByProfile(profileId));
     }
 
     @GetMapping("/download/{id}")
-    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE', 'HR_ONBOARDING')")
+    @PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE', 'HR_ONBOARDING')")
     public ResponseEntity<byte[]> download(@PathVariable Long id) {
         try {
             byte[] bytes = pdfService.downloadDocument(id);

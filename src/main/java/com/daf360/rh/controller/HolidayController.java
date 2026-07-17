@@ -24,7 +24,7 @@ public class HolidayController {
 
     /** GET /api/hr/admin/holidays?pays=1&year=2026 */
     @GetMapping
-    //@PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<HolidayResponseDto>> list(
             @RequestParam Long    pays,
             @RequestParam(required = false) Integer year) {
@@ -33,7 +33,7 @@ public class HolidayController {
 
     /** POST /api/hr/admin/holidays — requires CREATE_HOLIDAY */
     @PostMapping
-    //@PreAuthorize("hasAnyAuthority('CREATE_HOLIDAY', 'HR_ADMIN_ROLES')")
+    @PreAuthorize("hasAnyAuthority('CREATE_HOLIDAY', 'HR_ADMIN_ROLES')")
     public ResponseEntity<HolidayResponseDto> create(
             @Valid @RequestBody HolidayCreateDto dto, Authentication auth) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -42,7 +42,7 @@ public class HolidayController {
 
     /** PATCH /api/hr/admin/holidays/{id} */
     @PatchMapping("/{id}")
-    //@PreAuthorize("hasAnyAuthority('UPDATE_HOLIDAY', 'HR_ADMIN_ROLES')")
+    @PreAuthorize("hasAnyAuthority('UPDATE_HOLIDAY', 'HR_ADMIN_ROLES')")
     public ResponseEntity<HolidayResponseDto> update(
             @PathVariable Long id,
             @Valid @RequestBody HolidayCreateDto dto,
@@ -52,7 +52,7 @@ public class HolidayController {
 
     /** DELETE /api/hr/admin/holidays/{id} — soft delete */
     @DeleteMapping("/{id}")
-    //@PreAuthorize("hasAnyAuthority('DELETE_HOLIDAY', 'HR_ADMIN_ROLES')")
+    @PreAuthorize("hasAnyAuthority('DELETE_HOLIDAY', 'HR_ADMIN_ROLES')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable Long id, Authentication auth) {
         holidayService.delete(id, auth);
@@ -63,7 +63,7 @@ public class HolidayController {
      * Returns true if the date is a working day for the given pays.
      */
     @GetMapping("/working-day")
-    //@PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Boolean> isWorkingDay(
             @RequestParam Long pays,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {

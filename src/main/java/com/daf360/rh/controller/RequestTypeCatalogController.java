@@ -22,21 +22,21 @@ public class RequestTypeCatalogController {
 
     /** GET /api/hr/request-types?paysId=1 */
     @GetMapping
-    //@PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<RequestTypeResponseDto>> list(@RequestParam Long paysId) {
         return ResponseEntity.ok(typeService.list(paysId));
     }
 
     /** GET /api/hr/request-types/{id} */
     @GetMapping("/{id}")
-    //@PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<RequestTypeResponseDto> get(@PathVariable Long id) {
         return ResponseEntity.ok(typeService.getById(id));
     }
 
     /** POST /api/hr/request-types — HR_ADMIN_ROLES only */
     @PostMapping
-    //@PreAuthorize("hasAuthority('HR_ADMIN_ROLES')")
+    @PreAuthorize("hasAuthority('HR_ADMIN_ROLES')")
     public ResponseEntity<RequestTypeResponseDto> create(
             @Valid @RequestBody RequestTypeCreateDto dto, Authentication auth) {
         return ResponseEntity.status(HttpStatus.CREATED).body(typeService.create(dto, auth));
@@ -44,7 +44,7 @@ public class RequestTypeCatalogController {
 
     /** PATCH /api/hr/request-types/{id} — HR_ADMIN_ROLES only */
     @PatchMapping("/{id}")
-    //@PreAuthorize("hasAuthority('HR_ADMIN_ROLES')")
+    @PreAuthorize("hasAuthority('HR_ADMIN_ROLES')")
     public ResponseEntity<RequestTypeResponseDto> update(
             @PathVariable Long id,
             @Valid @RequestBody RequestTypeCreateDto dto,
@@ -54,7 +54,7 @@ public class RequestTypeCatalogController {
 
     /** DELETE /api/hr/request-types/{id} — soft deactivate */
     @DeleteMapping("/{id}")
-    //@PreAuthorize("hasAuthority('HR_ADMIN_ROLES')")
+    @PreAuthorize("hasAuthority('HR_ADMIN_ROLES')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deactivate(@PathVariable Long id, Authentication auth) {
         typeService.deactivate(id, auth);
@@ -62,7 +62,7 @@ public class RequestTypeCatalogController {
 
     /** POST /api/hr/request-types/seed — Admin: run default seeding */
     @PostMapping("/seed")
-    //@PreAuthorize("hasAuthority('HR_ADMIN_ROLES')")
+    @PreAuthorize("hasAuthority('HR_ADMIN_ROLES')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void seed() {
         typeService.seedDefaults();

@@ -5,6 +5,7 @@ import com.daf360.rh.service.OffboardingWorkflowService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -13,6 +14,9 @@ import java.util.Map;
 
 @RestController
 @RequiredArgsConstructor
+// Offboarding is an HR-managed workflow — every endpoint requires the manage
+// permission; validation is a distinct (higher) right (see validateWorkflow).
+@PreAuthorize("hasPermission(null, 'RH_MANAGE_OFFBOARDING')")
 public class OffboardingController {
 
     private final OffboardingWorkflowService offboardingService;
@@ -67,6 +71,7 @@ public class OffboardingController {
     // ── Workflow lifecycle ────────────────────────────────────────────────────
 
     @PostMapping("/api/hr/offboarding/{instanceId}/validate")
+    @PreAuthorize("hasPermission(null, 'RH_VALIDATE_OFFBOARDING')")
     public OffboardingWorkflowInstanceDto validateWorkflow(
             @PathVariable Long instanceId,
             Authentication auth) {

@@ -25,19 +25,19 @@ public class ReferenceDataController {
     // ── Grades ────────────────────────────────────────────────────────────────
 
     @GetMapping("/grades")
-    //@PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getGrades(@RequestParam(required = false) Long paysId) {
         return refService.getGrades(paysId);
     }
 
     @PostMapping("/grades")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<RefDataItemDto> createGrade(@RequestBody CreateRefDataRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(refService.createGrade(req));
     }
 
     @DeleteMapping("/grades/{id}")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<Void> deleteGrade(@PathVariable Long id) {
         refService.deleteGrade(id);
         return ResponseEntity.noContent().build();
@@ -46,19 +46,19 @@ public class ReferenceDataController {
     // ── Disciplines ───────────────────────────────────────────────────────────
 
     @GetMapping("/disciplines")
-    //@PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getDisciplines(@RequestParam(required = false) Long paysId) {
         return refService.getDisciplines(paysId);
     }
 
     @PostMapping("/disciplines")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<RefDataItemDto> createDiscipline(@RequestBody CreateRefDataRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(refService.createDiscipline(req));
     }
 
     @DeleteMapping("/disciplines/{id}")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<Void> deleteDiscipline(@PathVariable Long id) {
         refService.deleteDiscipline(id);
         return ResponseEntity.noContent().build();
@@ -67,19 +67,19 @@ public class ReferenceDataController {
     // ── NOG Levels ────────────────────────────────────────────────────────────
 
     @GetMapping("/nog-levels")
-    //@PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getNogLevels(@RequestParam(required = false) Long paysId) {
         return refService.getNogLevels(paysId);
     }
 
     @PostMapping("/nog-levels")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<RefDataItemDto> createNogLevel(@RequestBody CreateRefDataRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(refService.createNogLevel(req));
     }
 
     @DeleteMapping("/nog-levels/{id}")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<Void> deleteNogLevel(@PathVariable Long id) {
         refService.deleteNogLevel(id);
         return ResponseEntity.noContent().build();
@@ -88,19 +88,19 @@ public class ReferenceDataController {
     // ── Departments ───────────────────────────────────────────────────────────
 
     @GetMapping("/departments")
-    //@PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getDepartments(@RequestParam(required = false) Long paysId) {
         return refService.getDepartments(paysId);
     }
 
     @PostMapping("/departments")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<RefDataItemDto> createDepartment(@RequestBody CreateRefDataRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(refService.createDepartment(req));
     }
 
     @DeleteMapping("/departments/{id}")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<Void> deleteDepartment(@PathVariable Long id) {
         refService.deleteDepartment(id);
         return ResponseEntity.noContent().build();
@@ -109,19 +109,19 @@ public class ReferenceDataController {
     // ── Banks ─────────────────────────────────────────────────────────────────
 
     @GetMapping("/banks")
-    //@PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getBanks(@RequestParam(required = false) Long paysId) {
         return refService.getBanks(paysId);
     }
 
     @PostMapping("/banks")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<RefDataItemDto> createBank(@RequestBody CreateRefDataRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(refService.createBank(req));
     }
 
     @DeleteMapping("/banks/{id}")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<Void> deleteBank(@PathVariable Long id) {
         refService.deleteBank(id);
         return ResponseEntity.noContent().build();
@@ -130,19 +130,19 @@ public class ReferenceDataController {
     // ── Nationalities (global) ────────────────────────────────────────────────
 
     @GetMapping("/nationalities")
-    //@PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getNationalities() {
         return refService.getNationalities();
     }
 
     @PostMapping("/nationalities")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<RefDataItemDto> createNationality(@RequestBody CreateRefDataRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(refService.createNationality(req));
     }
 
     @DeleteMapping("/nationalities/{id}")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<Void> deleteNationality(@PathVariable Long id) {
         refService.deleteNationality(id);
         return ResponseEntity.noContent().build();
@@ -151,19 +151,19 @@ public class ReferenceDataController {
     // ── IT Asset Types (read-only — seeded via V23) ───────────────────────────
 
     @GetMapping("/it-asset-types")
-    //@PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getItAssetTypes() {
         return refService.getItAssetTypes();
     }
 
     @PostMapping("/it-asset-types")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<RefDataItemDto> createItAssetType(@RequestBody CreateRefDataRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(refService.createItAssetType(req));
     }
 
     @DeleteMapping("/it-asset-types/{id}")
-    //@PreAuthorize("hasAuthority('ADMIN_LISTS')")
+    @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<Void> deleteItAssetType(@PathVariable Long id) {
         refService.deleteItAssetType(id);
         return ResponseEntity.noContent().build();

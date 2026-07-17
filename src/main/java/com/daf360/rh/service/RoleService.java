@@ -137,29 +137,36 @@ public class RoleService {
             throw new AppException(ErrorCode.ROLE_NOT_FOUND);
         }
 
-        // Validate every permission against the DB constraint
-        List<String> invalid = dto.getPermissions().stream()
-                .filter(p -> !ALLOWED_PERMISSIONS.contains(p))
+        // This service owns ONLY the RH permission catalog. Any submitted code
+        // outside it belongs to another module (e.g. finance FACT_*): the roles-admin
+        // UI seeds its checkbox set from the role's FULL permission list, so foreign
+        // codes get re-sent here. We must neither reject them (was a 400) nor wipe
+        // them — RH manages its own codes and leaves the rest untouched.
+        List<String> submittedRh = dto.getPermissions().stream()
+                .filter(ALLOWED_PERMISSIONS::contains)
+                .distinct()
                 .toList();
-        if (!invalid.isEmpty()) {
-            throw new AppException(ErrorCode.PERMISSION_NOT_ALLOWED,
-                    "Permissions non autorisées: " + invalid
-                    + ". Valeurs autorisées: " + ALLOWED_PERMISSIONS);
-        }
 
         List<String> before = permRepo.findPermissionsByRoleId(roleId);
 
         // Use JdbcTemplate for both DELETE and INSERT — bypasses JPA cache entirely.
         // JPA save() + clearAutomatically had a flush-timing bug where INSERTs were
         // not visible to the subsequent native SELECT in getRole().
-        jdbc.update("DELETE FROM RolePermissions WHERE role_id = ?", roleId);
-        for (String p : dto.getPermissions()) {
+        // Delete ONLY this role's RH-catalog rows so foreign (other-module) grants survive.
+        String placeholders = ALLOWED_PERMISSIONS.stream().map(c -> "?").collect(Collectors.joining(","));
+        Object[] delArgs = new Object[ALLOWED_PERMISSIONS.size() + 1];
+        delArgs[0] = roleId;
+        int idx = 1;
+        for (String c : ALLOWED_PERMISSIONS) delArgs[idx++] = c;
+        jdbc.update("DELETE FROM RolePermissions WHERE role_id = ? AND permission IN (" + placeholders + ")", delArgs);
+
+        for (String p : submittedRh) {
             jdbc.update("INSERT INTO RolePermissions(role_id, permission) VALUES(?, ?)", roleId, p);
         }
 
         auditService.log(actorId(auth), "UPDATE_PERMISSIONS", "RolePermissions", roleId,
                 String.join(",", before),
-                String.join(",", dto.getPermissions()));
+                String.join(",", submittedRh));
 
         return getRole(roleId);
     }
@@ -252,9 +259,13 @@ public class RoleService {
     }
 
     public void addPermission(Long roleId, String code, Authentication auth) {
-        if (!ALLOWED_PERMISSIONS.contains(code)) {
-            throw new AppException(ErrorCode.PERMISSION_NOT_ALLOWED,
-                    "Permission non autorisée: " + code);
+        // Cross-module store: RH holds RolePermissions for every module. Other modules
+        // (finance FACT_*, pointage POINTAGE_*) own their own catalogs and validate codes
+        // before proxying to this endpoint, so we accept any non-blank code here rather
+        // than restricting to RH's own catalog. (The enum CHECK constraint was dropped to
+        // allow this; RH's own roles-admin only ever submits catalogued codes.)
+        if (code == null || code.isBlank()) {
+            throw new AppException(ErrorCode.PERMISSION_NOT_ALLOWED, "Code de permission vide");
         }
         if (!roleRepo.existsById(roleId)) {
             throw new AppException(ErrorCode.ROLE_NOT_FOUND, "Rôle introuvable: id=" + roleId);

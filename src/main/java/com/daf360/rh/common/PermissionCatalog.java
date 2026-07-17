@@ -65,6 +65,7 @@ public final class PermissionCatalog {
     public static final String CREATE_CANDIDATE        = "CREATE_CANDIDATE";
     public static final String EDIT_CANDIDATE          = "EDIT_CANDIDATE";
     public static final String ACCEPT_REJECT_CANDIDATE = "ACCEPT_REJECT_CANDIDATE";
+    public static final String RH_HIRE_CANDIDATE       = "RH_HIRE_CANDIDATE";
     public static final String RH_VIEW_RECRUITMENT_DEMAND   = "RH_VIEW_RECRUITMENT_DEMAND";
     public static final String RH_CREATE_RECRUITMENT_DEMAND = "RH_CREATE_RECRUITMENT_DEMAND";
     public static final String RH_APPROVE_RECRUITMENT_DEMAND= "RH_APPROVE_RECRUITMENT_DEMAND";
@@ -81,6 +82,10 @@ public final class PermissionCatalog {
     public static final String RH_MANAGE_ALERTS             = "RH_MANAGE_ALERTS";
     public static final String RH_MANAGE_OFFBOARDING        = "RH_MANAGE_OFFBOARDING";
     public static final String RH_VALIDATE_OFFBOARDING      = "RH_VALIDATE_OFFBOARDING";
+
+    // ── Temps de travail (régimes & pauses) ───────────────────────────────────
+    public static final String ADMIN_REGIMES           = "ADMIN_REGIMES";
+    public static final String ADMIN_BREAKS            = "ADMIN_BREAKS";
 
     // ── Module IT ────────────────────────────────────────────────────────────
     public static final String IT_PROVISIONING         = "IT_PROVISIONING";
@@ -104,9 +109,10 @@ public final class PermissionCatalog {
         new PermGroup("Congés",              List.of(GET_LEAVES, ADD_LEAVE, RESPONSE_LEAVE, GET_GLOBAL_LEAVES, SETTLE_LEAVES)),
         new PermGroup("Catégories",          List.of(GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY)),
         new PermGroup("Timesheets",          List.of(GET_TSR, CREATE_TSR, RESPOND_TSR, GET_GLOBAL_TSR)),
-        new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND)),
+        new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_HIRE_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND)),
         new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS, RH_MANAGE_OFFBOARDING, RH_VALIDATE_OFFBOARDING)),
         new PermGroup("Entretiens",          List.of(RH_ADMIN_INTERVIEW_TYPES, RH_MANAGE_INTERVIEWS)),
+        new PermGroup("Temps de travail",    List.of(ADMIN_REGIMES, ADMIN_BREAKS)),
         new PermGroup("Module IT",           List.of(IT_PROVISIONING)),
         new PermGroup("Administration",      List.of(ADMIN_LISTS, ADMIN_NOTIFICATIONS, ADMIN_ROLES))
     );

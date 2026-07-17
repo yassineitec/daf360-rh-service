@@ -13,6 +13,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 @RestController
 @RequestMapping("/api/hr/recruitment-demands")
@@ -23,14 +24,14 @@ public class RecruitmentDemandController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    //@PreAuthorize("hasPermission(null, 'RH_CREATE_RECRUITMENT_DEMAND')")
+    @PreAuthorize("hasPermission(null, 'RH_CREATE_RECRUITMENT_DEMAND')")
     public RecruitmentDemandResponse create(@Valid @RequestBody CreateRecruitmentDemandRequest request,
                                              Authentication auth) {
         return service.create(request, actorId(auth));
     }
 
     @GetMapping
-    //@PreAuthorize("hasPermission(null, 'RH_VIEW_RECRUITMENT_DEMAND')")
+    @PreAuthorize("hasPermission(null, 'RH_VIEW_RECRUITMENT_DEMAND')")
     public Page<RecruitmentDemandSummary> listByPays(
             @RequestParam Long paysId,
             @RequestParam(required = false) RecruitmentDemandStatus statut,
@@ -39,7 +40,7 @@ public class RecruitmentDemandController {
     }
 
     @GetMapping("/mine")
-    //@PreAuthorize("hasPermission(null, 'RH_CREATE_RECRUITMENT_DEMAND')")
+    @PreAuthorize("hasPermission(null, 'RH_CREATE_RECRUITMENT_DEMAND')")
     public Page<RecruitmentDemandSummary> listMine(
             @RequestParam(required = false) RecruitmentDemandStatus statut,
             @PageableDefault(size = 20) Pageable pageable,
@@ -53,13 +54,13 @@ public class RecruitmentDemandController {
     }
 
     @GetMapping("/{id}")
-    //@PreAuthorize("hasPermission(null, 'RH_VIEW_RECRUITMENT_DEMAND')")
+    @PreAuthorize("hasPermission(null, 'RH_VIEW_RECRUITMENT_DEMAND')")
     public RecruitmentDemandResponse getById(@PathVariable Long id) {
         return service.getById(id);
     }
 
     @PostMapping("/{id}/review")
-    //@PreAuthorize("hasPermission(null, 'RH_APPROVE_RECRUITMENT_DEMAND')")
+    @PreAuthorize("hasPermission(null, 'RH_APPROVE_RECRUITMENT_DEMAND')")
     public RecruitmentDemandResponse review(@PathVariable Long id,
                                              @Valid @RequestBody ReviewRecruitmentDemandRequest request,
                                              Authentication auth) {
@@ -67,7 +68,7 @@ public class RecruitmentDemandController {
     }
 
     @PostMapping("/{id}/cancel")
-    //@PreAuthorize("hasPermission(null, 'RH_CREATE_RECRUITMENT_DEMAND')")
+    @PreAuthorize("hasPermission(null, 'RH_CREATE_RECRUITMENT_DEMAND')")
     public RecruitmentDemandResponse cancel(@PathVariable Long id, Authentication auth) {
         return service.cancel(id, actorId(auth));
     }
