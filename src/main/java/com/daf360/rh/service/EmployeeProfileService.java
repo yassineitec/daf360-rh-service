@@ -230,6 +230,21 @@ public class EmployeeProfileService {
         return toResponseDto(saved, auth);
     }
 
+    @Transactional(readOnly = true)
+    public Long getProfilePaysId(Long profileId) {
+        return findOrThrow(profileId).getPaysId();
+    }
+
+    @Transactional(readOnly = true)
+    public Long getCandidateId(Long profileId) {
+        return findOrThrow(profileId).getCandidateId();
+    }
+
+    @Transactional(readOnly = true)
+    public Long getUserId(Long profileId) {
+        return findOrThrow(profileId).getUserId();
+    }
+
     public void transitionLifecycleByActor(Long id, LifecycleTransitionDto dto, Long actorUserId) {
         EmployeeProfile profile = findOrThrow(id);
         LifecycleStatus current = profile.getLifecycleStatus();

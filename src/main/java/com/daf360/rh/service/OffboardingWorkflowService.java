@@ -22,6 +22,8 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -44,6 +46,12 @@ public class OffboardingWorkflowService {
     private static final String CONTRACT_TYPE_SQL =
         "SELECT contract_type_code FROM [dbo].[employee_contracts] WHERE id = ?";
 
+    private static final String EMPLOYEE_NAME_SQL =
+        "SELECT CONCAT(c.first_name, ' ', c.last_name) " +
+        "FROM [dbo].[candidates] c " +
+        "JOIN [dbo].[employee_profiles] ep ON ep.candidate_id = c.id " +
+        "WHERE ep.id = ?";
+
     private static final List<String> ACTIVE_STATUSES =
         List.of("PENDING", "IN_PROGRESS", "BLOCKED");
 
@@ -53,6 +61,8 @@ public class OffboardingWorkflowService {
     private final ExitInterviewRepository               interviewRepo;
     private final OffboardingTaskCatalogRepository      catalogRepo;
     private final EmployeeProfileService                profileService;
+    private final ItProvisioningRepository              itProvisioningRepo;
+    private final ItAssetRepository                     itAssetRepo;
     private final AuditService                          auditService;
     private final MailService                           mailService;
     private final JdbcTemplate                         jdbc;
@@ -73,8 +83,11 @@ public class OffboardingWorkflowService {
                     "Un workflow d'offboarding actif existe déjà pour ce profil (id=" + existing.getId() + ")");
             });
 
-        // Resolve pays
+        // Resolve pays — admin users bypass TenantContext, fall back to the profile's own paysId
         Long paysId = tenantService.getEffectivePaysId();
+        if (paysId == null) {
+            paysId = profileService.getProfilePaysId(profileId);
+        }
 
         // Resolve contract type for catalog lookup
         String contractType = "CDI"; // default fallback
@@ -86,22 +99,38 @@ public class OffboardingWorkflowService {
             }
         }
 
-        // Transition profile to OFFBOARDING
-        LifecycleTransitionDto transitionDto = new LifecycleTransitionDto();
-        transitionDto.setNewStatus(LifecycleStatus.OFFBOARDING);
-        transitionDto.setReason("Offboarding initié — " + request.getDepartureReason());
-        profileService.transitionLifecycleByActor(profileId, transitionDto, initiatedBy);
+        // Transition profile to OFFBOARDING (only if currently ACTIVE)
+        try {
+            LifecycleTransitionDto transitionDto = new LifecycleTransitionDto();
+            transitionDto.setNewStatus(LifecycleStatus.OFFBOARDING);
+            transitionDto.setReason("Offboarding initié — " + request.getDepartureReason());
+            profileService.transitionLifecycleByActor(profileId, transitionDto, initiatedBy);
+        } catch (AppException ex) {
+            log.warn("Lifecycle transition to OFFBOARDING skipped for profileId={}: {}", profileId, ex.getMessage());
+        }
+
+        // Resolve handover manager user ID before creating tasks
+        Long managerUserId = null;
+        if (request.getHandoverManagerProfileId() != null) {
+            try {
+                managerUserId = profileService.getUserId(request.getHandoverManagerProfileId());
+            } catch (Exception ex) {
+                log.warn("Could not resolve userId for handover manager profileId={}: {}",
+                    request.getHandoverManagerProfileId(), ex.getMessage());
+            }
+        }
 
         // Create workflow instance
         OffsetDateTime now = OffsetDateTime.now();
         OffboardingWorkflowInstance instance = OffboardingWorkflowInstance.builder()
-            .paysId(paysId != null ? paysId : 0L)
+            .paysId(paysId)
             .employeeProfileId(profileId)
             .contractId(request.getContractId())
             .triggerDate(request.getTriggerDate())
             .lastWorkingDay(request.getLastWorkingDay())
             .departureReason(request.getDepartureReason())
             .departureNotes(request.getDepartureNotes())
+            .handoverManagerProfileId(request.getHandoverManagerProfileId())
             .status("IN_PROGRESS")
             .initiatedBy(initiatedBy)
             .slaBreachFlag(false)
@@ -121,31 +150,44 @@ public class OffboardingWorkflowService {
         }
 
         final Long instanceId = savedInstance.getId();
+        final Long finalManagerUserId = managerUserId;
+
         List<OffboardingTask> tasks = catalogTasks.stream()
-            .map(cat -> OffboardingTask.builder()
-                .workflowInstance(savedInstance)
-                .taskCode(cat.getTaskCode())
-                .taskLabel(cat.getTaskLabel())
-                .ownerRole(cat.getOwnerRole())
-                .isMandatory(cat.getIsMandatory())
-                .isBlocking(cat.getIsBlocking())
-                .dueDate(calculateDueDate(request.getTriggerDate(), cat.getSlaWorkingDays()))
-                .status("PENDING")
-                .createdAt(now)
-                .build())
+            .map(cat -> {
+                OffboardingTask.OffboardingTaskBuilder builder = OffboardingTask.builder()
+                    .workflowInstance(savedInstance)
+                    .taskCode(cat.getTaskCode())
+                    .taskLabel(cat.getTaskLabel())
+                    .ownerRole(cat.getOwnerRole())
+                    .isMandatory(cat.getIsMandatory())
+                    .isBlocking(cat.getIsBlocking())
+                    .dueDate(calculateDueDate(request.getTriggerDate(), cat.getSlaWorkingDays()))
+                    .status("PENDING")
+                    .createdAt(now);
+                // Pre-assign KNOWLEDGE_TRANSFER task to the handover manager
+                if ("KNOWLEDGE_TRANSFER".equals(cat.getTaskCode()) && finalManagerUserId != null) {
+                    builder.ownerUserId(finalManagerUserId);
+                }
+                return builder.build();
+            })
             .collect(Collectors.toList());
 
         taskRepo.saveAll(tasks);
         savedInstance.setTasks(tasks);
 
+        // Seed IT asset returns from the employee's provisioning record
+        seedItAssetReturns(savedInstance, profileId);
+
+        String employeeName = resolveEmployeeName(profileId);
+        String nameDisplay = employeeName != null ? employeeName : "profil id=" + profileId;
+
         auditService.log(initiatedBy != null ? initiatedBy.toString() : "SYSTEM",
             "OFFBOARDING_STARTED", "OffboardingWorkflowInstance", instanceId,
             null, "profileId=" + profileId + " reason=" + request.getDepartureReason());
 
-        // Notify users with RH_MANAGE_OFFBOARDING
         notifyTaskOwners(savedInstance.getPaysId(),
             "Offboarding initié",
-            "Un processus d'offboarding a été initié pour l'employé (profil id=" + profileId + ").",
+            "Un processus d'offboarding a été initié pour " + nameDisplay + ".",
             PermissionCatalog.RH_MANAGE_OFFBOARDING);
 
         return toInstanceDto(savedInstance);
@@ -357,9 +399,13 @@ public class OffboardingWorkflowService {
 
         List<OffboardingWorkflowInstance> instances;
         if (status != null && !status.isBlank()) {
-            instances = instanceRepo.findByPaysIdAndStatus(resolvedPaysId, status);
+            instances = resolvedPaysId != null
+                ? instanceRepo.findByPaysIdAndStatus(resolvedPaysId, status)
+                : instanceRepo.findByStatus(status);
         } else {
-            instances = instanceRepo.findActiveByPays(resolvedPaysId);
+            instances = resolvedPaysId != null
+                ? instanceRepo.findActiveByPays(resolvedPaysId)
+                : instanceRepo.findAllActive();
         }
         return instances.stream().map(this::toInstanceDto).collect(Collectors.toList());
     }
@@ -449,6 +495,128 @@ public class OffboardingWorkflowService {
         return jdbc.queryForObject(CONTRACT_TYPE_SQL, String.class, contractId);
     }
 
+    private String resolveEmployeeName(Long profileId) {
+        try {
+            return jdbc.queryForObject(EMPLOYEE_NAME_SQL, String.class, profileId);
+        } catch (Exception ex) {
+            log.debug("Could not resolve name for profileId={}: {}", profileId, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Seeds offboarding_asset_returns from the employee's IT provisioning record.
+     * All assets in the provisioning record are included (provided or not) to ensure
+     * every registered item is tracked for return.
+     */
+    private void seedItAssetReturns(OffboardingWorkflowInstance instance, Long profileId) {
+        try {
+            Long candidateId = profileService.getCandidateId(profileId);
+            if (candidateId == null) {
+                log.warn("seedItAssetReturns: no candidateId for profileId={}", profileId);
+                return;
+            }
+
+            Optional<ItProvisioning> provOpt = itProvisioningRepo.findByCandidateId(candidateId);
+            if (provOpt.isEmpty()) {
+                log.info("seedItAssetReturns: no IT provisioning record for candidateId={}", candidateId);
+                return;
+            }
+
+            ItProvisioning prov = provOpt.get();
+            List<ItAsset> assets = itAssetRepo.findByProvisioningId(prov.getId());
+            log.info("seedItAssetReturns: found {} asset(s) for provisioningId={}", assets.size(), prov.getId());
+
+            if (assets.isEmpty()) return;
+
+            LocalDate expectedReturn = instance.getLastWorkingDay() != null
+                ? instance.getLastWorkingDay()
+                : calculateDueDate(instance.getTriggerDate(), 3);
+
+            List<OffboardingAssetReturn> returns = assets.stream()
+                .map(a -> {
+                    String label = a.getAssetType() != null
+                        ? a.getAssetType().getLabelFr() : "Équipement IT";
+                    String brandModel = a.getBrandModel() != null
+                        ? a.getBrandModel().trim() : "";
+                    String desc = brandModel.isEmpty()
+                        ? label : brandModel + " (" + label + ")";
+                    if (a.getSerialNumber() != null && !a.getSerialNumber().isBlank()) {
+                        desc += " — S/N " + a.getSerialNumber().trim();
+                    }
+                    return OffboardingAssetReturn.builder()
+                        .workflowInstanceId(instance.getId())
+                        .assetDescription(desc)
+                        .assetType("IT")
+                        .expectedReturnDate(expectedReturn)
+                        .isWrittenOff(false)
+                        .createdAt(OffsetDateTime.now())
+                        .build();
+                })
+                .collect(Collectors.toList());
+
+            assetRepo.saveAll(returns);
+            log.info("Seeded {} IT asset return(s) for offboarding instance {}", returns.size(), instance.getId());
+
+        } catch (Exception ex) {
+            log.error("Could not seed IT asset returns for profileId={}: {}", profileId, ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * Re-seeds IT asset returns for an existing workflow instance.
+     * Skips assets already present to avoid duplicates.
+     */
+    @Transactional
+    public List<OffboardingAssetReturnDto> reseedItAssets(Long instanceId) {
+        OffboardingWorkflowInstance instance = findInstanceOrThrow(instanceId);
+        Long profileId = instance.getEmployeeProfileId();
+
+        // Only add assets not already tracked
+        Set<String> existing = assetRepo.findByWorkflowInstanceId(instanceId).stream()
+            .map(OffboardingAssetReturn::getAssetDescription)
+            .collect(Collectors.toSet());
+
+        Long candidateId = profileService.getCandidateId(profileId);
+        if (candidateId == null) return listAssetReturns(instanceId);
+
+        Optional<ItProvisioning> provOpt = itProvisioningRepo.findByCandidateId(candidateId);
+        if (provOpt.isEmpty()) return listAssetReturns(instanceId);
+
+        List<ItAsset> assets = itAssetRepo.findByProvisioningId(provOpt.get().getId());
+        LocalDate expectedReturn = instance.getLastWorkingDay() != null
+            ? instance.getLastWorkingDay()
+            : calculateDueDate(instance.getTriggerDate(), 3);
+
+        List<OffboardingAssetReturn> toAdd = assets.stream()
+            .map(a -> {
+                String label = a.getAssetType() != null ? a.getAssetType().getLabelFr() : "Équipement IT";
+                String brandModel = a.getBrandModel() != null ? a.getBrandModel().trim() : "";
+                String desc = brandModel.isEmpty() ? label : brandModel + " (" + label + ")";
+                if (a.getSerialNumber() != null && !a.getSerialNumber().isBlank()) {
+                    desc += " — S/N " + a.getSerialNumber().trim();
+                }
+                return desc;
+            })
+            .filter(desc -> !existing.contains(desc))
+            .map(desc -> OffboardingAssetReturn.builder()
+                .workflowInstanceId(instanceId)
+                .assetDescription(desc)
+                .assetType("IT")
+                .expectedReturnDate(expectedReturn)
+                .isWrittenOff(false)
+                .createdAt(OffsetDateTime.now())
+                .build())
+            .collect(Collectors.toList());
+
+        if (!toAdd.isEmpty()) {
+            assetRepo.saveAll(toAdd);
+            log.info("Re-seeded {} IT asset return(s) for offboarding instance {}", toAdd.size(), instanceId);
+        }
+
+        return listAssetReturns(instanceId);
+    }
+
     /**
      * Calculates a due date by adding slaWorkingDays working days (skipping Sat/Sun).
      */
@@ -499,10 +667,16 @@ public class OffboardingWorkflowService {
             : taskRepo.findByWorkflowInstanceId(w.getId()).stream()
                 .map(this::toTaskDto).collect(Collectors.toList());
 
+        String employeeFullName = resolveEmployeeName(w.getEmployeeProfileId());
+        String handoverManagerName = (w.getHandoverManagerProfileId() != null)
+            ? resolveEmployeeName(w.getHandoverManagerProfileId())
+            : null;
+
         return OffboardingWorkflowInstanceDto.builder()
             .id(w.getId())
             .paysId(w.getPaysId())
             .employeeProfileId(w.getEmployeeProfileId())
+            .employeeFullName(employeeFullName)
             .contractId(w.getContractId())
             .triggerDate(w.getTriggerDate())
             .lastWorkingDay(w.getLastWorkingDay())
@@ -519,6 +693,8 @@ public class OffboardingWorkflowService {
             .completionDate(w.getCompletionDate())
             .createdAt(w.getCreatedAt())
             .updatedAt(w.getUpdatedAt())
+            .handoverManagerProfileId(w.getHandoverManagerProfileId())
+            .handoverManagerName(handoverManagerName)
             .tasks(taskDtos)
             .build();
     }

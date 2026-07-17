@@ -36,20 +36,34 @@ public class PdfClientService {
 
     public byte[] generatePdf(String templateSlug, Map<String, Object> data) {
         String url = appProperties.getPdfServiceUrl() + "/pdf/api/arx/" + templateSlug;
+        return post(url, data, templateSlug);
+    }
+
+    /**
+     * Renders arbitrary HTML to PDF via the generic /pdf/api/render endpoint.
+     * The caller must have already resolved all {{variable}} tokens in the HTML.
+     */
+    public byte[] generatePdfFromHtml(String html, String filename) {
+        String url = appProperties.getPdfServiceUrl() + "/pdf/api/render";
+        Map<String, String> body = Map.of("html", html, "filename", filename);
+        return post(url, body, "render:" + filename);
+    }
+
+    private byte[] post(String url, Object body, String label) {
         try {
             byte[] bytes = restClient.post()
                     .uri(url)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(data)
+                    .body(body)
                     .retrieve()
                     .body(byte[].class);
             if (bytes == null || bytes.length == 0) {
                 throw new PdfGenerationException("Empty PDF response from pdf-service");
             }
-            log.info("PDF generated: template={} size={}B", templateSlug, bytes.length);
+            log.info("PDF generated: label={} size={}B", label, bytes.length);
             return bytes;
         } catch (RestClientException e) {
-            log.error("PDF service failed template={}: {}", templateSlug, e.getMessage());
+            log.error("PDF service failed label={}: {}", label, e.getMessage());
             throw new PdfGenerationException("PDF service unavailable: " + e.getMessage(), e);
         }
     }

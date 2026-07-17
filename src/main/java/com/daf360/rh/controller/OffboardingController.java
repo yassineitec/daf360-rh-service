@@ -119,6 +119,11 @@ public class OffboardingController {
         return offboardingService.addAssetReturn(instanceId, dto);
     }
 
+    @PostMapping("/api/hr/offboarding/{instanceId}/assets/sync-from-it")
+    public List<OffboardingAssetReturnDto> reseedItAssets(@PathVariable Long instanceId) {
+        return offboardingService.reseedItAssets(instanceId);
+    }
+
     @PatchMapping("/api/hr/offboarding/assets/{assetId}/confirm-return")
     public OffboardingAssetReturnDto confirmAssetReturn(
             @PathVariable Long assetId,

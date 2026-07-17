@@ -6,6 +6,7 @@ import com.daf360.rh.dto.pdf.EmployeeDataDto;
 import com.daf360.rh.dto.pdf.GeneratedDocumentResponse;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.service.DocumentTemplateService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -32,9 +33,10 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class PdfDocumentService {
 
-    private final PdfClientService pdfClient;
-    private final JdbcTemplate     jdbc;
-    private final AppProperties    appProperties;
+    private final PdfClientService       pdfClient;
+    private final JdbcTemplate           jdbc;
+    private final AppProperties          appProperties;
+    private final DocumentTemplateService documentTemplateService;
 
     // -------------------------------------------------------------------------
     // SQL constants
@@ -170,15 +172,22 @@ public class PdfDocumentService {
     public GeneratedDocumentResponse generateAttestationTravailPdf(Long employeeProfileId,
                                                                     Long requestId,
                                                                     Long generatedBy) {
-        EmployeeDataDto emp = loadEmployeeData(employeeProfileId);
-        DgParametersDto dg  = loadDgParameters(emp.getPaysId());
-        String docRef       = generateDocumentRef("RH-ATT-115", emp.getPaysId());
-        String verCode      = generateVerificationCode();
+        EmployeeDataDto emp    = loadEmployeeData(employeeProfileId);
+        String          docRef = generateDocumentRef("RH-ATT-115", emp.getPaysId());
+        String          verCode = generateVerificationCode();
 
+        Optional<byte[]> dbPdf = documentTemplateService.renderByName(
+            "Attestation de Travail", emp.getPaysId(), employeeProfileId,
+            Map.of("document.ref", docRef, "document.verificationCode", verCode));
+        if (dbPdf.isPresent()) {
+            return saveGeneratedDocument(requestId, "ATTESTATION_TRAVAIL", dbPdf.get(), verCode, generatedBy, emp.getFullName());
+        }
+
+        DgParametersDto     dg   = loadDgParameters(emp.getPaysId());
         Map<String, Object> data = buildCommonData(emp, dg, docRef, verCode);
-        data.put("jobTitle",          emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
-        data.put("contractDuration",  deriveContractDuration(emp.getContractType()));
-        data.put("hireDate",          formatMoisAnFr(emp.getHireDate()));
+        data.put("jobTitle",         emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
+        data.put("contractDuration", deriveContractDuration(emp.getContractType()));
+        data.put("hireDate",         formatMoisAnFr(emp.getHireDate()));
 
         byte[] bytes = pdfClient.generatePdf("attestation-travail", data);
         return saveGeneratedDocument(requestId, "ATTESTATION_TRAVAIL", bytes, verCode, generatedBy, emp.getFullName());
@@ -187,25 +196,30 @@ public class PdfDocumentService {
     public GeneratedDocumentResponse generateAttestationSalairePdf(Long employeeProfileId,
                                                                     Long requestId,
                                                                     Long generatedBy) {
-        EmployeeDataDto emp = loadEmployeeData(employeeProfileId);
+        EmployeeDataDto emp    = loadEmployeeData(employeeProfileId);
+        String          docRef = generateDocumentRef("RH-ATT-SAL", emp.getPaysId());
+        String          verCode = generateVerificationCode();
 
-        // NEW: read salaire_net_rh directly from employee_profiles
+        Optional<byte[]> dbPdf = documentTemplateService.renderByName(
+            "Attestation de Salaire", emp.getPaysId(), employeeProfileId,
+            Map.of("document.ref", docRef, "document.verificationCode", verCode));
+        if (dbPdf.isPresent()) {
+            return saveGeneratedDocument(requestId, "ATTESTATION_SALAIRE", dbPdf.get(), verCode, generatedBy, emp.getFullName());
+        }
+
         List<Map<String, Object>> salaryRows = jdbc.queryForList(SALARY_SQL, employeeProfileId);
         BigDecimal salaireNet = salaryRows.isEmpty() || salaryRows.get(0).get("salaire_net_rh") == null
                 ? BigDecimal.ZERO
                 : (BigDecimal) salaryRows.get(0).get("salaire_net_rh");
         BigDecimal salaireNetAnnuel = salaireNet.multiply(BigDecimal.valueOf(12));
 
-        DgParametersDto dg = loadDgParameters(emp.getPaysId());
-        String docRef      = generateDocumentRef("RH-ATT-SAL", emp.getPaysId());
-        String verCode     = generateVerificationCode();
-
+        DgParametersDto     dg   = loadDgParameters(emp.getPaysId());
         Map<String, Object> data = buildCommonData(emp, dg, docRef, verCode);
-        data.put("jobTitle",                    emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
-        data.put("contractDuration",            deriveContractDuration(emp.getContractType()));
-        data.put("hireDate",                    formatMoisAnFr(emp.getHireDate()));
-        data.put("salaireBrutAnnuel",           formatAmount(salaireNetAnnuel));
-        data.put("salaireBrutAnnuelEnLettres",  NumberToWordsFr.convert(salaireNetAnnuel));
+        data.put("jobTitle",                   emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
+        data.put("contractDuration",           deriveContractDuration(emp.getContractType()));
+        data.put("hireDate",                   formatMoisAnFr(emp.getHireDate()));
+        data.put("salaireBrutAnnuel",          formatAmount(salaireNetAnnuel));
+        data.put("salaireBrutAnnuelEnLettres", NumberToWordsFr.convert(salaireNetAnnuel));
 
         byte[] bytes = pdfClient.generatePdf("attestation-salaire", data);
         return saveGeneratedDocument(requestId, "ATTESTATION_SALAIRE", bytes, verCode, generatedBy, emp.getFullName());
@@ -214,11 +228,18 @@ public class PdfDocumentService {
     public GeneratedDocumentResponse generateAttestationNonBeneficePretPdf(Long employeeProfileId,
                                                                             Long requestId,
                                                                             Long generatedBy) {
-        EmployeeDataDto emp = loadEmployeeData(employeeProfileId);
-        DgParametersDto dg  = loadDgParameters(emp.getPaysId());
-        String docRef       = generateDocumentRef("RH-ATT-PRET", emp.getPaysId());
-        String verCode      = generateVerificationCode();
+        EmployeeDataDto emp    = loadEmployeeData(employeeProfileId);
+        String          docRef = generateDocumentRef("RH-ATT-PRET", emp.getPaysId());
+        String          verCode = generateVerificationCode();
 
+        Optional<byte[]> dbPdf = documentTemplateService.renderByName(
+            "Attestation de Non-Benefice de Pret", emp.getPaysId(), employeeProfileId,
+            Map.of("document.ref", docRef, "document.verificationCode", verCode));
+        if (dbPdf.isPresent()) {
+            return saveGeneratedDocument(requestId, "ATTESTATION_NON_BENEFICE_PRET", dbPdf.get(), verCode, generatedBy, emp.getFullName());
+        }
+
+        DgParametersDto     dg   = loadDgParameters(emp.getPaysId());
         Map<String, Object> data = buildCommonData(emp, dg, docRef, verCode);
 
         byte[] bytes = pdfClient.generatePdf("attestation-non-benefice-pret", data);
@@ -235,17 +256,21 @@ public class PdfDocumentService {
                     "L'attestation de titularisation est reservee aux employes en CDI.");
         }
 
-        LocalDate titularisationDate = emp.getProbationEndDate() != null
-                ? emp.getProbationEndDate()
-                : emp.getHireDate();
+        String docRef  = generateDocumentRef("RH-ATT-TIT", emp.getPaysId());
+        String verCode = generateVerificationCode();
 
-        DgParametersDto dg = loadDgParameters(emp.getPaysId());
-        String docRef      = generateDocumentRef("RH-ATT-TIT", emp.getPaysId());
-        String verCode     = generateVerificationCode();
+        Optional<byte[]> dbPdf = documentTemplateService.renderByName(
+            "Attestation de Titularisation", emp.getPaysId(), employeeProfileId,
+            Map.of("document.ref", docRef, "document.verificationCode", verCode));
+        if (dbPdf.isPresent()) {
+            return saveGeneratedDocument(requestId, "ATTESTATION_TITULARISATION", dbPdf.get(), verCode, generatedBy, emp.getFullName());
+        }
 
-        Map<String, Object> data = buildCommonData(emp, dg, docRef, verCode);
-        data.put("jobTitle",             emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
-        data.put("titularisationDate",   formatDateFr(titularisationDate));
+        LocalDate       titularisationDate = emp.getProbationEndDate() != null ? emp.getProbationEndDate() : emp.getHireDate();
+        DgParametersDto dg                 = loadDgParameters(emp.getPaysId());
+        Map<String, Object> data           = buildCommonData(emp, dg, docRef, verCode);
+        data.put("jobTitle",           emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
+        data.put("titularisationDate", formatDateFr(titularisationDate));
 
         byte[] bytes = pdfClient.generatePdf("attestation-titularisation", data);
         return saveGeneratedDocument(requestId, "ATTESTATION_TITULARISATION", bytes, verCode, generatedBy, emp.getFullName());
@@ -262,16 +287,23 @@ public class PdfDocumentService {
                     " ne sont pas renseignees. Veuillez les completer dans son profil.");
         }
 
-        DgParametersDto dg = loadDgParameters(emp.getPaysId());
-        String docRef      = generateDocumentRef("RH-ATT-DOM", emp.getPaysId());
-        String verCode     = generateVerificationCode();
+        String docRef  = generateDocumentRef("RH-ATT-DOM", emp.getPaysId());
+        String verCode = generateVerificationCode();
 
+        Optional<byte[]> dbPdf = documentTemplateService.renderByName(
+            "Attestation de Domiciliation de Salaire", emp.getPaysId(), employeeProfileId,
+            Map.of("document.ref", docRef, "document.verificationCode", verCode));
+        if (dbPdf.isPresent()) {
+            return saveGeneratedDocument(requestId, "ATTESTATION_DOMICILIATION_SALAIRE", dbPdf.get(), verCode, generatedBy, emp.getFullName());
+        }
+
+        DgParametersDto     dg   = loadDgParameters(emp.getPaysId());
         Map<String, Object> data = buildCommonData(emp, dg, docRef, verCode);
-        data.put("jobTitle",          emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
-        data.put("hireDate",          formatDateFr(emp.getHireDate()));
-        data.put("bankName",          emp.getBankName());
-        data.put("rib",               emp.getRib());
-        data.put("iban",              emp.getIban() != null ? emp.getIban() : "--");
+        data.put("jobTitle", emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
+        data.put("hireDate", formatDateFr(emp.getHireDate()));
+        data.put("bankName", emp.getBankName());
+        data.put("rib",      emp.getRib());
+        data.put("iban",     emp.getIban() != null ? emp.getIban() : "--");
 
         byte[] bytes = pdfClient.generatePdf("attestation-domiciliation-salaire", data);
         return saveGeneratedDocument(requestId, "ATTESTATION_DOMICILIATION_SALAIRE", bytes, verCode, generatedBy, emp.getFullName());
