@@ -38,4 +38,15 @@ public class ResolvedRegimeDto {
     private String       heureFin;          // = endTime   formatted "HH:mm"
     private Integer      pauseDejeuner;     // = breakDurationMin
     private List<String> joursOuvrables;    // derived from daysPerWeek
+
+    // --- break windows for this regime (from active break_templates), "HH:mm" ---
+    private List<BreakWindow> breaks;
+
+    @Data
+    public static class BreakWindow {
+        private String start;
+        private String end;
+        public BreakWindow() {}
+        public BreakWindow(String start, String end) { this.start = start; this.end = end; }
+    }
 }

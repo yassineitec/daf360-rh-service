@@ -6,6 +6,7 @@ import com.daf360.rh.domain.WorkingTimeRegime;
 import com.daf360.rh.dto.regime.ResolvedRegimeDto;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.repository.BreakTemplateRepository;
 import com.daf360.rh.repository.EmployeeProfileRepository;
 import com.daf360.rh.repository.RegimeRoleAssignmentRepository;
 import com.daf360.rh.repository.WorkingTimeRegimeRepository;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -28,6 +30,7 @@ public class RegimeResolutionService {
     private final EmployeeProfileRepository profileRepo;
     private final RegimeRoleAssignmentRepository roleAssignRepo;
     private final WorkingTimeRegimeRepository regimeRepo;
+    private final BreakTemplateRepository breakTemplateRepo;
     private final JdbcTemplate jdbc;
 
     /**
@@ -149,6 +152,19 @@ public class RegimeResolutionService {
         } else {
             dto.setHeuresJour(8.0);
         }
+
+        // Active break windows for this regime (folded in so the pointage store gets
+        // regime + breaks in a single call — the scheduler reads the same source).
+        List<ResolvedRegimeDto.BreakWindow> breaks = new ArrayList<>();
+        breakTemplateRepo.findByRegimeIdAndIsActiveTrueOrderBySortOrderAsc(r.getId())
+                .forEach(b -> {
+                    if (b.getBreakTimeStart() != null && b.getBreakTimeEnd() != null) {
+                        breaks.add(new ResolvedRegimeDto.BreakWindow(
+                                b.getBreakTimeStart().format(HHmm),
+                                b.getBreakTimeEnd().format(HHmm)));
+                    }
+                });
+        dto.setBreaks(breaks);
 
         return dto;
     }

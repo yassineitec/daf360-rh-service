@@ -165,8 +165,11 @@ public class WorkingTimeRegimeController {
     /**
      * GET /api/hr/profiles/{id}/regime — resolved regime for an employee
      */
+    // Read-only resolved regime. Relaxed to any authenticated user (matches the sibling
+    // /api/hr/regimes reads) so the pointage module can show each employee their own
+    // working hours/chronometer. Writes below keep the HR_UPDATE_PROFILE guard.
     @GetMapping("/api/hr/profiles/{id}/regime")
-    @PreAuthorize("hasPermission(null,'HR_UPDATE_PROFILE')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ResolvedRegimeDto> getResolvedRegime(@PathVariable Long id) {
         ResolvedRegimeDto resolved = resolutionService.resolveForEmployee(id);
         if (resolved == null) return ResponseEntity.noContent().build();
@@ -178,7 +181,7 @@ public class WorkingTimeRegimeController {
      * Current week's expected schedule per day based on the resolved regime.
      */
     @GetMapping("/api/hr/profiles/{id}/regime/weekly-schedule")
-    @PreAuthorize("hasPermission(null,'HR_UPDATE_PROFILE')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<WeeklyScheduleDto> getWeeklySchedule(@PathVariable Long id) {
         ResolvedRegimeDto regime = resolutionService.resolveForEmployee(id);
         if (regime == null) {
