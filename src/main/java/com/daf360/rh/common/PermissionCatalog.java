@@ -118,6 +118,13 @@ public final class PermissionCatalog {
         new PermGroup("Temps de travail",    List.of(ADMIN_REGIMES, ADMIN_BREAKS)),
         new PermGroup("Module IT",           List.of(IT_PROVISIONING)),
         new PermGroup("Administration",      List.of(ADMIN_LISTS, ADMIN_NOTIFICATIONS, ADMIN_ROLES))
+        // NOTE: facturation (FACT_*) and pointage (POINTAGE_*) codes are deliberately
+        // NOT listed here. Each module owns its own catalog and manages its codes in its
+        // own admin UI (finance: fact-roles-admin). Keeping them out of RH's catalog means
+        // (1) they don't show up / get managed in RH's role-admin, and (2) RH's full-replace
+        // updatePermissions — whose DELETE is scoped to ALLOWED_PERMISSIONS (= ALL_CODES) —
+        // leaves those foreign grants untouched. Cross-module grants go through the per-code
+        // POST/DELETE /roles/{id}/permissions/{code} endpoint, which accepts any code.
     );
 
     public static final Set<String> ALL_CODES;
