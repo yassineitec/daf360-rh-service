@@ -3,6 +3,7 @@ package com.daf360.rh.dto.candidate;
 import com.daf360.rh.domain.enums.CandidateStatus;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
@@ -52,4 +53,7 @@ public class CandidateResponse {
 
     private Integer experienceYears;
     private String location;
+
+    private BigDecimal salaireNetCandidat;
+    private BigDecimal salaireNetRh;
 }
