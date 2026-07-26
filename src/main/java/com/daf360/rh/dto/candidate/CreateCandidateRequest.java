@@ -59,6 +59,9 @@ public class CreateCandidateRequest {
     @Size(max = 150)
     private String location;
 
+    @PositiveOrZero
     private BigDecimal salaireNetCandidat;
+
+    @PositiveOrZero
     private BigDecimal salaireNetRh;
 }
