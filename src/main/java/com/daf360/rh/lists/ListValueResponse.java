@@ -16,6 +16,7 @@ public class ListValueResponse {
     private Integer        sortOrder;
     private Boolean        isActive;
     private Boolean        isSystem;
+    private String         payrollContractCode;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

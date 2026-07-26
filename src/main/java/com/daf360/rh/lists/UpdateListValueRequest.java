@@ -29,4 +29,7 @@ public class UpdateListValueRequest {
 
     /** When {@code true} the service bypasses the is-system guard on deactivation. */
     private Boolean forceDeactivate;   // null = false (service uses Boolean.TRUE.equals check)
+
+    @Size(max = 20)
+    private String payrollContractCode;
 }

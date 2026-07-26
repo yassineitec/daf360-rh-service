@@ -54,6 +54,9 @@ public class ConfigurableListValue {
     @Column(name = "updated_at", columnDefinition = "DATETIMEOFFSET(6)")
     private OffsetDateTime updatedAt;
 
+    @Column(name = "payroll_contract_code", length = 20)
+    private String payrollContractCode;
+
     @PrePersist
     protected void prePersist() {
         if (createdAt == null) {
