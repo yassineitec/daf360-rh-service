@@ -2,7 +2,6 @@ package com.daf360.rh.service;
 
 import com.daf360.rh.common.PermissionCatalog;
 import com.daf360.rh.domain.Role;
-import com.daf360.rh.domain.RolePermission;
 import com.daf360.rh.dto.admin.CreateRoleRequest;
 import com.daf360.rh.dto.admin.PermissionCodeResponse;
 import com.daf360.rh.dto.admin.PermissionGroupResponse;
@@ -197,8 +196,7 @@ public class RoleService {
                         "Permissions non autorisées: " + invalid);
             }
             dto.getPermissions().forEach(p ->
-                    permRepo.save(new RolePermission(
-                            new RolePermission.RolePermissionId(saved.getId(), p))));
+                    permRepo.insertPermission(saved.getId(), p));
         }
 
         auditService.log(actorId(auth), "CREATE_ROLE", "Role", saved.getId(), null, saved.getFrenchName());
@@ -274,7 +272,7 @@ public class RoleService {
         if (permRepo.findPermissionsByRoleId(roleId).contains(code)) {
             return;
         }
-        permRepo.save(new RolePermission(new RolePermission.RolePermissionId(roleId, code)));
+        permRepo.insertPermission(roleId, code);
         auditService.log(actorId(auth), "ADD_PERMISSION", "Role", roleId, null, code);
     }
 

@@ -29,4 +29,12 @@ public interface RolePermissionRepository
     @Query(value = "DELETE FROM RolePermissions WHERE role_id = :roleId AND permission = :permission",
            nativeQuery = true)
     void deleteByRoleIdAndPermission(@Param("roleId") Long roleId, @Param("permission") String permission);
+
+    // Native INSERT — bypasses the Hibernate save()/merge() no-op on this all-@EmbeddedId
+    // entity (save() sees a non-null id → merge → silently fails to INSERT). Same reason the
+    // reads/deletes above are native. Caller guards duplicates (findPermissionsByRoleId check).
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "INSERT INTO RolePermissions (role_id, permission) VALUES (:roleId, :permission)",
+           nativeQuery = true)
+    void insertPermission(@Param("roleId") Long roleId, @Param("permission") String permission);
 }
