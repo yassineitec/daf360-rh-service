@@ -3,6 +3,7 @@ package com.daf360.rh.dto.candidate;
 import jakarta.validation.constraints.*;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
@@ -57,4 +58,10 @@ public class CreateCandidateRequest {
 
     @Size(max = 150)
     private String location;
+
+    @PositiveOrZero
+    private BigDecimal salaireNetCandidat;
+
+    @PositiveOrZero
+    private BigDecimal salaireNetRh;
 }

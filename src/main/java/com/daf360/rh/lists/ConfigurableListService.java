@@ -122,6 +122,9 @@ public class ConfigurableListService {
         if (dto.getLabelFr()   != null) value.setLabelFr(dto.getLabelFr());
         if (dto.getLabelEn()   != null) value.setLabelEn(dto.getLabelEn());
         if (dto.getSortOrder() != null) value.setSortOrder(dto.getSortOrder());
+        if (dto.getPayrollContractCode() != null) {
+            value.setPayrollContractCode(dto.getPayrollContractCode().trim().toUpperCase());
+        }
 
         if (dto.getIsActive() != null) {
             if (Boolean.FALSE.equals(dto.getIsActive())) {
@@ -223,6 +226,7 @@ public class ConfigurableListService {
         r.setSortOrder(v.getSortOrder());
         r.setIsActive(v.getIsActive());
         r.setIsSystem(v.getIsSystem());
+        r.setPayrollContractCode(v.getPayrollContractCode());
         r.setCreatedAt(v.getCreatedAt());
         r.setUpdatedAt(v.getUpdatedAt());
         return r;

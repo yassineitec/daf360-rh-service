@@ -4,6 +4,7 @@ import com.daf360.rh.domain.enums.CandidateStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
@@ -133,6 +134,14 @@ public class Candidate {
     /** Candidate location / city (V39). */
     @Column(name = "location", length = 150, columnDefinition = "nvarchar(150)")
     private String location;
+
+    /** Net salary declared by the candidate (used for cost simulation). */
+    @Column(name = "salaire_net_candidat", precision = 18, scale = 4)
+    private BigDecimal salaireNetCandidat;
+
+    /** Net salary as assessed by HR (used for cost simulation). */
+    @Column(name = "salaire_net_rh", precision = 18, scale = 4)
+    private BigDecimal salaireNetRh;
 
     // TODO: run migration: ALTER TABLE [dbo].[candidates] ADD fit_score INT NULL;
     // @Column(name = "fit_score") -- re-enable after migration

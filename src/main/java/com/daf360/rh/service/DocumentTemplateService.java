@@ -6,6 +6,8 @@ import com.daf360.rh.dto.document.*;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.repository.DocumentTemplateRepository;
+import com.daf360.rh.security.TenantContext;
+import com.daf360.rh.security.TenantService;
 import com.daf360.rh.service.pdf.NumberToWordsFr;
 import com.daf360.rh.service.pdf.PdfClientService;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -36,6 +38,7 @@ public class DocumentTemplateService {
     private final PdfClientService           pdfClient;
     private final JdbcTemplate               jdbc;
     private final ObjectMapper               objectMapper;
+    private final TenantService              tenantService;
 
     private static final DateTimeFormatter DATE_FR  = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final Pattern           VAR_PATTERN = Pattern.compile("\\{\\{([^}]+)}}");
@@ -83,30 +86,43 @@ public class DocumentTemplateService {
     @Transactional(readOnly = true)
     public List<DocumentTemplateDto> list(Long paysId, String category, boolean includeInactive) {
         List<DocumentTemplate> templates;
-        if (category != null && !category.isBlank()) {
-            templates = includeInactive
-                ? repo.findByPaysIdAndCategoryOrderByNameAsc(paysId, category)
-                : repo.findByPaysIdAndCategoryAndIsActiveTrueOrderByNameAsc(paysId, category);
+        boolean hasCategory = category != null && !category.isBlank();
+        if (paysId == null) {
+            // Admin all-entities view
+            templates = hasCategory
+                ? (includeInactive
+                    ? repo.findByCategoryOrderByPaysIdAscNameAsc(category)
+                    : repo.findByCategoryAndIsActiveTrueOrderByPaysIdAscNameAsc(category))
+                : (includeInactive
+                    ? repo.findAllByOrderByPaysIdAscCategoryAscNameAsc()
+                    : repo.findAllByIsActiveTrueOrderByPaysIdAscCategoryAscNameAsc());
         } else {
-            templates = includeInactive
-                ? repo.findByPaysIdOrderByCategoryAscNameAsc(paysId)
-                : repo.findByPaysIdAndIsActiveTrueOrderByCategoryAscNameAsc(paysId);
+            templates = hasCategory
+                ? (includeInactive
+                    ? repo.findByPaysIdAndCategoryOrderByNameAsc(paysId, category)
+                    : repo.findByPaysIdAndCategoryAndIsActiveTrueOrderByNameAsc(paysId, category))
+                : (includeInactive
+                    ? repo.findByPaysIdOrderByCategoryAscNameAsc(paysId)
+                    : repo.findByPaysIdAndIsActiveTrueOrderByCategoryAscNameAsc(paysId));
         }
         return templates.stream().map(this::toDto).collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
     public DocumentTemplateDto getById(Long id) {
-        return toDto(findOrThrow(id));
+        DocumentTemplate tmpl = findOrThrow(id);
+        assertPaysOwnership(tmpl);
+        return toDto(tmpl);
     }
 
     public DocumentTemplateDto create(SaveDocumentTemplateDto dto, Long actorId) {
-        if (repo.existsByPaysIdAndName(dto.getPaysId(), dto.getName())) {
+        Long effectivePaysId = tenantService.isAdmin() ? dto.getPaysId() : TenantContext.get();
+        if (repo.existsByPaysIdAndName(effectivePaysId, dto.getName())) {
             throw new AppException(ErrorCode.ALREADY_EXISTS,
                 "Une maquette nommée \"" + dto.getName() + "\" existe déjà pour ce pays.");
         }
         DocumentTemplate tmpl = DocumentTemplate.builder()
-            .paysId(dto.getPaysId())
+            .paysId(effectivePaysId)
             .category(dto.getCategory())
             .name(dto.getName().trim())
             .description(dto.getDescription())
@@ -122,6 +138,7 @@ public class DocumentTemplateService {
 
     public DocumentTemplateDto update(Long id, SaveDocumentTemplateDto dto) {
         DocumentTemplate tmpl = findOrThrow(id);
+        assertPaysOwnership(tmpl);
         if (repo.existsByPaysIdAndNameAndIdNot(tmpl.getPaysId(), dto.getName(), id)) {
             throw new AppException(ErrorCode.ALREADY_EXISTS,
                 "Une maquette nommée \"" + dto.getName() + "\" existe déjà pour ce pays.");
@@ -138,6 +155,7 @@ public class DocumentTemplateService {
 
     public DocumentTemplateDto toggleActive(Long id) {
         DocumentTemplate tmpl = findOrThrow(id);
+        assertPaysOwnership(tmpl);
         tmpl.setIsActive(!Boolean.TRUE.equals(tmpl.getIsActive()));
         tmpl.setUpdatedAt(OffsetDateTime.now());
         return toDto(repo.save(tmpl));
@@ -145,6 +163,7 @@ public class DocumentTemplateService {
 
     public void delete(Long id) {
         DocumentTemplate tmpl = findOrThrow(id);
+        assertPaysOwnership(tmpl);
         tmpl.setIsActive(false);
         tmpl.setUpdatedAt(OffsetDateTime.now());
         repo.save(tmpl);
@@ -155,6 +174,7 @@ public class DocumentTemplateService {
     /** Admin preview — renders by template ID, uses placeholder context when profileId is null. */
     public byte[] render(Long templateId, Long employeeProfileId) {
         DocumentTemplate tmpl = findOrThrow(templateId);
+        assertPaysOwnership(tmpl);
         Map<String, String> ctx = resolveContext(employeeProfileId, tmpl.getPaysId());
         String resolved = replaceVariables(tmpl.getHtmlContent(), ctx);
         return pdfClient.generatePdfFromHtml(resolved, sanitizeFilename(tmpl.getName()) + ".pdf");
@@ -162,7 +182,8 @@ public class DocumentTemplateService {
 
     /** Admin raw-HTML preview — renders arbitrary HTML without saving. */
     public byte[] previewRaw(String htmlContent, Long paysId, Long employeeProfileId) {
-        Map<String, String> ctx = resolveContext(employeeProfileId, paysId);
+        Long effectivePaysId = tenantService.isAdmin() ? paysId : TenantContext.get();
+        Map<String, String> ctx = resolveContext(employeeProfileId, effectivePaysId);
         String resolved = replaceVariables(htmlContent, ctx);
         return pdfClient.generatePdfFromHtml(resolved, "apercu.pdf");
     }
@@ -195,6 +216,13 @@ public class DocumentTemplateService {
     private DocumentTemplate findOrThrow(Long id) {
         return repo.findById(id).orElseThrow(() ->
             new AppException(ErrorCode.NOT_FOUND, "Maquette introuvable: id=" + id));
+    }
+
+    private void assertPaysOwnership(DocumentTemplate tmpl) {
+        if (!tenantService.isAdmin() && !tmpl.getPaysId().equals(TenantContext.get())) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                "Accès refusé : cette maquette appartient à un autre pays.");
+        }
     }
 
     private DocumentTemplateDto toDto(DocumentTemplate t) {
@@ -305,6 +333,7 @@ public class DocumentTemplateService {
             ctx.put("employee.salary",                     "[SALAIRE NET]");
             ctx.put("employee.salaireBrutAnnuel",          "[SALAIRE BRUT ANNUEL]");
             ctx.put("employee.salaireBrutAnnuelEnLettres", "[SALAIRE EN LETTRES]");
+            ctx.put("employee.salaireNetAnnuel",           "[SALAIRE NET ANNUEL]");
             ctx.put("employee.bank",                       "[BANQUE]");
             ctx.put("employee.rib",                        "[RIB]");
             ctx.put("employee.iban",                       "[IBAN]");
@@ -377,10 +406,12 @@ public class DocumentTemplateService {
                 BigDecimal annuel = net.multiply(BigDecimal.valueOf(12));
                 ctx.put("employee.salaireBrutAnnuel",          formatAmount(annuel));
                 ctx.put("employee.salaireBrutAnnuelEnLettres", NumberToWordsFr.convert(annuel));
+                ctx.put("employee.salaireNetAnnuel",           formatAmount(annuel));
             } else {
                 ctx.put("employee.salary",                     "0");
                 ctx.put("employee.salaireBrutAnnuel",          "0");
                 ctx.put("employee.salaireBrutAnnuelEnLettres", "zéro");
+                ctx.put("employee.salaireNetAnnuel",           "0");
             }
 
             // Bank

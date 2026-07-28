@@ -2,6 +2,8 @@ package com.daf360.rh.controller;
 
 import com.daf360.rh.common.DocumentVariableCatalog;
 import com.daf360.rh.dto.document.*;
+import com.daf360.rh.security.TenantContext;
+import com.daf360.rh.security.TenantService;
 import com.daf360.rh.service.DocumentTemplateService;
 import com.daf360.rh.service.pdf.PdfGenerationException;
 import jakarta.validation.Valid;
@@ -20,6 +22,7 @@ import java.util.List;
 public class DocumentTemplateController {
 
     private final DocumentTemplateService svc;
+    private final TenantService           tenantService;
 
     // ── Catalog ───────────────────────────────────────────────────────────────
 
@@ -32,10 +35,11 @@ public class DocumentTemplateController {
 
     @GetMapping("/api/hr/admin/document-templates")
     public List<DocumentTemplateDto> list(
-            @RequestParam Long    paysId,
+            @RequestParam(required = false) Long    paysId,
             @RequestParam(required = false) String  category,
             @RequestParam(defaultValue = "false")   boolean includeInactive) {
-        return svc.list(paysId, category, includeInactive);
+        Long effectivePaysId = tenantService.isAdmin() ? paysId : TenantContext.get();
+        return svc.list(effectivePaysId, category, includeInactive);
     }
 
     @GetMapping("/api/hr/admin/document-templates/{id}")

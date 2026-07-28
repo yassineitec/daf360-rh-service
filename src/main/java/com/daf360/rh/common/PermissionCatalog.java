@@ -69,6 +69,7 @@ public final class PermissionCatalog {
     public static final String RH_VIEW_RECRUITMENT_DEMAND   = "RH_VIEW_RECRUITMENT_DEMAND";
     public static final String RH_CREATE_RECRUITMENT_DEMAND = "RH_CREATE_RECRUITMENT_DEMAND";
     public static final String RH_APPROVE_RECRUITMENT_DEMAND= "RH_APPROVE_RECRUITMENT_DEMAND";
+    public static final String APPROVE_HIRING_COST          = "APPROVE_HIRING_COST";
 
     // ── Entretiens (V37) ──────────────────────────────────────────────────────
     public static final String RH_ADMIN_INTERVIEW_TYPES     = "RH_ADMIN_INTERVIEW_TYPES";
@@ -99,6 +100,24 @@ public final class PermissionCatalog {
     public static final String ADMIN_EVENTS            = "ADMIN_EVENTS";
     public static final String ADMIN_NOTIFICATIONS     = "ADMIN_NOTIFICATIONS";
 
+    // ── Module Payroll (must stay in sync with daf360-payroll-service PermissionCatalog) ─
+    public static final String PAYROLL_RUN_SIMULATION              = "PAYROLL_RUN_SIMULATION";
+    public static final String PAYROLL_VIEW_INDIVIDUAL             = "PAYROLL_VIEW_INDIVIDUAL";
+    public static final String PAYROLL_APPROVE_PARAMSET            = "PAYROLL_APPROVE_PARAMSET";
+    public static final String PAYROLL_RUN_CALIBRATION             = "PAYROLL_RUN_CALIBRATION";
+    public static final String PAYROLL_EXPORT_BUDGET               = "PAYROLL_EXPORT_BUDGET";
+    public static final String PAYROLL_IMPORT_PARTNER              = "PAYROLL_IMPORT_PARTNER";
+    public static final String PAYROLL_VIEW_AGGREGATE              = "PAYROLL_VIEW_AGGREGATE";
+    public static final String PAYROLL_APPROVE_PARAMSET_FAST_TRACK = "PAYROLL_APPROVE_PARAMSET_FAST_TRACK";
+    public static final String PAYROLL_VIEW_PARAMSET               = "PAYROLL_VIEW_PARAMSET";
+    public static final String PAYROLL_UPLOAD_ACTUAL               = "PAYROLL_UPLOAD_ACTUAL";
+    public static final String PAYROLL_SUPER_ADMIN                 = "PAYROLL_SUPER_ADMIN";
+    public static final String PAYROLL_RUN_ENGINE                  = "PAYROLL_RUN_ENGINE";
+    public static final String PAYROLL_VIEW_RESULTS                = "PAYROLL_VIEW_RESULTS";
+    public static final String PAYROLL_MANAGE_RUBRIQUES            = "PAYROLL_MANAGE_RUBRIQUES";
+    public static final String PAYROLL_MANAGE_COUNTRIES            = "PAYROLL_MANAGE_COUNTRIES";
+    public static final String PAYROLL_IMPORT_CALIBRATION          = "PAYROLL_IMPORT_CALIBRATION";
+
     // ── Groups for catalog API ────────────────────────────────────────────────
     public record PermGroup(String label, List<String> codes) {}
 
@@ -112,19 +131,22 @@ public final class PermissionCatalog {
         new PermGroup("Congés",              List.of(GET_LEAVES, ADD_LEAVE, RESPONSE_LEAVE, GET_GLOBAL_LEAVES, SETTLE_LEAVES)),
         new PermGroup("Catégories",          List.of(GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY)),
         new PermGroup("Timesheets",          List.of(GET_TSR, CREATE_TSR, RESPOND_TSR, GET_GLOBAL_TSR)),
-        new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND)),
+        new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND, RH_HIRE_CANDIDATE, APPROVE_HIRING_COST)),
         new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS, RH_MANAGE_OFFBOARDING, RH_VALIDATE_OFFBOARDING, RH_COMPLETE_OFFBOARDING_TASK, RH_CONDUCT_EXIT_INTERVIEW, RH_SUSPEND_PROFILE)),
         new PermGroup("Entretiens",          List.of(RH_ADMIN_INTERVIEW_TYPES, RH_MANAGE_INTERVIEWS)),
         new PermGroup("Temps de travail",    List.of(ADMIN_REGIMES, ADMIN_BREAKS)),
         new PermGroup("Module IT",           List.of(IT_PROVISIONING)),
-        new PermGroup("Administration",      List.of(ADMIN_LISTS, ADMIN_NOTIFICATIONS, ADMIN_ROLES))
-        // NOTE: facturation (FACT_*) and pointage (POINTAGE_*) codes are deliberately
-        // NOT listed here. Each module owns its own catalog and manages its codes in its
-        // own admin UI (finance: fact-roles-admin). Keeping them out of RH's catalog means
-        // (1) they don't show up / get managed in RH's role-admin, and (2) RH's full-replace
-        // updatePermissions — whose DELETE is scoped to ALLOWED_PERMISSIONS (= ALL_CODES) —
-        // leaves those foreign grants untouched. Cross-module grants go through the per-code
-        // POST/DELETE /roles/{id}/permissions/{code} endpoint, which accepts any code.
+        new PermGroup("Administration",      List.of(ADMIN_LISTS, ADMIN_NOTIFICATIONS, ADMIN_ROLES)),
+        new PermGroup("Module Payroll",      List.of(
+            PAYROLL_RUN_SIMULATION, PAYROLL_VIEW_INDIVIDUAL,
+            PAYROLL_APPROVE_PARAMSET, PAYROLL_APPROVE_PARAMSET_FAST_TRACK,
+            PAYROLL_RUN_CALIBRATION, PAYROLL_IMPORT_CALIBRATION,
+            PAYROLL_EXPORT_BUDGET, PAYROLL_IMPORT_PARTNER,
+            PAYROLL_VIEW_AGGREGATE, PAYROLL_VIEW_PARAMSET,
+            PAYROLL_UPLOAD_ACTUAL, PAYROLL_SUPER_ADMIN,
+            PAYROLL_RUN_ENGINE, PAYROLL_VIEW_RESULTS,
+            PAYROLL_MANAGE_RUBRIQUES, PAYROLL_MANAGE_COUNTRIES
+        ))
     );
 
     public static final Set<String> ALL_CODES;
