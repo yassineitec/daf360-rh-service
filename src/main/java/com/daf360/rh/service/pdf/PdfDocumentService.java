@@ -220,6 +220,7 @@ public class PdfDocumentService {
         data.put("hireDate",                   formatMoisAnFr(emp.getHireDate()));
         data.put("salaireBrutAnnuel",          formatAmount(salaireNetAnnuel));
         data.put("salaireBrutAnnuelEnLettres", NumberToWordsFr.convert(salaireNetAnnuel));
+        data.put("salaireNetAnnuel",           formatAmount(salaireNetAnnuel));
 
         byte[] bytes = pdfClient.generatePdf("attestation-salaire", data);
         return saveGeneratedDocument(requestId, "ATTESTATION_SALAIRE", bytes, verCode, generatedBy, emp.getFullName());
@@ -274,6 +275,59 @@ public class PdfDocumentService {
 
         byte[] bytes = pdfClient.generatePdf("attestation-titularisation", data);
         return saveGeneratedDocument(requestId, "ATTESTATION_TITULARISATION", bytes, verCode, generatedBy, emp.getFullName());
+    }
+
+    public GeneratedDocumentResponse generateLettreInvitationPdf(Long employeeProfileId,
+                                                                   Long requestId,
+                                                                   Long generatedBy,
+                                                                   Map<String, Object> extra) {
+        EmployeeDataDto emp     = loadEmployeeData(employeeProfileId);
+        String          docRef  = generateDocumentRef("RH-LTR-INV", emp.getPaysId());
+        String          verCode = generateVerificationCode();
+
+        Map<String, String> extraCtx = new HashMap<>();
+        extraCtx.put("document.ref",              docRef);
+        extraCtx.put("document.verificationCode", verCode);
+        extraCtx.put("employee.passportNumber",   str(extra, "passportNumber"));
+        extraCtx.put("employee.birthDate",        str(extra, "birthDate"));
+        extraCtx.put("employee.birthCity",        str(extra, "birthCity"));
+        extraCtx.put("sender.name",               str(extra, "senderName"));
+        extraCtx.put("sender.title",              str(extra, "senderTitle"));
+        extraCtx.put("sender.address",            str(extra, "senderAddress"));
+        extraCtx.put("sender.city",               str(extra, "senderCity"));
+        extraCtx.put("trip.startDate",            str(extra, "tripStartDate"));
+        extraCtx.put("trip.endDate",              str(extra, "tripEndDate"));
+        extraCtx.put("trip.hotel",                str(extra, "hotel"));
+
+        Optional<byte[]> dbPdf = documentTemplateService.renderByName(
+            "Lettre d'Invitation ARX France", emp.getPaysId(), employeeProfileId, extraCtx);
+        if (dbPdf.isPresent()) {
+            return saveGeneratedDocument(requestId, "LETTRE_INVITATION_ARX_FRANCE",
+                    dbPdf.get(), verCode, generatedBy, emp.getFullName());
+        }
+
+        // Fallback: Handlebars flat-key template via pdf-service
+        Map<String, Object> data = new HashMap<>();
+        data.put("civilite",      deriveCivilite(emp.getGender()));
+        data.put("fullName",      emp.getFullName());
+        data.put("profession",    emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
+        data.put("city",          deriveCity(emp.getIsoCode(), emp.getPaysLabel()));
+        data.put("date",          formatDateFr(LocalDate.now()));
+        data.put("documentRef",   docRef);
+        data.put("passportNumber", str(extra, "passportNumber"));
+        data.put("birthDate",     str(extra, "birthDate"));
+        data.put("birthCity",     str(extra, "birthCity"));
+        data.put("senderName",    str(extra, "senderName"));
+        data.put("senderTitle",   str(extra, "senderTitle"));
+        data.put("senderAddress", str(extra, "senderAddress"));
+        data.put("senderCity",    str(extra, "senderCity"));
+        data.put("tripStartDate", str(extra, "tripStartDate"));
+        data.put("tripEndDate",   str(extra, "tripEndDate"));
+        data.put("hotel",         str(extra, "hotel"));
+
+        byte[] bytes = pdfClient.generatePdf("lettre-invitation-arx-france", data);
+        return saveGeneratedDocument(requestId, "LETTRE_INVITATION_ARX_FRANCE",
+                bytes, verCode, generatedBy, emp.getFullName());
     }
 
     public GeneratedDocumentResponse generateAttestationDomiciliationSalairePdf(Long employeeProfileId,
@@ -529,6 +583,12 @@ public class PdfDocumentService {
         if (v == null) return null;
         if (v instanceof Number) return ((Number) v).longValue();
         return Long.parseLong(v.toString());
+    }
+
+    private String str(Map<String, Object> map, String key) {
+        if (map == null) return "________";
+        Object v = map.get(key);
+        return v != null && !v.toString().isBlank() ? v.toString() : "________";
     }
 
     private LocalDate toLocalDate(Object v) {

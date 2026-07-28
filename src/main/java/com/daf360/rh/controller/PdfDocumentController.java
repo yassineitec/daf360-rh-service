@@ -14,6 +14,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -123,6 +124,27 @@ public class PdfDocumentController {
         Long actorId           = actorId(auth);
         return generateAndReturn(() ->
                 pdfService.generateAttestationDomiciliationSalairePdf(employeeProfileId, requestId, actorId));
+    }
+
+    @PostMapping("/lettre-invitation-arx-france")
+    //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE')")
+    public ResponseEntity<Object> generateLettreInvitation(
+            @RequestBody Map<String, Object> body,
+            Authentication auth) {
+        Long employeeProfileId = toLong(body.get("employeeProfileId"));
+        Long requestId         = toLong(body.get("requestId"));
+        Long actorId           = actorId(auth);
+
+        Map<String, Object> extra = new HashMap<>();
+        for (String field : new String[]{
+                "passportNumber", "birthDate", "birthCity",
+                "senderName", "senderTitle", "senderAddress", "senderCity",
+                "tripStartDate", "tripEndDate", "hotel"}) {
+            if (body.get(field) != null) extra.put(field, body.get(field));
+        }
+
+        return generateAndReturn(() ->
+                pdfService.generateLettreInvitationPdf(employeeProfileId, requestId, actorId, extra));
     }
 
     @GetMapping("/by-request/{requestId}")
