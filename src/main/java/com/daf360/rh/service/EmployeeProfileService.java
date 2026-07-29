@@ -277,9 +277,10 @@ public class EmployeeProfileService {
     }
 
     // ── Employee list (Users LEFT JOIN employee_profiles) ────────────────────
-    // NOTE: V23 dimension tables (departments, grades, disciplines, nog_levels)
-    // are not joined here because they may not exist yet in the target DB.
-    // department / grade labels will be null until those tables are migrated.
+    // The V23 dimension tables (departments, grades) ARE joined: they are already
+    // relied on by DashboardService, PdfDocumentService and getFilterOptions().
+    // Filtering is by their French label because that is what filter-options
+    // hands the client for those two fields; `pays` filters by numeric id.
 
     @Transactional(readOnly = true)
     public org.springframework.data.domain.Page<EmployeeListItemDto> listAllEmployees(
@@ -292,7 +293,14 @@ public class EmployeeProfileService {
         Long   paysId          = effectivePaysId != null ? effectivePaysId : filter.getPaysId();
         String status     = (filter.getStatus() != null && !filter.getStatus().isBlank())
                             ? filter.getStatus() : null;
-        // TODO: add department / grade label filters once V23 tables are migrated
+        String department = (filter.getDepartment() != null && !filter.getDepartment().isBlank())
+                            ? filter.getDepartment().trim() : null;
+        String grade      = (filter.getGrade() != null && !filter.getGrade().isBlank())
+                            ? filter.getGrade().trim() : null;
+        String contract   = (filter.getContract() != null && !filter.getContract().isBlank())
+                            ? filter.getContract().trim() : null;
+        java.time.LocalDate hireFrom = filter.getHireDateFrom();
+        java.time.LocalDate hireTo   = filter.getHireDateTo();
 
         int offset   = (int) pageable.getOffset();
         int pageSize = pageable.getPageSize();
@@ -301,25 +309,41 @@ public class EmployeeProfileService {
             "FROM [dbo].[Users] u " +
             "LEFT JOIN [dbo].[pays] p ON p.id = u.pays_id " +
             "LEFT JOIN [dbo].[Roles] r ON r.id = u.role_id AND (r.deleted = 0 OR r.deleted IS NULL) " +
-            "LEFT JOIN [dbo].[employee_profiles] ep ON ep.user_id = u.id AND ep.deleted = 0 ";
+            "LEFT JOIN [dbo].[employee_profiles] ep ON ep.user_id = u.id AND ep.deleted = 0 " +
+            "LEFT JOIN [dbo].[departments] d ON d.id = ep.department_id " +
+            "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
+            "LEFT JOIN [dbo].[disciplines] disc ON disc.id = ep.discipline_id " +
+            "LEFT JOIN [dbo].[nog_levels] nog ON nog.id = ep.nog_level_id ";
 
         String baseWhere =
             "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
             (searchLike != null ? "AND (u.fullName LIKE ? OR u.username LIKE ?) " : "") +
             (paysId     != null ? "AND u.pays_id = ? " : "") +
-            (status     != null ? "AND ep.lifecycle_status = ? " : "");
+            (status     != null ? "AND ep.lifecycle_status = ? " : "") +
+            (department != null ? "AND d.label_fr = ? " : "") +
+            (grade      != null ? "AND g.label_fr = ? " : "") +
+            (contract   != null ? "AND ep.contract_type = ? " : "") +
+            (hireFrom   != null ? "AND ep.hire_date >= ? " : "") +
+            (hireTo     != null ? "AND ep.hire_date <= ? " : "");
 
         List<Object> args = new ArrayList<>();
         if (searchLike != null) { args.add(searchLike); args.add(searchLike); }
         if (paysId     != null) { args.add(paysId); }
         if (status     != null) { args.add(status); }
+        if (department != null) { args.add(department); }
+        if (grade      != null) { args.add(grade); }
+        if (contract   != null) { args.add(contract); }
+        if (hireFrom   != null) { args.add(java.sql.Date.valueOf(hireFrom)); }
+        if (hireTo     != null) { args.add(java.sql.Date.valueOf(hireTo)); }
 
         String listSql =
             "SELECT ep.id AS profile_id, u.id AS user_id, u.fullName AS full_name, " +
             "COALESCE(u.email, u.username) AS email, u.employee_id AS employee_id, u.pays_id AS pays_id, " +
             "p.french_label AS pays_label, u.role_id AS role_id, r.frenchName AS role_name, " +
             "ep.lifecycle_status AS lifecycle_status, ep.contract_type AS contract_type, " +
-            "ep.hire_date AS hire_date, ep.photo_url AS photo_url, ep.gender AS gender " +
+            "ep.hire_date AS hire_date, ep.photo_url AS photo_url, ep.gender AS gender, " +
+            "d.label_fr AS department, g.label_fr AS grade, " +
+            "disc.label_fr AS discipline, nog.label_fr AS nog_level " +
             baseFrom + baseWhere +
             // Tiebreakers make OFFSET/FETCH deterministic: fullName is not unique
             // (duplicate names exist), and a user could join >1 profile row — without
@@ -344,6 +368,10 @@ public class EmployeeProfileService {
                     .roleName(rs.getString("role_name"))
                     .lifecycleStatus(rs.getString("lifecycle_status"))
                     .contractType(rs.getString("contract_type"))
+                    .department(rs.getString("department"))
+                    .grade(rs.getString("grade"))
+                    .discipline(rs.getString("discipline"))
+                    .nogLevel(rs.getString("nog_level"))
                     .hireDate(sqlDate != null ? sqlDate.toLocalDate() : null)
                     .photoUrl(rs.getString("photo_url"))
                     .gender(rs.getString("gender"))
@@ -365,28 +393,50 @@ public class EmployeeProfileService {
 
     @Transactional(readOnly = true)
     public com.daf360.rh.dto.profile.FilterOptionsDto getFilterOptions() {
-        List<String> paysList = jdbcTemplate.queryForList(
-            "SELECT DISTINCT p.french_label " +
-            "FROM [dbo].[pays] p " +
-            "JOIN [dbo].[Users] u ON u.pays_id = p.id " +
-            "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
-            "  AND p.french_label IS NOT NULL " +
-            "ORDER BY p.french_label",
+        // Country: value is the numeric pays_id, because /employees filters on
+        // `u.pays_id`. Returning the label as the value is what broke this filter.
+        List<com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto> paysList =
+            jdbcTemplate.query(
+                "SELECT DISTINCT p.id, p.french_label " +
+                "FROM [dbo].[pays] p " +
+                "JOIN [dbo].[Users] u ON u.pays_id = p.id " +
+                "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
+                "  AND p.french_label IS NOT NULL " +
+                "ORDER BY p.french_label",
+                (rs, i) -> new com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto(
+                    String.valueOf(rs.getLong("id")), rs.getString("french_label")));
+
+        // Department / grade: value IS the label — /employees matches on label_fr,
+        // since employee_profiles rows may predate the dimension FKs.
+        List<com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto> departmentList =
+            jdbcTemplate.query(
+                "SELECT DISTINCT d.label_fr " +
+                "FROM [dbo].[departments] d " +
+                "WHERE d.is_active = 1 AND d.label_fr IS NOT NULL " +
+                "ORDER BY d.label_fr",
+                (rs, i) -> new com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto(
+                    rs.getString("label_fr"), rs.getString("label_fr")));
+
+        List<com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto> gradeList =
+            jdbcTemplate.query(
+                "SELECT DISTINCT g.label_fr " +
+                "FROM [dbo].[grades] g " +
+                "WHERE g.is_active = 1 AND g.label_fr IS NOT NULL " +
+                "ORDER BY g.label_fr",
+                (rs, i) -> new com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto(
+                    rs.getString("label_fr"), rs.getString("label_fr")));
+
+        // Raw codes only — contract_type is a free varchar holding two generations
+        // of codes (PERMANENT/FIXED_TERM… and CDI/CDD/…); the client translates.
+        List<String> contractTypes = jdbcTemplate.queryForList(
+            "SELECT DISTINCT ep.contract_type " +
+            "FROM [dbo].[employee_profiles] ep " +
+            "WHERE ep.deleted = 0 AND ep.contract_type IS NOT NULL AND ep.contract_type <> '' " +
+            "ORDER BY ep.contract_type",
             String.class);
-        List<String> departmentList = jdbcTemplate.queryForList(
-            "SELECT DISTINCT d.label_fr " +
-            "FROM [dbo].[departments] d " +
-            "WHERE d.is_active = 1 AND d.label_fr IS NOT NULL " +
-            "ORDER BY d.label_fr",
-            String.class);
-        List<String> gradeList = jdbcTemplate.queryForList(
-            "SELECT DISTINCT g.label_fr " +
-            "FROM [dbo].[grades] g " +
-            "WHERE g.is_active = 1 AND g.label_fr IS NOT NULL " +
-            "ORDER BY g.label_fr",
-            String.class);
+
         return new com.daf360.rh.dto.profile.FilterOptionsDto(
-            departmentList, gradeList, paysList);
+            departmentList, gradeList, paysList, contractTypes);
     }
 
     // ── Update Users table fields ─────────────────────────────────────────────

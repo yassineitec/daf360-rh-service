@@ -16,8 +16,10 @@ import org.springframework.web.bind.annotation.*;
 import com.daf360.rh.dto.absence.LeaveBalanceDto;
 import com.daf360.rh.dto.profile.FilterOptionsDto;
 import com.daf360.rh.service.AbsenceService;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.data.domain.Page;
 import org.springframework.http.MediaType;
 import org.springframework.web.multipart.MultipartFile;
@@ -146,7 +148,13 @@ public class EmployeeProfileController {
     /**
      * GET /api/hr/profiles/employees
      * Paginated employee list with optional filters.
-     * Params: page, size, sort, search, pays (Long), status, department, grade
+     * Params: page, size, sort, search, pays (Long id), status, department
+     *         (label_fr), grade (label_fr), contract, hireDateFrom, hireDateTo.
+     *
+     * `department` / `grade` / `contract` / the hire-date window narrow on
+     * employee_profiles, so a user with no HR profile yet drops out of the result
+     * as soon as any of them is set — that is intended, those rows have nothing
+     * to match on.
      */
     @GetMapping("/employees")
     // //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','HR_CREATE_PROFILE','HR_ADMIN_ROLES','ADMIN_ROLES')")
@@ -156,6 +164,11 @@ public class EmployeeProfileController {
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String department,
             @RequestParam(required = false) String grade,
+            @RequestParam(required = false) String contract,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hireDateFrom,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hireDateTo,
             @PageableDefault(size = 12, sort = "fullName") Pageable pageable,
             Authentication auth) {
 
@@ -165,6 +178,9 @@ public class EmployeeProfileController {
         filter.setPaysId(pays);
         filter.setDepartment(department);
         filter.setGrade(grade);
+        filter.setContract(contract);
+        filter.setHireDateFrom(hireDateFrom);
+        filter.setHireDateTo(hireDateTo);
 
         return ResponseEntity.ok(profileService.listAllEmployees(filter, pageable));
     }
