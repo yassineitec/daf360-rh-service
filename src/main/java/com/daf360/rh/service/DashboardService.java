@@ -27,6 +27,41 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class DashboardService {
 
+    /**
+     * The document types every profile must have on file. Same list and same
+     * "anything but REJECTED counts" rule as {@link #getMissingDocuments()}, so the
+     * dashboard's per-employee completeness bar and its missing-documents watchlist
+     * can never disagree.
+     */
+    private static final List<String> REQUIRED_DOC_TYPES = List.of("CONTRACT", "ID_CARD", "RIB");
+
+    /**
+     * The onboarding wizard's data steps, mapped onto the {@code employee_profiles}
+     * columns each step writes. Order matches the frontend's {@code STEPS}, so the
+     * dashboard's per-section bars line up with what RH sees in the wizard.
+     *
+     * <p>Documents are appended as a seventh section from {@link #REQUIRED_DOC_TYPES};
+     * they live in {@code employee_documents}, not on the profile row.
+     *
+     * <p>Deliberately <em>not</em> derived from the wizard's own validators: it has
+     * none — no step declares required fields — and {@code REQUIRED_DOCUMENT_SLOTS} in
+     * {@code OnboardingService} is a list of French display labels for the summary
+     * screen, unrelated to {@code document_type}. These column lists are therefore the
+     * definition of "filled" for the dashboard, and the place to change it.
+     */
+    private record OnboardingSection(String key, List<String> columns) {}
+
+    private static final List<OnboardingSection> ONBOARDING_SECTIONS = List.of(
+            new OnboardingSection("IDENTITY",  List.of("date_of_birth", "gender", "national_id")),
+            new OnboardingSection("CONTRACT",  List.of("hire_date", "contract_type", "grade_id", "department_id")),
+            new OnboardingSection("REGIME",    List.of("regime_template_id", "regime_start_date")),
+            new OnboardingSection("PERSONAL",  List.of("cnss_number", "marital_status", "personal_address", "phone")),
+            new OnboardingSection("BANK",      List.of("rib", "bank_account_number")),
+            new OnboardingSection("EMERGENCY", List.of("emergency_contact_name", "emergency_contact_phone")));
+
+    /** Section key used for the documents bar; not a profile-column section. */
+    private static final String DOCUMENTS_SECTION_KEY = "DOCUMENTS";
+
     private final EmployeeProfileRepository profileRepository;
     private final CandidateRepository       candidateRepository;
     private final JdbcTemplate              jdbcTemplate;
@@ -87,7 +122,7 @@ public class DashboardService {
         long total = paysId != null
                 ? profileRepository.countByPaysIdAndLifecycleStatus(paysId, LifecycleStatus.ACTIVE)
                 : profileRepository.countByLifecycleStatus(LifecycleStatus.ACTIVE);
-        if (total == 0) return new WorkforceStatsDto(0, 0, 0, 0, 0.0, 0.0);
+        if (total == 0) return new WorkforceStatsDto(0, 0, 0, 0, 0.0, 0.0, List.of());
 
         List<Object[]> genderRows = paysId != null
                 ? profileRepository.countByGenderAndLifecycleStatusAndPaysId(LifecycleStatus.ACTIVE, paysId)
@@ -106,7 +141,40 @@ public class DashboardService {
         return new WorkforceStatsDto(
                 total, h, f, n,
                 Math.round((double) h / total * 1000.0) / 10.0,
-                Math.round((double) f / total * 1000.0) / 10.0);
+                Math.round((double) f / total * 1000.0) / 10.0,
+                getHeadcountByCountry(paysId));
+    }
+
+    /**
+     * Active headcount grouped by country, biggest first — the dashboard renders one
+     * bar per row. Kept inside /workforce rather than a new endpoint so the dashboard
+     * page doesn't pay for an extra round-trip.
+     *
+     * <p>Counts here use the same `deleted = 0` guard as the rest of this service, so
+     * the frontend sizes its bars against the sum of these rows rather than
+     * `totalActifs` (which comes from the repository) to stay internally consistent.
+     */
+    private List<WorkforceStatsDto.CountryHeadcount> getHeadcountByCountry(Long paysId) {
+        String sql = "SELECT p.id AS pays_id, p.french_label AS pays_label, COUNT(*) AS cnt " +
+                     "FROM [dbo].[employee_profiles] ep " +
+                     "LEFT JOIN [dbo].[pays] p ON p.id = ep.pays_id " +
+                     "WHERE ep.lifecycle_status = 'ACTIVE' " +
+                     "  AND ep.deleted = 0 " +
+                     (paysId != null ? "  AND ep.pays_id = ? " : "") +
+                     "GROUP BY p.id, p.french_label " +
+                     "ORDER BY cnt DESC, p.french_label ASC";
+
+        Object[] params = paysId != null ? new Object[]{ paysId } : new Object[0];
+
+        return jdbcTemplate.query(sql,
+                (rs, rowNum) -> {
+                    long id = rs.getLong("pays_id");
+                    return new WorkforceStatsDto.CountryHeadcount(
+                            rs.wasNull() ? null : id,
+                            rs.getString("pays_label"),
+                            rs.getLong("cnt"));
+                },
+                params);
     }
 
     // ── ③ /completion ────────────────────────────────────────────────────────
@@ -221,6 +289,28 @@ public class DashboardService {
 
     // ── ⑥ /nouveaux-employes ─────────────────────────────────────────────────
 
+    /**
+     * A count-of-filled-columns expression for one onboarding section.
+     *
+     * <p>NULL is the only "not filled" test. An empty-string check would need a
+     * per-column type split — several of these columns are dates, ints or FKs, and
+     * {@code col = ''} against those errors on SQL Server rather than returning false.
+     */
+    private static String sectionFilledColumn(OnboardingSection section) {
+        return section.columns().stream()
+                .map(c -> "CASE WHEN ep." + c + " IS NULL THEN 0 ELSE 1 END")
+                .collect(Collectors.joining(" + ", "(", ") AS sec_" + section.key()));
+    }
+
+    /** A 0/1 column telling whether the profile has a non-rejected doc of {@code docType}. */
+    private static String hasDocumentColumn(String docType, String alias) {
+        return "CASE WHEN EXISTS (SELECT 1 FROM [dbo].[employee_documents] ed " +
+               "                  WHERE ed.employee_profile_id = ep.id " +
+               "                    AND ed.document_type = '" + docType + "' " +
+               "                    AND ed.verification_status <> 'REJECTED') " +
+               "     THEN 1 ELSE 0 END AS " + alias;
+    }
+
     public List<NouvelEmployeDto> getNouveauxEmployes(int limit) {
         int safeLimit = Math.max(1, Math.min(limit, 100));
         LocalDate threeMonthsAgo = LocalDate.now().minusMonths(3);
@@ -229,7 +319,13 @@ public class DashboardService {
         String sql = "SELECT ep.id, u.fullName, ep.hire_date, ep.gender, ep.contract_type, " +
                      "       ep.onboarding_completed, " +
                      "       d.label_fr AS department_label, g.label_fr AS grade_label, " +
-                     "       disc.label_fr AS discipline_label, p.french_label AS pays_label " +
+                     "       disc.label_fr AS discipline_label, p.french_label AS pays_label, " +
+                     REQUIRED_DOC_TYPES.stream()
+                             .map(t -> hasDocumentColumn(t, "has_" + t))
+                             .collect(Collectors.joining(", ", "", ", ")) +
+                     ONBOARDING_SECTIONS.stream()
+                             .map(DashboardService::sectionFilledColumn)
+                             .collect(Collectors.joining(", ", "", " ")) +
                      "FROM [dbo].[employee_profiles] ep " +
                      "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
                      "LEFT JOIN [dbo].[departments]  d    ON d.id    = ep.department_id " +
@@ -251,6 +347,25 @@ public class DashboardService {
                 (rs, rowNum) -> {
                     long pid = rs.getLong("id");
                     Date d   = rs.getDate("hire_date");
+
+                    List<String> missing = new ArrayList<>();
+                    for (String docType : REQUIRED_DOC_TYPES) {
+                        if (rs.getInt("has_" + docType) == 0) missing.add(docType);
+                    }
+
+                    List<OnboardingSectionDto> sections = new ArrayList<>();
+                    for (OnboardingSection section : ONBOARDING_SECTIONS) {
+                        sections.add(new OnboardingSectionDto(
+                                section.key(),
+                                rs.getInt("sec_" + section.key()),
+                                section.columns().size()));
+                    }
+                    // Documents last: they come from employee_documents, not the profile row.
+                    sections.add(new OnboardingSectionDto(
+                            DOCUMENTS_SECTION_KEY,
+                            REQUIRED_DOC_TYPES.size() - missing.size(),
+                            REQUIRED_DOC_TYPES.size()));
+
                     return new NouvelEmployeDto(
                             pid,
                             rs.getString("fullName"),
@@ -262,7 +377,11 @@ public class DashboardService {
                             rs.getBoolean("onboarding_completed"),
                             rs.getString("pays_label"),
                             rs.getString("discipline_label"),
-                            rs.getString("contract_type"));
+                            rs.getString("contract_type"),
+                            REQUIRED_DOC_TYPES.size() - missing.size(),
+                            REQUIRED_DOC_TYPES.size(),
+                            missing,
+                            sections);
                 },
                 params.toArray());
     }

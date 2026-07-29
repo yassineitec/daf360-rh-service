@@ -66,6 +66,9 @@ logging:
 
 app:
   jwt-secret: ${JWT_SECRET:daf360-change-me-in-production-32chars}
+  # Required to validate the portal's RS256 daf360_access cookie. Without it JwtService
+  # falls back to HS256 and the signature check fails → 401 on every cookie-authed request.
+  jwt-public-key-path: ${JWT_PUBLIC_KEY_PATH:}
   jwt-expiry-seconds: ${JWT_EXPIRY_SECONDS:3600}
   allowed-origins:
     - ${PORTAL_URL:http://localhost:8080}
