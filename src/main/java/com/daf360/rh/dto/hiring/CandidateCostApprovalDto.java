@@ -12,6 +12,8 @@ public class CandidateCostApprovalDto {
     private Long            candidateId;
     private String          candidateFirstName;
     private String          candidateLastName;
+    private String          appliedPosition;
+    private String          candidateLocation;
     private Long            paysId;
     private Integer         fiscalYear;
     private BigDecimal      salaireNetRh;
@@ -24,4 +26,5 @@ public class CandidateCostApprovalDto {
     private Long            approvedBy;
     private OffsetDateTime  approvedAt;
     private String          approvalNotes;
+    private BigDecimal      contrePropSalaire;
 }

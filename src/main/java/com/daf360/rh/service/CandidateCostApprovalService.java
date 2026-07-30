@@ -3,6 +3,7 @@ package com.daf360.rh.service;
 import com.daf360.rh.domain.Candidate;
 import com.daf360.rh.domain.CandidateCostApproval;
 import com.daf360.rh.dto.hiring.CandidateCostApprovalDto;
+import com.daf360.rh.dto.hiring.CandidateSimulationSummaryDto;
 import com.daf360.rh.dto.hiring.SubmitCostApprovalRequest;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
@@ -12,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -61,6 +63,32 @@ public class CandidateCostApprovalService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<CandidateSimulationSummaryDto> getCandidatesWithHistory(Long paysId) {
+        List<Object[]> rows = approvalRepo.findCandidateSummaryByPays(paysId);
+        return rows.stream().map(row -> {
+            Long candidateId        = (Long)            row[0];
+            long simulationCount    = ((Number)         row[1]).longValue();
+            java.time.OffsetDateTime latestAt = (java.time.OffsetDateTime) row[2];
+            String latestStatus     = (String)          row[3];
+
+            CandidateSimulationSummaryDto dto = new CandidateSimulationSummaryDto();
+            dto.setCandidateId(candidateId);
+            dto.setSimulationCount(simulationCount);
+            dto.setLatestSubmittedAt(latestAt);
+            dto.setLatestStatus(latestStatus);
+
+            candidateRepo.findById(candidateId).ifPresent(c -> {
+                dto.setFirstName(c.getFirstName());
+                dto.setLastName(c.getLastName());
+                dto.setAppliedPosition(c.getAppliedPosition());
+                dto.setCandidateLocation(c.getLocation());
+                dto.setPaysId(c.getPaysId());
+            });
+            return dto;
+        }).toList();
+    }
+
     public CandidateCostApprovalDto approve(Long id, String notes, Long approvedBy) {
         CandidateCostApproval approval = findPending(id);
         approval.setStatus("APPROVED");
@@ -71,13 +99,22 @@ public class CandidateCostApprovalService {
         return toDto(saved, candidateRepo.findById(saved.getCandidateId()).orElse(null));
     }
 
-    public CandidateCostApprovalDto reject(Long id, String notes, Long approvedBy) {
+    public CandidateCostApprovalDto reject(Long id, String notes, BigDecimal contrePropSalaire, Long approvedBy) {
         CandidateCostApproval approval = findPending(id);
         approval.setStatus("REJECTED");
         approval.setApprovedBy(approvedBy);
         approval.setApprovedAt(OffsetDateTime.now());
         approval.setApprovalNotes(notes);
+        approval.setContrePropSalaire(contrePropSalaire);
         CandidateCostApproval saved = approvalRepo.save(approval);
+
+        if (contrePropSalaire != null) {
+            candidateRepo.findById(saved.getCandidateId()).ifPresent(candidate -> {
+                candidate.setSalaireNetRh(contrePropSalaire);
+                candidateRepo.save(candidate);
+            });
+        }
+
         return toDto(saved, candidateRepo.findById(saved.getCandidateId()).orElse(null));
     }
 
@@ -99,6 +136,8 @@ public class CandidateCostApprovalService {
         if (candidate != null) {
             dto.setCandidateFirstName(candidate.getFirstName());
             dto.setCandidateLastName(candidate.getLastName());
+            dto.setAppliedPosition(candidate.getAppliedPosition());
+            dto.setCandidateLocation(candidate.getLocation());
         }
         dto.setPaysId(a.getPaysId());
         dto.setFiscalYear(a.getFiscalYear());
@@ -112,6 +151,7 @@ public class CandidateCostApprovalService {
         dto.setApprovedBy(a.getApprovedBy());
         dto.setApprovedAt(a.getApprovedAt());
         dto.setApprovalNotes(a.getApprovalNotes());
+        dto.setContrePropSalaire(a.getContrePropSalaire());
         return dto;
     }
 }

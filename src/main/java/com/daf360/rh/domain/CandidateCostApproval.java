@@ -59,6 +59,9 @@ public class CandidateCostApproval {
     @Column(name = "approval_notes", length = 1000, columnDefinition = "NVARCHAR(1000)")
     private String approvalNotes;
 
+    @Column(name = "contre_prop_salaire", precision = 18, scale = 4)
+    private BigDecimal contrePropSalaire;
+
     @PrePersist
     protected void prePersist() {
         if (submittedAt == null) {
