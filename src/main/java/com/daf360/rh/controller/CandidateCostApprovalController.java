@@ -1,6 +1,7 @@
 package com.daf360.rh.controller;
 
 import com.daf360.rh.dto.hiring.CandidateCostApprovalDto;
+import com.daf360.rh.dto.hiring.CandidateSimulationSummaryDto;
 import com.daf360.rh.dto.hiring.ReviewCostApprovalRequest;
 import com.daf360.rh.dto.hiring.SubmitCostApprovalRequest;
 import com.daf360.rh.service.CandidateCostApprovalService;
@@ -36,6 +37,13 @@ public class CandidateCostApprovalController {
         return service.getPendingByPays(paysId);
     }
 
+    /** Candidates that have at least one simulation, with count + latest status. */
+    @GetMapping("/candidates-with-history")
+    @PreAuthorize("hasAnyAuthority('RH_HIRE_CANDIDATE','APPROVE_HIRING_COST')")
+    public List<CandidateSimulationSummaryDto> candidatesWithHistory(@RequestParam Long paysId) {
+        return service.getCandidatesWithHistory(paysId);
+    }
+
     /** All approval records for a candidate (used on the candidate detail page). */
     @GetMapping("/candidate/{candidateId}")
     @PreAuthorize("hasAnyAuthority('RH_HIRE_CANDIDATE','APPROVE_HIRING_COST')")
@@ -58,7 +66,7 @@ public class CandidateCostApprovalController {
     public CandidateCostApprovalDto reject(@PathVariable Long id,
                                            @Valid @RequestBody ReviewCostApprovalRequest request,
                                            Authentication auth) {
-        return service.reject(id, request.getNotes(), actorId(auth));
+        return service.reject(id, request.getNotes(), request.getContrePropSalaire(), actorId(auth));
     }
 
     private Long actorId(Authentication auth) {
