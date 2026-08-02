@@ -1,7 +1,41 @@
 -- =============================================================================
 -- V23: Dimension tables (nationalities, grades, disciplines, nog_levels,
 --      departments, banks) + it_assets normalisation
--- SQL Server syntax — fully idempotent
+-- SQL Server syntax
+-- =============================================================================
+-- ⚠️ RUN ONCE. This script is NOT re-runnable, despite what its header used to
+--    claim. Blocks 2, 4, 6 and 11 read the OLD text columns
+--    (employee_profiles.nationality/grade/discipline/nog_level/department/
+--    bank_name, candidates.nationality/applied_grade/applied_discipline/
+--    department, it_provisioning.laptop_* … docking_station_*), and Blocks 7, 8
+--    and 12 DROP those very columns. So on a second run every one of those
+--    statements fails with:
+--
+--        Msg 207 … Invalid column name 'nationality'.  (etc.)
+--
+--    The `IF EXISTS (… COLUMN_NAME = …)` guards cannot prevent this: SQL Server
+--    compiles a whole batch BEFORE executing any of it, and deferred name
+--    resolution only covers a missing *table*, never a missing *column* of a
+--    table that exists. The guard is evaluated at run time — too late.
+--
+--    Those Msg 207 errors on a re-run are therefore HARMLESS: they mean the
+--    migration already completed. Nothing is half-applied by them, because a
+--    batch that fails to compile never runs.
+--
+--    To check where you stand (all three should be true once V23 is done):
+--        SELECT COL_LENGTH('dbo.employee_profiles','nationality');  -- NULL = migrated
+--        SELECT COUNT(*) FROM [dbo].[it_asset_types];               -- must be 6
+--        SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='it_assets';
+--
+--    ⚠️ If `it_asset_types` is EMPTY, Block 9 was skipped because the table
+--    already existed (Hibernate can create it from the @Entity with no rows).
+--    The remedy is V23_fix__correction.sql, which re-seeds the 6 types with
+--    per-row IF NOT EXISTS guards. An empty catalog is what makes the hardware
+--    step of /rh/it-provisioning/:id show no material to assign.
+--
+--    To make this file truly re-runnable, the statements in Blocks 2/4/6/11 have
+--    to move into dynamic SQL (EXEC sp_executesql N'…'), so they are compiled
+--    only when their guard passes.
 -- =============================================================================
 
 -- ===========================================================================
