@@ -40,6 +40,19 @@ public class OffboardingAssetReturn {
     @Builder.Default
     private String assetType = "IT";
 
+    /**
+     * Its own field since V61. Before that the serial was concatenated into
+     * `assetDescription` ("MacBook Pro 14 — S/N DAF-IT-0092"), which made it undisplayable
+     * as its own line and made `sync-from-it` de-duplicate on a formatted string.
+     */
+    @Column(name = "serial_number", length = 100, columnDefinition = "nvarchar(100)")
+    private String serialNumber;
+
+    /** Explicit chase flag, independent of whether the expected date has passed. */
+    @Column(name = "is_urgent", nullable = false)
+    @Builder.Default
+    private Boolean isUrgent = false;
+
     @Column(name = "expected_return_date", nullable = false)
     private LocalDate expectedReturnDate;
 

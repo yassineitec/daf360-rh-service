@@ -13,7 +13,11 @@ public class ExitInterviewDto {
     private Long id;
     private Long workflowInstanceId;
     private Long conductedBy;
+    private String conductedByName;
     private LocalDate conductedDate;
+    /** PENDING | SCHEDULED | DONE (V62). */
+    private String status;
+    private OffsetDateTime scheduledAt;
     private String departureReasons;
     private String feedbackText;
     private Boolean isAnonymised;

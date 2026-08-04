@@ -49,6 +49,81 @@ public class OffboardingWorkflowInstance {
     @Column(name = "departure_notes", length = 1000, columnDefinition = "nvarchar(1000)")
     private String departureNotes;
 
+    // ── Stage 1 — Déclaration (V57) ──────────────────────────────────────────
+    // Filled after creation: a file started from a profile carries only a departure
+    // type, and stays in the Déclaration stage until these are set.
+
+    /** Resignation letter / termination notice, uploaded through the profile's documents. */
+    @Column(name = "justification_document_url", length = 500, columnDefinition = "nvarchar(500)")
+    private String justificationDocumentUrl;
+
+    @Column(name = "justification_document_name", length = 255, columnDefinition = "nvarchar(255)")
+    private String justificationDocumentName;
+
+    /** "3 mois", "1 mois", "Aucun" — per the pays' convention collective, not arithmetic. */
+    @Column(name = "notice_period_label", length = 50, columnDefinition = "nvarchar(50)")
+    private String noticePeriodLabel;
+
+    @Column(name = "notice_waiver_requested", nullable = false)
+    @Builder.Default
+    private Boolean noticeWaiverRequested = false;
+
+    /** Trigger date + notice per the convention. `lastWorkingDay` is what was agreed. */
+    @Column(name = "theoretical_exit_date")
+    private LocalDate theoreticalExitDate;
+
+    // ── Stage 3 — Passation (V60) ────────────────────────────────────────────
+
+    /** PV de passation — the signed record that the handover happened. */
+    @Column(name = "handover_minutes_url", length = 500, columnDefinition = "nvarchar(500)")
+    private String handoverMinutesUrl;
+
+    @Column(name = "handover_minutes_name", length = 255, columnDefinition = "nvarchar(255)")
+    private String handoverMinutesName;
+
+    // ── Stage 6 — Solde de tout compte (V63) ─────────────────────────────────
+
+    /** When the settlement is actually paid. The amounts live in settlement_lines. */
+    @Column(name = "settlement_execution_date")
+    private LocalDate settlementExecutionDate;
+
+    // ── Stage 4 — Informatique & Matériel (V61) ──────────────────────────────
+
+    /** When the accounts were (or will be) switched off. A moment, not a day. */
+    @Column(name = "account_deactivation_at", columnDefinition = "datetimeoffset(6)")
+    private OffsetDateTime accountDeactivationAt;
+
+    /** Décharge de matériel — what the employee signs to certify the returns. */
+    @Column(name = "discharge_document_url", length = 500, columnDefinition = "nvarchar(500)")
+    private String dischargeDocumentUrl;
+
+    @Column(name = "discharge_document_name", length = 255, columnDefinition = "nvarchar(255)")
+    private String dischargeDocumentName;
+
+    // ── Stage 2 — Validation Manager & RH (V59) ──────────────────────────────
+    // Distinct from validated_by/at below, which is the FILE-level closure (stage 7).
+    // Overloading that one is what made stage 2 turn green when the file was closed.
+
+    @Column(name = "manager_validated_by")
+    private Long managerValidatedBy;
+
+    @Column(name = "manager_validated_at", columnDefinition = "datetimeoffset(6)")
+    private OffsetDateTime managerValidatedAt;
+
+    @Column(name = "manager_comment", length = 1000, columnDefinition = "nvarchar(1000)")
+    private String managerComment;
+
+    @Column(name = "hr_validated_by")
+    private Long hrValidatedBy;
+
+    @Column(name = "hr_validated_at", columnDefinition = "datetimeoffset(6)")
+    private OffsetDateTime hrValidatedAt;
+
+    /** Notice paid but not served — feeds the solde de tout compte. */
+    @Column(name = "notice_paid_not_worked", nullable = false)
+    @Builder.Default
+    private Boolean noticePaidNotWorked = false;
+
     /** PENDING | IN_PROGRESS | BLOCKED | VALIDATED | CANCELLED | ARCHIVED */
     @Column(name = "status", nullable = false, length = 30)
     @Builder.Default

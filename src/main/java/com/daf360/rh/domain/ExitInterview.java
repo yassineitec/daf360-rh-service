@@ -29,11 +29,20 @@ public class ExitInterview {
     private OffboardingWorkflowInstance workflowInstance;
 
     /** Raw FK to Users.id */
-    @Column(name = "conducted_by", nullable = false)
+    /** Nullable since V62: a SCHEDULED interview has no conductor yet. */
+    @Column(name = "conducted_by")
     private Long conductedBy;
 
-    @Column(name = "conducted_date", nullable = false)
+    @Column(name = "conducted_date")
     private LocalDate conductedDate;
+
+    /** PENDING | SCHEDULED | DONE (V62). The design's primary action is *Planifier*. */
+    @Column(name = "status", nullable = false, length = 20)
+    @Builder.Default
+    private String status = "PENDING";
+
+    @Column(name = "scheduled_at", columnDefinition = "datetimeoffset(6)")
+    private OffsetDateTime scheduledAt;
 
     /** JSON array of departure reason codes */
     @Column(name = "departure_reasons", length = 1000, columnDefinition = "nvarchar(1000)")

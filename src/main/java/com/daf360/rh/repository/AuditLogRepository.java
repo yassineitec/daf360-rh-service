@@ -19,4 +19,15 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
 
     /** Date range query using datetimeoffset-compatible OffsetDateTime. */
     Page<AuditLog> findByTimestampBetween(OffsetDateTime from, OffsetDateTime to, Pageable pageable);
+
+    /**
+     * The trail for a set of rows of one type.
+     *
+     * An offboarding file's history is spread across six entity types — the instance, its
+     * tasks, asset returns, checklist items, settlement lines and the exit interview — and
+     * `entityId` is only unique *within* a type (task 5 and asset 5 both exist). So the caller
+     * queries per type and merges, rather than trying to express it as one IN clause.
+     */
+    java.util.List<AuditLog> findByEntityTypeAndEntityIdInOrderByTimestampDesc(
+            String entityType, java.util.Collection<String> entityIds);
 }

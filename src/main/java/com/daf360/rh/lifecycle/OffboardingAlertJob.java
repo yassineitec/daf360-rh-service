@@ -1,5 +1,6 @@
 package com.daf360.rh.lifecycle;
 
+import com.daf360.rh.common.OffboardingStagePermissions;
 import com.daf360.rh.common.PermissionCatalog;
 import com.daf360.rh.domain.ExitInterview;
 import com.daf360.rh.domain.OffboardingTask;
@@ -53,6 +54,7 @@ public class OffboardingAlertJob {
         OffsetDateTime now = OffsetDateTime.now();
 
         markOverdueTasks(today, now);
+        clearResolvedSlaFlags(now);
         sendTomorrowReminders(today);
         escalateStaleBlockedInstances(now);
         anonymiseEligibleInterviews(now);
@@ -81,16 +83,53 @@ public class OffboardingAlertJob {
                     instance.setUpdatedAt(now);
                     instanceRepo.save(instance);
 
-                    // Notify RH
+                    // Notify the department that OWNS the task, not everyone in RH. A
+                    // laptop nobody returned is the IT officer's problem before it is the
+                    // DRH's, and blanket alerts to RH are what made these ignorable.
                     String title = "SLA dépassé — offboarding";
                     String msg   = "Une tâche d'offboarding est en retard (workflow id="
                         + instanceId + ", tâche=" + task.getTaskCode() + ").";
                     notifyByPermission(instance.getPaysId(),
-                        PermissionCatalog.RH_MANAGE_OFFBOARDING, title, msg);
+                        OffboardingStagePermissions.forTaskCode(task.getTaskCode()), title, msg);
                 }
                 log.info("Marked overdue task id={} workflowId={}", task.getId(), instanceId);
             } catch (Exception e) {
                 log.error("Failed to mark overdue task id={}: {}", task.getId(), e.getMessage());
+            }
+        }
+    }
+
+    // ── 1b. Clear the SLA flag once nothing is overdue ────────────────────────
+
+    /**
+     * `sla_breach_flag` was set and never unset, so the red "SLA dépassé" badge stayed on a
+     * file forever — including after every late task had been dealt with. A permanent alarm
+     * is the same as no alarm.
+     *
+     * Also un-blocks the instance: `markOverdueTasks` sets BLOCKED for an SLA breach, and the
+     * only other place that clears it (`completeTask`) tests for outstanding *blocking* tasks,
+     * which is a different question.
+     */
+    private void clearResolvedSlaFlags(OffsetDateTime now) {
+        for (OffboardingWorkflowInstance instance : instanceRepo.findBySlaBreachFlagTrue()) {
+            try {
+                boolean stillLate = taskRepo.findByWorkflowInstanceId(instance.getId()).stream()
+                    .anyMatch(t -> !"DONE".equals(t.getStatus())
+                                && !"SKIPPED".equals(t.getStatus())
+                                && t.getSlaBreachDate() != null);
+                if (stillLate) continue;
+
+                instance.setSlaBreachFlag(false);
+                if ("BLOCKED".equals(instance.getStatus())
+                        && taskRepo.findBlockingIncomplete(instance.getId()).isEmpty()) {
+                    instance.setStatus("IN_PROGRESS");
+                }
+                instance.setUpdatedAt(now);
+                instanceRepo.save(instance);
+                log.info("Cleared SLA breach flag on workflow id={}", instance.getId());
+            } catch (Exception e) {
+                log.error("Failed to clear SLA flag on workflow id={}: {}",
+                    instance.getId(), e.getMessage());
             }
         }
     }
@@ -100,7 +139,7 @@ public class OffboardingAlertJob {
     private void sendTomorrowReminders(LocalDate today) {
         LocalDate tomorrow = today.plusDays(1);
         List<OffboardingTask> dueTomorrow =
-            taskRepo.findByStatusInAndDueDate(List.of("PENDING", "IN_PROGRESS"), tomorrow);
+            taskRepo.findDueOnForActiveInstances(List.of("PENDING", "IN_PROGRESS"), tomorrow);
 
         for (OffboardingTask task : dueTomorrow) {
             try {
@@ -109,8 +148,9 @@ public class OffboardingAlertJob {
                 String title = "Rappel — tâche offboarding échéance demain";
                 String msg   = "La tâche '" + task.getTaskLabel()
                     + "' (workflow id=" + instanceId + ") arrive à échéance demain.";
+                // To the owning department — see markOverdueTasks.
                 notifyByPermission(paysId,
-                    PermissionCatalog.RH_MANAGE_OFFBOARDING, title, msg);
+                    OffboardingStagePermissions.forTaskCode(task.getTaskCode()), title, msg);
             } catch (Exception e) {
                 log.error("Failed to send reminder for task id={}: {}", task.getId(), e.getMessage());
             }

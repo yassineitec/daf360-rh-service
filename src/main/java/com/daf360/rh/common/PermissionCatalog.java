@@ -86,6 +86,14 @@ public final class PermissionCatalog {
     public static final String RH_COMPLETE_OFFBOARDING_TASK    = "RH_COMPLETE_OFFBOARDING_TASK";
     public static final String RH_CONDUCT_EXIT_INTERVIEW       = "RH_CONDUCT_EXIT_INTERVIEW";
     public static final String RH_SUSPEND_PROFILE              = "RH_SUSPEND_PROFILE";
+    /**
+     * Per-stage rights on the offboarding wizard (V58). Stages 1, 2, 5 and 7 are RH
+     * and reuse the four codes above; these three let the departments that OWN stages
+     * 3, 4 and 6 act on them without handing out RH_MANAGE_OFFBOARDING.
+     */
+    public static final String RH_OFFBOARDING_STAGE_HANDOVER   = "RH_OFFBOARDING_STAGE_HANDOVER";
+    public static final String RH_OFFBOARDING_STAGE_IT         = "RH_OFFBOARDING_STAGE_IT";
+    public static final String RH_OFFBOARDING_STAGE_PAYROLL    = "RH_OFFBOARDING_STAGE_PAYROLL";
 
     // ── Temps de travail (régimes & pauses) ───────────────────────────────────
     public static final String ADMIN_REGIMES           = "ADMIN_REGIMES";
@@ -132,7 +140,7 @@ public final class PermissionCatalog {
         new PermGroup("Catégories",          List.of(GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY)),
         new PermGroup("Timesheets",          List.of(GET_TSR, CREATE_TSR, RESPOND_TSR, GET_GLOBAL_TSR)),
         new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND, RH_HIRE_CANDIDATE, APPROVE_HIRING_COST)),
-        new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS, RH_MANAGE_OFFBOARDING, RH_VALIDATE_OFFBOARDING, RH_COMPLETE_OFFBOARDING_TASK, RH_CONDUCT_EXIT_INTERVIEW, RH_SUSPEND_PROFILE)),
+        new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS, RH_MANAGE_OFFBOARDING, RH_VALIDATE_OFFBOARDING, RH_COMPLETE_OFFBOARDING_TASK, RH_CONDUCT_EXIT_INTERVIEW, RH_OFFBOARDING_STAGE_HANDOVER, RH_OFFBOARDING_STAGE_IT, RH_OFFBOARDING_STAGE_PAYROLL, RH_SUSPEND_PROFILE)),
         new PermGroup("Entretiens",          List.of(RH_ADMIN_INTERVIEW_TYPES, RH_MANAGE_INTERVIEWS)),
         new PermGroup("Temps de travail",    List.of(ADMIN_REGIMES, ADMIN_BREAKS)),
         new PermGroup("Module IT",           List.of(IT_PROVISIONING)),

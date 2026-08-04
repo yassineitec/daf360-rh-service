@@ -15,6 +15,9 @@ public class OffboardingAssetReturnDto {
     private Long taskId;
     private String assetDescription;
     private String assetType;
+    /** V61 — its own field; the design shows description and serial as two lines. */
+    private String serialNumber;
+    private Boolean isUrgent;
     private LocalDate expectedReturnDate;
     private LocalDate actualReturnDate;
     private String conditionOnReturn;

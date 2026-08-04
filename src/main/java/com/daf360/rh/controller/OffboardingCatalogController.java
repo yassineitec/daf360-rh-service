@@ -6,6 +6,7 @@ import com.daf360.rh.service.OffboardingCatalogService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -13,6 +14,13 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/hr/admin/offboarding-catalog")
 @RequiredArgsConstructor
+/*
+ * This class carried NO authorization at all, and SecurityConfig ends in
+ * `.anyRequest().authenticated()` — so any signed-in user of any role could rewrite the
+ * offboarding task catalog for every pays, including which tasks are blocking. The admin
+ * UI hid the tab behind RH_MANAGE_OFFBOARDING; the API did not.
+ */
+@PreAuthorize("hasPermission(null, 'RH_MANAGE_OFFBOARDING')")
 public class OffboardingCatalogController {
 
     private final OffboardingCatalogService catalogService;

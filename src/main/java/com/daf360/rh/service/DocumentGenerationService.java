@@ -89,6 +89,56 @@ public class DocumentGenerationService {
         return toDto(saved);
     }
 
+    /**
+     * Generates a document that belongs to no employee request.
+     *
+     * `generate` above is bound to the request workflow three ways — it reads the template
+     * off a `RequestTypeCatalog`, files the PDF under the request id, and stamps
+     * `employeeRequestId` on the record. Offboarding has none of those: the décharge and the
+     * Kit RH documents hang off a workflow instance. (`employee_request_id` has been
+     * nullable since V18, so the record itself was always expressible.)
+     *
+     * The caller supplies the body because the shared `defaultTemplate` is a work-certificate
+     * ("occupe le poste de…"), which is wrong for a décharge de matériel — and because each
+     * offboarding document has genuinely different prose. `extraVars` merges over the
+     * standard placeholders, so a caller can add its own ({{assets}}, {{lastWorkingDay}}…).
+     *
+     * @param folderKey sub-folder under documents/ — prefixed by the caller so an offboarding
+     *                  instance id cannot collide with a request id of the same number.
+     */
+    public GeneratedDocumentResponseDto generateStandalone(
+            String folderKey,
+            String documentType,
+            String rawTemplate,
+            EmployeeProfile profile,
+            Map<String, String> extraVars,
+            Long actorUserId) {
+
+        Map<String, String> vars = new java.util.HashMap<>(buildVariables(profile));
+        if (extraVars != null) vars.putAll(extraVars);
+
+        String content = rawTemplate;
+        for (Map.Entry<String, String> e : vars.entrySet()) {
+            content = content.replace(e.getKey(), e.getValue() == null ? "" : e.getValue());
+        }
+
+        String fileUrl = writePdf(folderKey, content);
+        String verificationCode = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+
+        GeneratedDocument saved = docRepo.save(GeneratedDocument.builder()
+                .employeeRequestId(null)
+                .documentType(documentType)
+                .fileUrl(fileUrl)
+                .verificationCode(verificationCode)
+                .generatedAt(OffsetDateTime.now(PARIS))
+                .generatedBy(actorUserId)
+                .build());
+
+        log.info("Generated standalone document id={} type={} folder={} file={}",
+                saved.getId(), documentType, folderKey, fileUrl);
+        return toDto(saved);
+    }
+
     @Transactional(readOnly = true)
     public List<GeneratedDocumentResponseDto> listForRequest(Long requestId) {
         return docRepo.findByEmployeeRequestIdOrderByGeneratedAtDesc(requestId)
@@ -168,8 +218,13 @@ public class DocumentGenerationService {
 
     /** Writes the text content to a PDF using PDFBox 3.x and returns the stored path. */
     private String writePdf(Long requestId, String content) {
+        return writePdf(String.valueOf(requestId), content);
+    }
+
+    /** `folderKey` rather than an id, so callers outside the request workflow can namespace. */
+    private String writePdf(String folderKey, String content) {
         try {
-            Path dir = Paths.get(props.getStoragePath(), "documents", String.valueOf(requestId));
+            Path dir = Paths.get(props.getStoragePath(), "documents", folderKey);
             Files.createDirectories(dir);
             String filename = UUID.randomUUID() + ".pdf";
             Path dest = dir.resolve(filename);
@@ -208,7 +263,6 @@ public class DocumentGenerationService {
             }
             return dest.toString();
         } catch (IOException ex) {
-            log.error("PDF generation failed for requestId={}: {}", requestId, ex.getMessage());
             throw new AppException(ErrorCode.DOCUMENT_GENERATION_FAILED,
                     "Échec génération PDF: " + ex.getMessage());
         }
