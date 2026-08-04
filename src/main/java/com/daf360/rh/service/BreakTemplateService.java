@@ -60,6 +60,7 @@ public class BreakTemplateService {
                 .minWorkHoursTrigger(req.getMinWorkHoursTrigger())
                 .breakTimeStart(req.getBreakTimeStart())
                 .breakTimeEnd(req.getBreakTimeEnd())
+                .statusCode(trimToNull(req.getStatusCode()))
                 .sortOrder(req.getSortOrder() != null ? req.getSortOrder() : 0)
                 .build();
         return toTemplateDto(templateRepo.save(template));
@@ -105,6 +106,12 @@ public class BreakTemplateService {
 
     // ── Mappers ───────────────────────────────────────────────────────────────
 
+    private static String trimToNull(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        return t.isEmpty() ? null : t;
+    }
+
     private BreakTemplateDto toTemplateDto(BreakTemplate t) {
         return BreakTemplateDto.builder()
                 .id(t.getId()).paysId(t.getPaysId()).regimeId(t.getRegimeId())
@@ -114,6 +121,7 @@ public class BreakTemplateService {
                 .minWorkHoursTrigger(t.getMinWorkHoursTrigger())
                 .breakTimeStart(t.getBreakTimeStart())
                 .breakTimeEnd(t.getBreakTimeEnd())
+                .statusCode(t.getStatusCode())
                 .sortOrder(t.getSortOrder()).isActive(t.getIsActive()).build();
     }
 

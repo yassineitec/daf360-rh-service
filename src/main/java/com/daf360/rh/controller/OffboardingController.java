@@ -5,6 +5,7 @@ import com.daf360.rh.service.OffboardingWorkflowService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -98,9 +99,18 @@ public class OffboardingController {
         return offboardingService.saveExitInterview(instanceId, request, actorId(auth));
     }
 
+    /**
+     * 204 when no exit interview has been recorded yet.
+     *
+     * Not having one is the NORMAL state for most of a workflow's life — the case page
+     * loads this on every open, so a 404 logged a console error for every file that had
+     * simply not reached the Kit RH stage. 404 means "this URL is wrong"; an absent
+     * optional sub-resource is 204.
+     */
     @GetMapping("/api/hr/offboarding/{instanceId}/exit-interview")
-    public ExitInterviewDto getExitInterview(@PathVariable Long instanceId) {
-        return offboardingService.getExitInterview(instanceId);
+    public ResponseEntity<ExitInterviewDto> getExitInterview(@PathVariable Long instanceId) {
+        ExitInterviewDto dto = offboardingService.findExitInterview(instanceId);
+        return dto != null ? ResponseEntity.ok(dto) : ResponseEntity.noContent().build();
     }
 
     // ── Asset returns ─────────────────────────────────────────────────────────

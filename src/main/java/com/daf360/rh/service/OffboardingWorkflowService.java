@@ -46,10 +46,47 @@ public class OffboardingWorkflowService {
     private static final String CONTRACT_TYPE_SQL =
         "SELECT contract_type_code FROM [dbo].[employee_contracts] WHERE id = ?";
 
+    /**
+     * Same LEFT JOIN reasoning as EMPLOYEE_IDENTITY_SQL below: an inner join through
+     * candidates returned NULL for every profile whose candidate_id is NULL, so the
+     * handover manager's name was blank for anyone not hired via recruitment.
+     */
     private static final String EMPLOYEE_NAME_SQL =
-        "SELECT CONCAT(c.first_name, ' ', c.last_name) " +
-        "FROM [dbo].[candidates] c " +
-        "JOIN [dbo].[employee_profiles] ep ON ep.candidate_id = c.id " +
+        "SELECT COALESCE(" +
+        "         NULLIF(LTRIM(RTRIM(CONCAT(c.first_name, ' ', c.last_name))), ''), " +
+        "         NULLIF(LTRIM(RTRIM(u.fullName)), '')" +
+        "       ) " +
+        "FROM [dbo].[employee_profiles] ep " +
+        "LEFT JOIN [dbo].[candidates] c ON c.id = ep.candidate_id " +
+        "LEFT JOIN [dbo].[Users] u      ON u.id = ep.user_id " +
+        "WHERE ep.id = ?";
+
+    /**
+     * Name + avatar inputs in one round-trip. Gender and photo_url come from the profile so
+     * the offboarding board and the case page can show the same avatar as every other
+     * employee view instead of falling back to initials for everyone.
+     */
+    /**
+     * Name + avatar inputs in one round-trip.
+     *
+     * Driven FROM employee_profiles with LEFT JOINs, not through an inner join on
+     * candidates: `employee_profiles.candidate_id` is NULL for anyone who was not hired
+     * through the recruitment pipeline, and the inner join then matched no row at all —
+     * discarding the `gender` and `photo_url` that sit on the profile itself and are
+     * perfectly populated. That is exactly why every offboarding card fell back to
+     * initials and showed no name.
+     *
+     * Name comes from the candidate when there is one, else from the portal user.
+     */
+    private static final String EMPLOYEE_IDENTITY_SQL =
+        "SELECT COALESCE(" +
+        "         NULLIF(LTRIM(RTRIM(CONCAT(c.first_name, ' ', c.last_name))), ''), " +
+        "         NULLIF(LTRIM(RTRIM(u.fullName)), '')" +
+        "       ) AS full_name, " +
+        "       ep.gender, ep.photo_url " +
+        "FROM [dbo].[employee_profiles] ep " +
+        "LEFT JOIN [dbo].[candidates] c ON c.id = ep.candidate_id " +
+        "LEFT JOIN [dbo].[Users] u      ON u.id = ep.user_id " +
         "WHERE ep.id = ?";
 
     private static final List<String> ACTIVE_STATUSES =
@@ -477,6 +514,14 @@ public class OffboardingWorkflowService {
                 "Entretien de sortie introuvable pour le workflow id=" + instanceId));
     }
 
+    /** Null when none has been recorded — an absent optional sub-resource, not an error. */
+    @Transactional(readOnly = true)
+    public ExitInterviewDto findExitInterview(Long instanceId) {
+        return interviewRepo.findByWorkflowInstanceId(instanceId)
+            .map(this::toInterviewDto)
+            .orElse(null);
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private OffboardingWorkflowInstance findInstanceOrThrow(Long instanceId) {
@@ -501,6 +546,22 @@ public class OffboardingWorkflowService {
         } catch (Exception ex) {
             log.debug("Could not resolve name for profileId={}: {}", profileId, ex.getMessage());
             return null;
+        }
+    }
+
+    /** Name, gender and photo flag for the avatar. Never throws — degrades to nulls. */
+    private record EmployeeIdentity(String fullName, String gender, String photoUrl) {}
+
+    private EmployeeIdentity resolveEmployeeIdentity(Long profileId) {
+        if (profileId == null) return new EmployeeIdentity(null, null, null);
+        try {
+            return jdbc.queryForObject(EMPLOYEE_IDENTITY_SQL,
+                (rs, rowNum) -> new EmployeeIdentity(
+                    rs.getString("full_name"), rs.getString("gender"), rs.getString("photo_url")),
+                profileId);
+        } catch (Exception ex) {
+            log.debug("Could not resolve identity for profileId={}: {}", profileId, ex.getMessage());
+            return new EmployeeIdentity(null, null, null);
         }
     }
 
@@ -667,7 +728,7 @@ public class OffboardingWorkflowService {
             : taskRepo.findByWorkflowInstanceId(w.getId()).stream()
                 .map(this::toTaskDto).collect(Collectors.toList());
 
-        String employeeFullName = resolveEmployeeName(w.getEmployeeProfileId());
+        EmployeeIdentity identity = resolveEmployeeIdentity(w.getEmployeeProfileId());
         String handoverManagerName = (w.getHandoverManagerProfileId() != null)
             ? resolveEmployeeName(w.getHandoverManagerProfileId())
             : null;
@@ -676,7 +737,9 @@ public class OffboardingWorkflowService {
             .id(w.getId())
             .paysId(w.getPaysId())
             .employeeProfileId(w.getEmployeeProfileId())
-            .employeeFullName(employeeFullName)
+            .employeeFullName(identity.fullName())
+            .employeeGender(identity.gender())
+            .employeePhotoUrl(identity.photoUrl())
             .contractId(w.getContractId())
             .triggerDate(w.getTriggerDate())
             .lastWorkingDay(w.getLastWorkingDay())

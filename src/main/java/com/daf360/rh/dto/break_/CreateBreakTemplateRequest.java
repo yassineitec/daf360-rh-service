@@ -16,5 +16,7 @@ public class CreateBreakTemplateRequest {
     private BigDecimal minWorkHoursTrigger;
     private java.time.LocalTime breakTimeStart;  // optional — null means use min_work_hours_trigger
     private java.time.LocalTime breakTimeEnd;
+    /** Optional pointage status to switch into during this break (e.g. LUNCH_BREAK, ON_BREAK). */
+    private String statusCode;
     private Integer sortOrder = 0;
 }

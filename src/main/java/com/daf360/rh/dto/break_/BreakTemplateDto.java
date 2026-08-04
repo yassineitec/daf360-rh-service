@@ -19,6 +19,8 @@ public class BreakTemplateDto {
     private BigDecimal minWorkHoursTrigger;
     private java.time.LocalTime breakTimeStart;
     private java.time.LocalTime breakTimeEnd;
+    /** Pointage status this break switches into (status_definitions.status in DAF360_LOG). */
+    private String statusCode;
     private Integer sortOrder;
     private Boolean isActive;
 }

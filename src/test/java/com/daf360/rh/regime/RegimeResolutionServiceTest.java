@@ -5,9 +5,11 @@ import com.daf360.rh.domain.RegimeRoleAssignment;
 import com.daf360.rh.domain.WorkingTimeRegime;
 import com.daf360.rh.dto.regime.ResolvedRegimeDto;
 import com.daf360.rh.exception.AppException;
+import com.daf360.rh.repository.BreakTemplateRepository;
 import com.daf360.rh.repository.EmployeeProfileRepository;
 import com.daf360.rh.repository.RegimeRoleAssignmentRepository;
 import com.daf360.rh.repository.WorkingTimeRegimeRepository;
+import com.daf360.rh.service.PaysWeekendService;
 import com.daf360.rh.service.RegimeResolutionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +21,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,6 +39,8 @@ class RegimeResolutionServiceTest {
     @Mock EmployeeProfileRepository profileRepo;
     @Mock RegimeRoleAssignmentRepository roleAssignRepo;
     @Mock WorkingTimeRegimeRepository regimeRepo;
+    @Mock BreakTemplateRepository breakTemplateRepo;
+    @Mock PaysWeekendService weekendService;
     @Mock JdbcTemplate jdbc;
 
     @InjectMocks RegimeResolutionService service;
@@ -81,7 +86,7 @@ class RegimeResolutionServiceTest {
         assertThat(result).isNotNull();
         assertThat(result.getAssignmentLevel()).isEqualTo("EMPLOYEE_OVERRIDE");
         assertThat(result.getRegimeId()).isEqualTo(REGIME_A);
-        verify(roleAssignRepo, never()).findActiveForRoleAndPays(any(), any(), any());
+        verify(roleAssignRepo, never()).findAllActiveForRoleAndPays(any(), any(), any());
     }
 
     @Test
@@ -91,8 +96,8 @@ class RegimeResolutionServiceTest {
         RegimeRoleAssignment assignment = RegimeRoleAssignment.builder()
                 .id(1L).regime(regimeA).paysId(PAYS_ID)
                 .effectiveFrom(LocalDate.of(2024, 1, 1)).isActive(true).build();
-        when(roleAssignRepo.findActiveForRoleAndPays(eq(ROLE_ID), eq(PAYS_ID), any()))
-                .thenReturn(Optional.of(assignment));
+        when(roleAssignRepo.findAllActiveForRoleAndPays(eq(ROLE_ID), eq(PAYS_ID), any()))
+                .thenReturn(List.of(assignment));
 
         ResolvedRegimeDto result = service.resolveForEmployee(PROFILE_ID);
 
@@ -105,7 +110,7 @@ class RegimeResolutionServiceTest {
     void resolveForEmployee_withDefaultOnly_returnsDefaultLevel() {
         when(profileRepo.findById(PROFILE_ID)).thenReturn(Optional.of(baseProfile));
         when(jdbc.queryForObject(anyString(), eq(Long.class), eq(USER_ID))).thenReturn(ROLE_ID);
-        when(roleAssignRepo.findActiveForRoleAndPays(any(), any(), any())).thenReturn(Optional.empty());
+        when(roleAssignRepo.findAllActiveForRoleAndPays(any(), any(), any())).thenReturn(List.of());
         when(regimeRepo.findFirstByPaysIdAndIsDefaultTrueAndIsActiveTrue(PAYS_ID))
                 .thenReturn(Optional.of(regimeB));
 
@@ -139,8 +144,8 @@ class RegimeResolutionServiceTest {
         RegimeRoleAssignment assignment = RegimeRoleAssignment.builder()
                 .id(2L).regime(regimeB).paysId(PAYS_ID)
                 .effectiveFrom(LocalDate.of(2024, 1, 1)).isActive(true).build();
-        when(roleAssignRepo.findActiveForRoleAndPays(eq(ROLE_ID), eq(PAYS_ID), any()))
-                .thenReturn(Optional.of(assignment));
+        when(roleAssignRepo.findAllActiveForRoleAndPays(eq(ROLE_ID), eq(PAYS_ID), any()))
+                .thenReturn(List.of(assignment));
 
         ResolvedRegimeDto result = service.resolveForEmployee(PROFILE_ID);
 
@@ -173,5 +178,125 @@ class RegimeResolutionServiceTest {
         assertThat(result).isNotNull();
         assertThat(result.getAssignmentLevel()).isEqualTo("DEFAULT");
         assertThat(result.getRegimeId()).isEqualTo(REGIME_B);
+    }
+
+    // ── Seasonal (temporary) regime — priority 1 ──────────────────────────────
+
+    @Test
+    void resolveForEmployee_activeSeasonal_beatsPersonalOverride() {
+        // A summer "séance unique" window must win even over a personal override,
+        // per the HR rule "the temporary regime is checked first".
+        regimeB.setSeasonalFrom(LocalDate.now().minusDays(3));
+        regimeB.setSeasonalTo(LocalDate.now().plusDays(11));
+        baseProfile.setRegimeTemplateId(REGIME_A);
+        when(profileRepo.findById(PROFILE_ID)).thenReturn(Optional.of(baseProfile));
+        when(regimeRepo.findActiveSeasonalForPays(eq(PAYS_ID), any())).thenReturn(List.of(regimeB));
+
+        ResolvedRegimeDto result = service.resolveForEmployee(PROFILE_ID);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getAssignmentLevel()).isEqualTo("SEASONAL");
+        assertThat(result.getIsSeasonal()).isTrue();
+        assertThat(result.getRegimeId()).isEqualTo(REGIME_B);
+        // The override must not even be looked up.
+        verify(regimeRepo, never()).findById(any());
+    }
+
+    @Test
+    void resolveForEmployee_noActiveSeasonal_fallsThroughToOverride() {
+        baseProfile.setRegimeTemplateId(REGIME_A);
+        when(profileRepo.findById(PROFILE_ID)).thenReturn(Optional.of(baseProfile));
+        when(regimeRepo.findActiveSeasonalForPays(eq(PAYS_ID), any())).thenReturn(List.of());
+        when(regimeRepo.findById(REGIME_A)).thenReturn(Optional.of(regimeA));
+
+        ResolvedRegimeDto result = service.resolveForEmployee(PROFILE_ID);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getAssignmentLevel()).isEqualTo("EMPLOYEE_OVERRIDE");
+        assertThat(result.getIsSeasonal()).isFalse();
+    }
+
+    // ── Personal override window enforcement ─────────────────────────────────
+
+    @Test
+    void resolveForEmployee_expiredPersonalOverride_fallsThroughToDefault() {
+        // regime_start_date/regime_end_date existed but were never checked, so an
+        // expired personal override used to apply forever.
+        baseProfile.setRegimeTemplateId(REGIME_A);
+        baseProfile.setRegimeStartDate(LocalDate.now().minusMonths(6));
+        baseProfile.setRegimeEndDate(LocalDate.now().minusDays(1));
+        when(profileRepo.findById(PROFILE_ID)).thenReturn(Optional.of(baseProfile));
+        when(regimeRepo.findById(REGIME_A)).thenReturn(Optional.of(regimeA));
+        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(USER_ID))).thenReturn(null);
+        when(regimeRepo.findFirstByPaysIdAndIsDefaultTrueAndIsActiveTrue(PAYS_ID))
+                .thenReturn(Optional.of(regimeB));
+
+        ResolvedRegimeDto result = service.resolveForEmployee(PROFILE_ID);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getAssignmentLevel()).isEqualTo("DEFAULT");
+        assertThat(result.getRegimeId()).isEqualTo(REGIME_B);
+    }
+
+    @Test
+    void resolveForEmployee_futurePersonalOverride_fallsThroughToDefault() {
+        baseProfile.setRegimeTemplateId(REGIME_A);
+        baseProfile.setRegimeStartDate(LocalDate.now().plusDays(7));
+        when(profileRepo.findById(PROFILE_ID)).thenReturn(Optional.of(baseProfile));
+        when(regimeRepo.findById(REGIME_A)).thenReturn(Optional.of(regimeA));
+        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(USER_ID))).thenReturn(null);
+        when(regimeRepo.findFirstByPaysIdAndIsDefaultTrueAndIsActiveTrue(PAYS_ID))
+                .thenReturn(Optional.of(regimeB));
+
+        ResolvedRegimeDto result = service.resolveForEmployee(PROFILE_ID);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getAssignmentLevel()).isEqualTo("DEFAULT");
+    }
+
+    // ── No fabricated hours ──────────────────────────────────────────────────
+
+    @Test
+    void resolveForEmployee_regimeWithoutTimes_returnsNullAliasesNotDefaults() {
+        // The old mapping substituted 08:00/17:00 and 8h/day, so an unconfigured
+        // regime was indistinguishable from a configured one.
+        baseProfile.setRegimeTemplateId(REGIME_A);
+        regimeA.setStartTime(null);
+        regimeA.setEndTime(null);
+        regimeA.setHoursPerWeek(null);
+        when(profileRepo.findById(PROFILE_ID)).thenReturn(Optional.of(baseProfile));
+        when(regimeRepo.findById(REGIME_A)).thenReturn(Optional.of(regimeA));
+
+        ResolvedRegimeDto result = service.resolveForEmployee(PROFILE_ID);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getHeureDebut()).isNull();
+        assertThat(result.getHeureFin()).isNull();
+        assertThat(result.getHeuresJour()).isNull();
+    }
+
+    // ── By-user resolution (the pointage entry point) ─────────────────────────
+
+    @Test
+    void resolveForUser_looksUpProfileByUserId() {
+        // employee_profiles.id (1) and Users.id (10) are different sequences; passing a
+        // userId to resolveForEmployee silently resolved a different employee.
+        when(profileRepo.findByUserId(USER_ID)).thenReturn(Optional.of(baseProfile));
+        when(regimeRepo.findFirstByPaysIdAndIsDefaultTrueAndIsActiveTrue(PAYS_ID))
+                .thenReturn(Optional.of(regimeB));
+        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(USER_ID))).thenReturn(null);
+
+        ResolvedRegimeDto result = service.resolveForUser(USER_ID);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getRegimeId()).isEqualTo(REGIME_B);
+        verify(profileRepo, never()).findById(any());
+    }
+
+    @Test
+    void resolveForUser_noProfile_throwsException() {
+        when(profileRepo.findByUserId(USER_ID)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.resolveForUser(USER_ID))
+                .isInstanceOf(AppException.class);
     }
 }

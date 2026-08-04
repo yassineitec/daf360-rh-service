@@ -252,7 +252,15 @@ public class EmployeeProfileController {
     public ResponseEntity<byte[]> servePhoto(@PathVariable Long id) {
         byte[] bytes = profileService.servePhoto(id);
         if (bytes == null || bytes.length == 0) {
-            return ResponseEntity.notFound().build();
+            // `photo_url` is set on plenty of profiles whose file is missing from storage,
+            // so this 404 is hit constantly — once per avatar, per render. An uncached 404
+            // is re-requested every single time, which is why the console fills with them.
+            // Caching the negative answer costs nothing and stops the hammering; a real
+            // upload rewrites photo_url, so the URL changes and the cache is bypassed.
+            return ResponseEntity.notFound()
+                    .cacheControl(org.springframework.http.CacheControl
+                            .maxAge(1, java.util.concurrent.TimeUnit.HOURS))
+                    .build();
         }
         // Detect content type from first bytes (magic numbers)
         MediaType mediaType = MediaType.IMAGE_JPEG;

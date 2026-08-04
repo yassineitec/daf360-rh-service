@@ -414,6 +414,7 @@ public class OnboardingService {
                 .itProvisioningStatus(prov != null ? prov.getStatus() : null)
                 .ms365EmailCreatedAt(prov != null ? prov.getMs365EmailCreatedAt() : null)
                 .itProvisioningId(prov != null ? prov.getId() : null)
+                .gender(c.getGender())
                 .build();
     }
 

@@ -23,6 +23,20 @@ public interface RegimeRoleAssignmentRepository extends JpaRepository<RegimeRole
             @Param("paysId") Long paysId,
             @Param("today") LocalDate today);
 
+    /**
+     * Same predicate as {@link #findActiveForRoleAndPays} but ordered and returning every
+     * match, so resolution is deterministic when a role has overlapping assignments
+     * (the Optional variant lets the database pick arbitrarily).
+     */
+    @Query("SELECT r FROM RegimeRoleAssignment r WHERE r.role.id = :roleId AND r.paysId = :paysId " +
+           "AND r.isActive = true AND r.effectiveFrom <= :today " +
+           "AND (r.effectiveTo IS NULL OR r.effectiveTo >= :today) " +
+           "ORDER BY r.effectiveFrom DESC, r.id DESC")
+    List<RegimeRoleAssignment> findAllActiveForRoleAndPays(
+            @Param("roleId") Long roleId,
+            @Param("paysId") Long paysId,
+            @Param("today") LocalDate today);
+
     @Query("SELECT r FROM RegimeRoleAssignment r WHERE r.paysId = :paysId AND r.isActive = true " +
            "ORDER BY r.role.frenchName ASC")
     List<RegimeRoleAssignment> findAllActiveForPays(@Param("paysId") Long paysId);

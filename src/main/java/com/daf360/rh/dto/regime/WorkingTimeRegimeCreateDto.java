@@ -32,4 +32,15 @@ public class WorkingTimeRegimeCreateDto {
 
     private Boolean isFlexible;
     private Boolean isDefault;
+
+    /**
+     * Seasonal (temporary) window. While it covers today, this regime is THE regime for
+     * its entity and outranks role assignments and personal overrides.
+     *
+     * On update these are applied even when null, so clearing the dates in the UI really
+     * removes the window — unlike the mapper's other fields, which ignore nulls. Callers
+     * doing a partial update must therefore send the current values to preserve them.
+     */
+    private java.time.LocalDate seasonalFrom;
+    private java.time.LocalDate seasonalTo;
 }

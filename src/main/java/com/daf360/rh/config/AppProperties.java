@@ -22,6 +22,13 @@ public class AppProperties {
     private String portalUrl       = "http://localhost:8080";
     private String mailFrom        = "noreply@daf360.com";
     private String pdfServiceUrl   = "http://localhost:3000";
+    /**
+     * Shared secret for service-to-service reads under /api/hr/internal/**. Background
+     * jobs in other modules (log-service's presence scheduler) have no user token, so
+     * they authenticate with this key via the X-Internal-Key header. Blank disables
+     * those endpoints entirely.
+     */
+    private String internalApiKey  = "";
 
     public String getPdfServiceUrl() { return pdfServiceUrl; }
 }

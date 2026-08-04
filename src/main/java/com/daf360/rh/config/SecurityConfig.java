@@ -51,6 +51,10 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/hr/profiles/*/photo").permitAll()
                 // Internal service-to-service sync endpoint (facturation-service reads every 15 min)
                 .requestMatchers(HttpMethod.GET, "/api/hr/users-for-sync").permitAll()
+                // Service-to-service reads for background jobs with no user token
+                // (log-service presence scheduler). Authenticated by the X-Internal-Key
+                // shared secret inside InternalRegimeController — fails closed when unset.
+                .requestMatchers(HttpMethod.GET, "/api/hr/internal/**").permitAll()
                 // Baseline: every other endpoint requires a valid session. Privileged
                 // actions add a specific @PreAuthorize on top; the rest are simply
                 // authenticated-only (any logged-in user).

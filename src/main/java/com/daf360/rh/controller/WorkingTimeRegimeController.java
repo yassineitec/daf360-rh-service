@@ -22,12 +22,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.time.temporal.TemporalAdjusters;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
 @RestController
 @RequiredArgsConstructor
@@ -179,54 +175,39 @@ public class WorkingTimeRegimeController {
     /**
      * GET /api/hr/profiles/{id}/regime/weekly-schedule
      * Current week's expected schedule per day based on the resolved regime.
+     *
+     * 204 when no regime is configured — callers must show "not configured" rather than
+     * a fabricated 5×8h week (the old stub made unconfigured entities look configured).
      */
     @GetMapping("/api/hr/profiles/{id}/regime/weekly-schedule")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<WeeklyScheduleDto> getWeeklySchedule(@PathVariable Long id) {
         ResolvedRegimeDto regime = resolutionService.resolveForEmployee(id);
-        if (regime == null) {
-            // Return stub with standard 5×8h week
-            regime = buildDefaultRegime();
-        }
-        return ResponseEntity.ok(buildWeeklySchedule(regime));
+        if (regime == null) return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(resolutionService.buildWeeklySchedule(regime, LocalDate.now()));
     }
 
-    private WeeklyScheduleDto buildWeeklySchedule(ResolvedRegimeDto regime) {
-        LocalDate today     = LocalDate.now();
-        LocalDate weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
-        LocalDate weekEnd   = weekStart.plusDays(6);
+    // ── By portal USER id ─────────────────────────────────────────────────────
+    // employee_profiles.id and Users.id are different sequences. Every caller that
+    // holds a userId (the whole pointage module: JWT subject, users-for-sync) must use
+    // these, not the /profiles/{id}/ routes above — those resolve a DIFFERENT employee.
 
-        Set<String> workDays = regime.getJoursOuvrables() != null
-                ? Set.copyOf(regime.getJoursOuvrables())
-                : Set.of("LUNDI","MARDI","MERCREDI","JEUDI","VENDREDI");
-
-        double hoursPerDay = regime.getHeuresJour() != null ? regime.getHeuresJour() : 8.0;
-
-        String[] frenchDayNames = {"LUNDI","MARDI","MERCREDI","JEUDI","VENDREDI","SAMEDI","DIMANCHE"};
-        List<WeeklyScheduleDto.DaySchedule> days = new ArrayList<>();
-        double totalHours = 0.0;
-
-        for (int i = 0; i < 7; i++) {
-            LocalDate date   = weekStart.plusDays(i);
-            String dayName   = frenchDayNames[i];
-            boolean isWork   = workDays.contains(dayName);
-            double expected  = isWork ? hoursPerDay : 0.0;
-            totalHours      += expected;
-            days.add(new WeeklyScheduleDto.DaySchedule(date, dayName, isWork, expected));
-        }
-
-        return new WeeklyScheduleDto(weekStart, weekEnd, totalHours, days);
+    /** GET /api/hr/users/{userId}/regime — resolved regime for a portal user. */
+    @GetMapping("/api/hr/users/{userId}/regime")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<ResolvedRegimeDto> getResolvedRegimeForUser(@PathVariable Long userId) {
+        ResolvedRegimeDto resolved = resolutionService.resolveForUser(userId);
+        if (resolved == null) return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(resolved);
     }
 
-    private ResolvedRegimeDto buildDefaultRegime() {
-        ResolvedRegimeDto r = new ResolvedRegimeDto();
-        r.setRegimeName("Standard");
-        r.setHeuresJour(8.0);
-        r.setHeureDebut("08:00");
-        r.setHeureFin("17:00");
-        r.setPauseDejeuner(60);
-        r.setJoursOuvrables(List.of("LUNDI","MARDI","MERCREDI","JEUDI","VENDREDI"));
-        return r;
+    /** GET /api/hr/users/{userId}/regime/weekly-schedule — current week for a portal user. */
+    @GetMapping("/api/hr/users/{userId}/regime/weekly-schedule")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<WeeklyScheduleDto> getWeeklyScheduleForUser(@PathVariable Long userId) {
+        ResolvedRegimeDto regime = resolutionService.resolveForUser(userId);
+        if (regime == null) return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(resolutionService.buildWeeklySchedule(regime, LocalDate.now()));
     }
 
     /**

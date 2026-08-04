@@ -33,6 +33,10 @@ public class OffboardingWorkflowInstanceDto {
     private List<OffboardingTaskDto> tasks;
 
     private String employeeFullName;
+    /** Canonical GENDER value_code — picks the male/female avatar. Nullable. */
+    private String employeeGender;
+    /** employee_profiles.photo_url when a photo is on file; null otherwise. */
+    private String employeePhotoUrl;
     private Long   handoverManagerProfileId;
     private String handoverManagerName;
 }

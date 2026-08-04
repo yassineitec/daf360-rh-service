@@ -60,6 +60,17 @@ public class WorkingTimeRegime {
     @Builder.Default
     private Boolean isActive = true;
 
+    /**
+     * Seasonal (temporary) window. When both are set, this regime is THE regime for its
+     * pays between these dates and outranks role assignments and personal overrides —
+     * e.g. a summer "séance unique" schedule. NULL = a normal year-round regime.
+     */
+    @Column(name = "seasonal_from")
+    private java.time.LocalDate seasonalFrom;
+
+    @Column(name = "seasonal_to")
+    private java.time.LocalDate seasonalTo;
+
     @Column(name = "created_at", nullable = false, columnDefinition = "datetime2")
     private LocalDateTime createdAt;
 

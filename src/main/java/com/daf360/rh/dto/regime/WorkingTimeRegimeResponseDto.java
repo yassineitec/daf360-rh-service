@@ -19,4 +19,7 @@ public class WorkingTimeRegimeResponseDto {
     private Boolean   isFlexible;
     private Boolean   isDefault;
     private Boolean   isActive;
+    /** Seasonal window; non-null means this regime can override the entity's others. */
+    private java.time.LocalDate seasonalFrom;
+    private java.time.LocalDate seasonalTo;
 }

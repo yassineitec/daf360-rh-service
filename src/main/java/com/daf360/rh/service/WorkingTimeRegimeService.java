@@ -78,6 +78,11 @@ public class WorkingTimeRegimeService {
     public WorkingTimeRegimeResponseDto update(Long id, WorkingTimeRegimeCreateDto dto, Authentication auth) {
         WorkingTimeRegime regime = findOrThrow(id);
         mapper.updateFromDto(dto, regime);
+        // Applied outside the mapper because it ignores nulls: without this, clearing the
+        // seasonal dates in the UI would silently leave the old window in force — and an
+        // active seasonal window overrides every other assignment level.
+        regime.setSeasonalFrom(dto.getSeasonalFrom());
+        regime.setSeasonalTo(dto.getSeasonalTo());
         regime.setUpdatedAt(LocalDateTime.now());
         WorkingTimeRegime saved = regimeRepository.save(regime);
         auditService.log(actorId(auth), "UPDATE_REGIME", "WorkingTimeRegime", id, null, null);

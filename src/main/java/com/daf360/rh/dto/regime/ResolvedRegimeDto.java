@@ -27,26 +27,50 @@ public class ResolvedRegimeDto {
     private BigDecimal maxHoursPerDay;
 
     // --- assignment metadata ---
+    /** SEASONAL | EMPLOYEE_OVERRIDE | ROLE_ASSIGNMENT | DEFAULT — why this regime was chosen. */
     private String    assignmentLevel;
     private LocalDate effectiveFrom;
     private LocalDate effectiveTo;
+    private Long      paysId;
+    /** True when this regime won because of its seasonal window. */
+    private Boolean   isSeasonal;
 
     // --- pointage-friendly aliases (computed by RegimeResolutionService) ---
     private String       regimeName;        // = regimeLabelFr
-    private Double       heuresJour;        // = hoursPerWeek / daysPerWeek
-    private String       heureDebut;        // = startTime formatted "HH:mm"
-    private String       heureFin;          // = endTime   formatted "HH:mm"
+    private Double       heuresJour;        // = hoursPerWeek / daysPerWeek, null if not derivable
+    private String       heureDebut;        // = startTime formatted "HH:mm", null if unset
+    private String       heureFin;          // = endTime   formatted "HH:mm", null if unset
     private Integer      pauseDejeuner;     // = breakDurationMin
-    private List<String> joursOuvrables;    // derived from daysPerWeek
+    private List<String> joursOuvrables;    // non-weekend days from pays_weekends
 
     // --- break windows for this regime (from active break_templates), "HH:mm" ---
     private List<BreakWindow> breaks;
 
     @Data
     public static class BreakWindow {
-        private String start;
-        private String end;
+        private String  start;
+        private String  end;
+        /** Pointage status to switch into for this window (may be null). */
+        private String  statusCode;
+        private String  labelFr;
+        private String  labelEn;
+        private Integer durationMin;
+        /** ALL | WEEKDAYS | WEEKEND | comma-separated day codes. */
+        private String  appliesToDays;
+
         public BreakWindow() {}
+
         public BreakWindow(String start, String end) { this.start = start; this.end = end; }
+
+        public BreakWindow(String start, String end, String statusCode, String labelFr,
+                           String labelEn, Integer durationMin, String appliesToDays) {
+            this.start         = start;
+            this.end           = end;
+            this.statusCode    = statusCode;
+            this.labelFr       = labelFr;
+            this.labelEn       = labelEn;
+            this.durationMin   = durationMin;
+            this.appliesToDays = appliesToDays;
+        }
     }
 }

@@ -19,4 +19,9 @@ public class OnboardingListItem {
     private ItProvisioningStatus itProvisioningStatus;
     private OffsetDateTime ms365EmailCreatedAt;
     private Long itProvisioningId;
+    /**
+     * Canonical GENDER value_code (MALE/FEMALE/OTHER/…), passed through so the list can
+     * show a gendered avatar instead of initials. Nullable — the UI falls back to initials.
+     */
+    private String gender;
 }

@@ -46,6 +46,15 @@ public class BreakTemplate {
     @Column(name = "break_time_end")
     private java.time.LocalTime breakTimeEnd;
 
+    /**
+     * The pointage status this break switches the employee into (matches
+     * status_definitions.status in DAF360_LOG — e.g. LUNCH_BREAK, ON_BREAK).
+     * NULL = this break drives no presence transition. Free-text labels cannot be
+     * classified reliably, so the mapping is explicit and configured by HR.
+     */
+    @Column(name = "status_code", length = 50)
+    private String statusCode;
+
     @Column(name = "sort_order", nullable = false)
     @Builder.Default
     private Integer sortOrder = 0;
