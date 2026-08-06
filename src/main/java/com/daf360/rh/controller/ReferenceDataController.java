@@ -1,7 +1,11 @@
 package com.daf360.rh.controller;
 
 import com.daf360.rh.dto.ref.CreateRefDataRequest;
+import com.daf360.rh.dto.ref.PaysTimezoneDto;
 import com.daf360.rh.dto.ref.RefDataItemDto;
+import com.daf360.rh.dto.ref.TimezoneOptionDto;
+import com.daf360.rh.dto.ref.UpdatePaysTimezoneRequest;
+import com.daf360.rh.service.PaysTimezoneService;
 import com.daf360.rh.service.ReferenceDataService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -20,6 +24,7 @@ import java.util.Map;
 public class ReferenceDataController {
 
     private final ReferenceDataService refService;
+    private final PaysTimezoneService  paysTimezoneService;
     private final JdbcTemplate         jdbc;
 
     // ── Grades ────────────────────────────────────────────────────────────────
@@ -166,6 +171,44 @@ public class ReferenceDataController {
     @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<Void> deleteItAssetType(@PathVariable Long id) {
         refService.deleteItAssetType(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ── Entity (pays) timezones ───────────────────────────────────────────────
+    //
+    // The clock an entity's employees work on. Everything in the pointage module compares
+    // wall-clock times ("08:00", "12:30") that only mean something in a zone, so this is a
+    // prerequisite for presence automation — not a cosmetic setting.
+
+    /**
+     * Selectable IANA zones with their current offset, for the admin dropdown.
+     * The offset is computed per request for display; only the id is ever persisted.
+     */
+    @GetMapping("/timezones")
+    @PreAuthorize("isAuthenticated()")
+    public List<TimezoneOptionDto> getTimezones() {
+        return paysTimezoneService.timezoneCatalog();
+    }
+
+    /** All entities with their configured zone; a null timezone means automation is disabled. */
+    @GetMapping("/pays")
+    @PreAuthorize("isAuthenticated()")
+    public List<PaysTimezoneDto> getPays() {
+        return paysTimezoneService.listPays();
+    }
+
+    /**
+     * Sets an entity's zone. Blank clears it (and disables its automation).
+     *
+     * ADMIN_REGIMES as well as ADMIN_LISTS: the setting is edited from the regimes admin
+     * page, and whoever configures an entity's hours must be able to configure the clock
+     * those hours are read in.
+     */
+    @PutMapping("/pays/{id}/timezone")
+    @PreAuthorize("hasAnyAuthority('ADMIN_REGIMES', 'ADMIN_LISTS')")
+    public ResponseEntity<Void> updatePaysTimezone(@PathVariable Long id,
+                                                   @RequestBody UpdatePaysTimezoneRequest req) {
+        paysTimezoneService.setTimezone(id, req.getTimezone());
         return ResponseEntity.noContent().build();
     }
 

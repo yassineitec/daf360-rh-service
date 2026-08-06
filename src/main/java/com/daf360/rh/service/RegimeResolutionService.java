@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +33,7 @@ public class RegimeResolutionService {
     private final WorkingTimeRegimeRepository regimeRepo;
     private final BreakTemplateRepository breakTemplateRepo;
     private final PaysWeekendService weekendService;
+    private final PaysTimezoneService timezoneService;
     private final JdbcTemplate jdbc;
 
     /**
@@ -47,7 +49,7 @@ public class RegimeResolutionService {
         EmployeeProfile profile = profileRepo.findByUserId(userId)
                 .orElseThrow(() -> new AppException(ErrorCode.EMPLOYEE_NOT_FOUND,
                         "No employee profile for userId: " + userId));
-        return resolve(profile, LocalDate.now());
+        return resolve(profile, todayIn(profile.getPaysId()));
     }
 
     /**
@@ -59,7 +61,7 @@ public class RegimeResolutionService {
         EmployeeProfile profile = profileRepo.findById(employeeProfileId)
                 .orElseThrow(() -> new AppException(ErrorCode.EMPLOYEE_NOT_FOUND,
                         "Employee profile not found: " + employeeProfileId));
-        return resolve(profile, LocalDate.now());
+        return resolve(profile, todayIn(profile.getPaysId()));
     }
 
     /**
@@ -139,6 +141,23 @@ public class RegimeResolutionService {
         return null;
     }
 
+    /**
+     * "Today" for an entity, in ITS zone.
+     *
+     * Seasonal windows, personal overrides and role assignments are date ranges the client
+     * reads on a local calendar, so a UTC server would apply them from the wrong day for an
+     * hour (Tunisia) or nine (Dubai) around midnight — and for a Tokyo assignment the answer
+     * is wrong for a third of every day.
+     *
+     * Falls back to the server date when the entity has no zone: resolution must still return
+     * the regime's hours so the caller can report "no timezone configured" (which
+     * {@link #mapToDto} does via a null timezone) rather than "no regime at all".
+     */
+    private LocalDate todayIn(Long paysId) {
+        ZoneId zone = timezoneService.zoneFor(paysId);
+        return zone != null ? LocalDate.now(zone) : LocalDate.now();
+    }
+
     /** Inclusive window test; null bounds are open-ended. */
     private static boolean withinWindow(LocalDate date, LocalDate from, LocalDate to) {
         if (from != null && date.isBefore(from)) return false;
@@ -151,7 +170,7 @@ public class RegimeResolutionService {
     @Transactional(readOnly = true)
     public ResolvedRegimeDto resolveForRole(Long roleId, Long paysId) {
         Optional<RegimeRoleAssignment> assignment = roleAssignRepo
-                .findActiveForRoleAndPays(roleId, paysId, LocalDate.now());
+                .findActiveForRoleAndPays(roleId, paysId, todayIn(paysId));
         if (assignment.isPresent()) {
             return mapToDto(assignment.get().getRegime(), "ROLE_ASSIGNMENT",
                     assignment.get().getEffectiveFrom(), assignment.get().getEffectiveTo());
@@ -197,6 +216,19 @@ public class RegimeResolutionService {
         dto.setEffectiveTo(to);
         dto.setPaysId(r.getPaysId());
         dto.setIsSeasonal("SEASONAL".equals(level));
+
+        // The clock this regime's hours are read in: its own override (a travel/temporary
+        // regime) or the entity's zone. Left null when neither is configured, so consumers
+        // report "not configured" instead of silently using the server's zone — the hour
+        // fields below are meaningless without it.
+        String zone = r.getTimezone() != null && !r.getTimezone().isBlank()
+                ? r.getTimezone().trim()
+                : timezoneService.timezoneFor(r.getPaysId());
+        dto.setTimezone(zone);
+        if (zone == null) {
+            log.warn("Regime {} ({}) has no timezone and entity {} has none either — pointage "
+                   + "automation cannot run for its employees.", r.getId(), r.getCode(), r.getPaysId());
+        }
 
         // pointage-friendly aliases. NO fabricated fallbacks: a regime with no hours
         // returns null so the caller can say "not configured" instead of silently
@@ -262,7 +294,7 @@ public class RegimeResolutionService {
                     date, PaysWeekendService.frenchLabel(date.getDayOfWeek()), isWork, expected));
         }
         return new com.daf360.rh.dto.regime.WeeklyScheduleDto(
-                weekStart, weekStart.plusDays(6), totalHours, days);
+                weekStart, weekStart.plusDays(6), totalHours, days, regime.getTimezone());
     }
 
 }

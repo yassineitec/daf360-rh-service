@@ -5,7 +5,6 @@ import com.daf360.rh.common.PermissionCatalog;
 import com.daf360.rh.domain.*;
 import com.daf360.rh.dto.offboarding.*;
 import com.daf360.rh.dto.profile.LifecycleTransitionDto;
-import com.daf360.rh.dto.requests.GeneratedDocumentResponseDto;
 import com.daf360.rh.domain.enums.LifecycleStatus;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
@@ -146,11 +145,15 @@ public class OffboardingWorkflowService {
     private final OffboardingTaskCatalogRepository      catalogRepo;
     private final OffboardingChecklistItemRepository    checklistRepo;
     private final OffboardingSettlementLineRepository   settlementRepo;
+    /** V66 — the role designated to give the RH validation, per pays. */
+    private final OffboardingValidatorRepository        validatorRepo;
     private final AuditLogRepository                    auditLogRepository;
     private final EmployeeProfileService                profileService;
     /** Direct repo for the décharge, matching EmployeeRequestService's own pattern. */
     private final EmployeeProfileRepository            profileRepo;
     private final DocumentGenerationService            documentGenerationService;
+    /** Branded (letterhead + logo + verification footer) rendering via pdf-service. */
+    private final com.daf360.rh.service.pdf.PdfDocumentService pdfDocumentService;
     private final ItProvisioningRepository              itProvisioningRepo;
     private final ItAssetRepository                     itAssetRepo;
     private final AuditService                          auditService;
@@ -400,8 +403,10 @@ public class OffboardingWorkflowService {
         // Absent field == null == "leave alone". See the DTO's note on why this cannot
         // clear a value: the stage always posts its whole shape.
         if (request.getLastWorkingDay() != null)           instance.setLastWorkingDay(request.getLastWorkingDay());
-        if (request.getTheoreticalExitDate() != null)      instance.setTheoreticalExitDate(request.getTheoreticalExitDate());
-        if (request.getNoticePeriodLabel() != null)        instance.setNoticePeriodLabel(request.getNoticePeriodLabel());
+        // theoreticalExitDate and noticePeriodLabel are deliberately NOT taken from the request
+        // any more: since V64 both are derived from `contract_type_config` for the file's pays
+        // and contract type (see resolveNoticePeriod). Accepting them here is what let two
+        // files under the same contract carry different préavis.
         if (request.getNoticeWaiverRequested() != null)    instance.setNoticeWaiverRequested(request.getNoticeWaiverRequested());
         if (request.getJustificationDocumentUrl() != null) instance.setJustificationDocumentUrl(request.getJustificationDocumentUrl());
         if (request.getJustificationDocumentName() != null) instance.setJustificationDocumentName(request.getJustificationDocumentName());
@@ -513,6 +518,7 @@ public class OffboardingWorkflowService {
 
         OffboardingWorkflowInstance instance = findInstanceOrThrow(instanceId);
         assertActive(instance);
+        assertMayManageHandover(instance, actorId);
 
         if (request.getHandoverManagerProfileId() != null) {
             if (request.getHandoverManagerProfileId().equals(instance.getEmployeeProfileId())) {
@@ -528,6 +534,22 @@ public class OffboardingWorkflowService {
         if (request.getHandoverMinutesName() != null) {
             instance.setHandoverMinutesName(request.getHandoverMinutesName());
         }
+        // V65 — the manager-set window and the written PV.
+        if (request.getHandoverStartedAt() != null) {
+            if (instance.getLastWorkingDay() != null
+                    && request.getHandoverStartedAt().isAfter(instance.getLastWorkingDay())) {
+                throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Le début de la passation ne peut pas être postérieur au dernier jour "
+                    + "travaillé (" + instance.getLastWorkingDay() + ").");
+            }
+            instance.setHandoverStartedAt(request.getHandoverStartedAt());
+        }
+        if (request.getHandoverMinutesText() != null) {
+            // Blank means "delete what I wrote", which a text area can legitimately express —
+            // unlike the other fields here, where absent and empty are the same thing.
+            instance.setHandoverMinutesText(
+                request.getHandoverMinutesText().isBlank() ? null : request.getHandoverMinutesText());
+        }
 
         instance.setUpdatedAt(OffsetDateTime.now());
         instanceRepo.save(instance);
@@ -535,9 +557,70 @@ public class OffboardingWorkflowService {
         auditService.log(actorId != null ? actorId.toString() : "SYSTEM",
             "OFFBOARDING_HANDOVER_UPDATED", "OffboardingWorkflowInstance", instanceId,
             null, "managerProfileId=" + instance.getHandoverManagerProfileId()
-                + " pv=" + (instance.getHandoverMinutesUrl() != null));
+                + " pvFile=" + (instance.getHandoverMinutesUrl() != null)
+                + " pvText=" + (instance.getHandoverMinutesText() != null)
+                + " start=" + instance.getHandoverStartedAt());
 
         return toInstanceDto(instance);
+    }
+
+    /**
+     * Stage 3 belongs to the departing employee's manager.
+     *
+     * Three ways in, in order of specificity: the file's *named* handover manager, a
+     * hierarchical manager of the employee (`Roles.parent_role_id`, same pays), or a holder of
+     * the stage/RH permission. The permission stays because a file whose manager has no portal
+     * account — or who is the person leaving — would otherwise have nobody able to run the
+     * passation, and the whole wizard is gated on it. The audit records which of the three
+     * acted, so an RH-run passation is visibly RH's.
+     *
+     * Enforced here rather than in `@PreAuthorize`: "this employee's manager" depends on the
+     * instance, which the annotation cannot load. Same shape as `validateAsManager`.
+     */
+    private void assertMayManageHandover(OffboardingWorkflowInstance instance, Long actorId) {
+        if (hasAuthority(PermissionCatalog.RH_MANAGE_OFFBOARDING)
+                || hasAuthority(PermissionCatalog.RH_OFFBOARDING_STAGE_HANDOVER)) {
+            return;
+        }
+        Long namedManagerUserId =
+            resolveHandoverManagerUserId(instance.getHandoverManagerProfileId());
+        if (namedManagerUserId != null && namedManagerUserId.equals(actorId)) return;
+
+        if (isHierarchicalManagerOf(instance.getEmployeeProfileId(), actorId)) return;
+
+        throw new AppException(ErrorCode.FORBIDDEN,
+            "Seul le manager hiérarchique de la personne concernée (ou le service RH) "
+            + "peut gérer la passation.");
+    }
+
+    /**
+     * True when `actorUserId` holds the parent role of the employee's role, in the same pays.
+     *
+     * Mirrors `GET /api/hr/users/{id}/managers` — including its pays filter, without which a
+     * manager of another entity would pass this check.
+     */
+    private static final String IS_HIERARCHICAL_MANAGER_SQL =
+        "SELECT COUNT(1) FROM [dbo].[Users] mgr " +
+        "JOIN [dbo].[Users] emp ON emp.id = ? " +
+        "JOIN [dbo].[Roles] er ON er.id = emp.role_id " +
+        "WHERE mgr.id = ? " +
+        "  AND (mgr.isActive = 1 OR mgr.isActive IS NULL) " +
+        "  AND mgr.role_id = er.parent_role_id " +
+        "  AND (mgr.pays_id = emp.pays_id OR emp.pays_id IS NULL)";
+
+    private boolean isHierarchicalManagerOf(Long employeeProfileId, Long actorUserId) {
+        if (employeeProfileId == null || actorUserId == null) return false;
+        try {
+            Long employeeUserId = profileService.getUserId(employeeProfileId);
+            if (employeeUserId == null) return false;
+            Integer count = jdbc.queryForObject(
+                IS_HIERARCHICAL_MANAGER_SQL, Integer.class, employeeUserId, actorUserId);
+            return count != null && count > 0;
+        } catch (Exception ex) {
+            log.debug("Could not check the hierarchy for profile {} / actor {}: {}",
+                employeeProfileId, actorUserId, ex.getMessage());
+            return false;
+        }
     }
 
     // ── 2f. Stage 4 — Informatique & Matériel ─────────────────────────────────
@@ -587,28 +670,63 @@ public class OffboardingWorkflowService {
             .orElseThrow(() -> new AppException(ErrorCode.EMPLOYEE_NOT_FOUND,
                 "Profil introuvable: id=" + instance.getEmployeeProfileId()));
 
-        GeneratedDocumentResponseDto generated = documentGenerationService.generateStandalone(
-            "offboarding-" + instanceId,
-            "OFFBOARDING_DISCHARGE",
-            DISCHARGE_TEMPLATE,
-            profile,
-            Map.of(
-                "{{assets}}",         renderAssetLines(assets),
-                "{{lastWorkingDay}}", instance.getLastWorkingDay() != null
-                                      ? instance.getLastWorkingDay().toString() : "—"
-            ),
-            actorId);
+        String fileUrl = renderDischarge(instance, profile, assets, actorId);
 
-        instance.setDischargeDocumentUrl(generated.getFileUrl());
+        instance.setDischargeDocumentUrl(fileUrl);
         instance.setDischargeDocumentName("Décharge de matériel.pdf");
         instance.setUpdatedAt(OffsetDateTime.now());
         instanceRepo.save(instance);
 
         auditService.log(actorId != null ? actorId.toString() : "SYSTEM",
             "OFFBOARDING_DISCHARGE_GENERATED", "OffboardingWorkflowInstance", instanceId,
-            null, "assets=" + assets.size() + " file=" + generated.getFileUrl());
+            null, "assets=" + assets.size() + " file=" + fileUrl);
 
         return toInstanceDto(instance);
+    }
+
+    /**
+     * Renders the décharge on the branded pipeline, falling back to the plain-text one.
+     *
+     * The fallback is not decoration: pdf-service is a separate container, and a stage-4
+     * signature sheet that cannot be produced at all blocks the file. An unbranded PDF is a
+     * degraded document; no PDF is a stuck workflow. The WARN is what tells you which one
+     * you got.
+     */
+    private String renderDischarge(OffboardingWorkflowInstance instance,
+                                   EmployeeProfile profile,
+                                   List<OffboardingAssetReturn> assets,
+                                   Long actorId) {
+        try {
+            var lines = assets.stream()
+                .map(a -> new com.daf360.rh.dto.pdf.OffboardingPdfData.AssetLine(
+                    a.getAssetDescription(),
+                    a.getSerialNumber(),
+                    a.getActualReturnDate(),
+                    a.getConditionOnReturn(),
+                    null,
+                    Boolean.TRUE.equals(a.getIsWrittenOff())))
+                .collect(Collectors.toList());
+
+            return pdfDocumentService.generateDechargeRestitutionPdf(
+                instance.getEmployeeProfileId(),
+                new com.daf360.rh.dto.pdf.OffboardingPdfData.DischargeData(
+                    instance.getLastWorkingDay(), resolveUserName(actorId), lines),
+                actorId).getFileUrl();
+        } catch (Exception ex) {
+            log.warn("Branded décharge unavailable for instance {} ({}) — falling back to the "
+                + "plain-text renderer", instance.getId(), ex.getMessage());
+            return documentGenerationService.generateStandalone(
+                "offboarding-" + instance.getId(),
+                "OFFBOARDING_DISCHARGE",
+                DISCHARGE_TEMPLATE,
+                profile,
+                Map.of(
+                    "{{assets}}",         renderAssetLines(assets),
+                    "{{lastWorkingDay}}", instance.getLastWorkingDay() != null
+                                          ? instance.getLastWorkingDay().toString() : "—"
+                ),
+                actorId).getFileUrl();
+        }
     }
 
     private static final String DISCHARGE_TEMPLATE = """
@@ -1064,17 +1182,10 @@ public class OffboardingWorkflowService {
             .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
                 "La ligne de Kit RH " + itemCode + " est absente de ce dossier."));
 
-        EmployeeProfile profile = loadProfile(instance);
-        GeneratedDocumentResponseDto generated = documentGenerationService.generateStandalone(
-            "offboarding-" + instanceId,
-            "OFFBOARDING_" + itemCode,
-            template,
-            profile,
-            kitVariables(instance),
-            actorId);
+        String fileUrl = renderKitDocument(instance, itemCode, template, actorId);
 
         OffsetDateTime now = OffsetDateTime.now();
-        item.setDocumentUrl(generated.getFileUrl());
+        item.setDocumentUrl(fileUrl);
         item.setIsDone(true);
         item.setCompletedBy(actorId);
         item.setCompletedAt(now);
@@ -1082,9 +1193,152 @@ public class OffboardingWorkflowService {
 
         auditService.log(actorId != null ? actorId.toString() : "SYSTEM",
             "OFFBOARDING_KIT_DOCUMENT_GENERATED", "OffboardingChecklistItem", item.getId(),
-            null, "code=" + itemCode + " file=" + generated.getFileUrl());
+            null, "code=" + itemCode + " file=" + fileUrl);
 
         return toChecklistDto(item);
+    }
+
+    /**
+     * One Kit RH document on the branded pipeline, with the plain-text body as the fallback —
+     * same reasoning as {@link #renderDischarge}.
+     *
+     * The certificat de travail reuses the attestation the request workflow already issues, so
+     * an employee's last certificate looks exactly like the ones they asked for while employed.
+     */
+    private String renderKitDocument(OffboardingWorkflowInstance instance, String itemCode,
+                                     String fallbackTemplate, Long actorId) {
+        Long profileId = instance.getEmployeeProfileId();
+        try {
+            return switch (itemCode) {
+                case "WORK_CERTIFICATE" -> pdfDocumentService
+                    .generateWorkCertificateIsolated(profileId, actorId)
+                    .getFileUrl();
+
+                case "END_OF_CONTRACT" -> pdfDocumentService
+                    .generateAttestationFinContratPdf(profileId,
+                        new com.daf360.rh.dto.pdf.OffboardingPdfData.EndOfContractData(
+                            instance.getLastWorkingDay(),
+                            instance.getDepartureReason(),
+                            instance.getNoticePeriodLabel(),
+                            !Boolean.TRUE.equals(instance.getNoticePaidNotWorked())),
+                        actorId)
+                    .getFileUrl();
+
+                case "SETTLEMENT_RECEIPT" -> pdfDocumentService
+                    .generateRecuSoldeToutComptePdf(profileId,
+                        buildSettlementReceiptData(instance), actorId)
+                    .getFileUrl();
+
+                default -> throw new IllegalStateException("Unmapped Kit RH code: " + itemCode);
+            };
+        } catch (Exception ex) {
+            log.warn("Branded Kit RH document {} unavailable for instance {} ({}) — falling back "
+                + "to the plain-text renderer", itemCode, instance.getId(), ex.getMessage());
+            return documentGenerationService.generateStandalone(
+                "offboarding-" + instance.getId(),
+                "OFFBOARDING_" + itemCode,
+                fallbackTemplate,
+                loadProfile(instance),
+                kitVariables(instance),
+                actorId).getFileUrl();
+        }
+    }
+
+    /** The stored settlement lines, in the shape the receipt template expects. */
+    private com.daf360.rh.dto.pdf.OffboardingPdfData.SettlementReceiptData
+            buildSettlementReceiptData(OffboardingWorkflowInstance instance) {
+
+        List<OffboardingSettlementLine> lines =
+            settlementRepo.findByWorkflowInstanceIdOrderByOrderIndexAsc(instance.getId());
+
+        var rows = lines.stream()
+            .map(l -> new com.daf360.rh.dto.pdf.OffboardingPdfData.SettlementLine(
+                l.getLabel(),
+                l.getAmount(),
+                // Says so on the document when nobody has confirmed the proposed figure — the
+                // same distinction `is_suggested` draws for the audit.
+                Boolean.TRUE.equals(l.getIsSuggested()) ? "Montant proposé automatiquement" : null))
+            .collect(Collectors.toList());
+
+        return new com.daf360.rh.dto.pdf.OffboardingPdfData.SettlementReceiptData(
+            instance.getLastWorkingDay(),
+            instance.getDepartureReason(),
+            resolveSettlementPaymentMode(instance.getEmployeeProfileId()),
+            instance.getSettlementExecutionDate(),
+            rows,
+            settlementTotal(lines));
+    }
+
+    /**
+     * A document attached to the file itself, as bytes.
+     *
+     * Every one of these columns holds a path on the server's storage volume, and rh-service
+     * registers no static resource handler — so the panels' `href`/`window.open` to
+     * `/data/.../uuid.pdf` could never fetch anything. Streaming through the API is what makes
+     * them downloadable at all, and it keeps the tenant check that reading a path would bypass.
+     */
+    @Transactional(readOnly = true)
+    public StoredFile readInstanceDocument(Long instanceId, String kind) {
+        OffboardingWorkflowInstance instance = findInstanceOrThrow(instanceId);
+        String path = switch (kind) {
+            case "discharge"     -> instance.getDischargeDocumentUrl();
+            case "minutes"       -> instance.getHandoverMinutesUrl();
+            case "justification" -> instance.getJustificationDocumentUrl();
+            default -> throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                "Type de document inconnu: " + kind);
+        };
+        if (path == null || path.isBlank()) {
+            throw new AppException(ErrorCode.NOT_FOUND,
+                "Ce document n'est pas disponible pour ce dossier.");
+        }
+        return readStoredFile(path, kind + "-" + instanceId);
+    }
+
+    /** Same, for a checklist line's attached document (PV de passation, Kit RH pieces). */
+    @Transactional(readOnly = true)
+    public StoredFile readChecklistDocument(Long itemId) {
+        OffboardingChecklistItem item = checklistRepo.findById(itemId)
+            .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
+                "Élément de checklist introuvable: id=" + itemId));
+        findInstanceOrThrow(item.getWorkflowInstanceId());
+        if (item.getDocumentUrl() == null || item.getDocumentUrl().isBlank()) {
+            throw new AppException(ErrorCode.NOT_FOUND,
+                "Aucun document n'est attaché à cette ligne.");
+        }
+        return readStoredFile(item.getDocumentUrl(),
+            item.getItemLabel() != null ? item.getItemLabel() : ("document-" + itemId));
+    }
+
+    /** Bytes plus what the browser needs to save them under a sensible name. */
+    public record StoredFile(byte[] bytes, String filename, String contentType) {}
+
+    /**
+     * The extension comes from the stored file, not from the caller: the generated documents are
+     * PDFs but an uploaded PV or justification can just as well be a JPG, and labelling one
+     * `.pdf` produces a file nothing will open.
+     */
+    private StoredFile readStoredFile(String path, String baseName) {
+        try {
+            java.nio.file.Path p = java.nio.file.Paths.get(path);
+            if (!java.nio.file.Files.exists(p)) {
+                throw new AppException(ErrorCode.NOT_FOUND,
+                    "Le fichier est introuvable sur le serveur: " + path);
+            }
+            String name = p.getFileName().toString();
+            int dot = name.lastIndexOf('.');
+            String ext = dot > 0 ? name.substring(dot).toLowerCase() : "";
+            String type = switch (ext) {
+                case ".pdf"          -> "application/pdf";
+                case ".jpg", ".jpeg" -> "image/jpeg";
+                case ".png"          -> "image/png";
+                default              -> "application/octet-stream";
+            };
+            String safeBase = baseName.replaceAll("[^\\p{L}\\p{N}._-]+", "-");
+            return new StoredFile(java.nio.file.Files.readAllBytes(p), safeBase + ext, type);
+        } catch (java.io.IOException ex) {
+            throw new AppException(ErrorCode.DOCUMENT_GENERATION_FAILED,
+                "Impossible de lire le document: " + ex.getMessage());
+        }
     }
 
     /** Every generated Kit RH document, zipped. Empty is refused rather than shipping 0 bytes. */
@@ -1161,8 +1415,9 @@ public class OffboardingWorkflowService {
             .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
                 "Élément de checklist introuvable: id=" + itemId));
 
-        assertActive(findInstanceOrThrow(item.getWorkflowInstanceId()));
-        assertMayEditChecklistGroup(item.getGroupCode());
+        OffboardingWorkflowInstance parent = findInstanceOrThrow(item.getWorkflowInstanceId());
+        assertActive(parent);
+        assertMayEditChecklistGroup(item.getGroupCode(), parent, actorId);
 
         if (request.getIsDone() != null) {
             item.setIsDone(request.getIsDone());
@@ -1199,7 +1454,7 @@ public class OffboardingWorkflowService {
             throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
                 "Groupe de checklist inconnu: " + group);
         }
-        assertMayEditChecklistGroup(group);
+        assertMayEditChecklistGroup(group, instance, actorId);
 
         OffboardingChecklistItem item = checklistRepo.save(OffboardingChecklistItem.builder()
             .workflowInstanceId(instanceId)
@@ -1224,8 +1479,9 @@ public class OffboardingWorkflowService {
             .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
                 "Élément de checklist introuvable: id=" + itemId));
 
-        assertActive(findInstanceOrThrow(item.getWorkflowInstanceId()));
-        assertMayEditChecklistGroup(item.getGroupCode());
+        OffboardingWorkflowInstance parent = findInstanceOrThrow(item.getWorkflowInstanceId());
+        assertActive(parent);
+        assertMayEditChecklistGroup(item.getGroupCode(), parent, actorId);
 
         checklistRepo.delete(item);
         auditService.log(actorId != null ? actorId.toString() : "SYSTEM",
@@ -1238,6 +1494,25 @@ public class OffboardingWorkflowService {
         if (hasAuthority(required) || hasAuthority(PermissionCatalog.RH_MANAGE_OFFBOARDING)) return;
         throw new AppException(ErrorCode.FORBIDDEN,
             "Cette checklist est réservée à son service (permission requise : " + required + ").");
+    }
+
+    /**
+     * Same, with the file in hand — which is what lets the HANDOVER group follow stage 3's rule
+     * instead of the permission alone.
+     *
+     * The passation checklist is the manager's own list of what has to be handed over; gating it
+     * on `RH_OFFBOARDING_STAGE_HANDOVER` meant the manager could be the file's named owner and
+     * still not tick a line. The other two groups belong to services, not to a person, so they
+     * keep the permission-only check.
+     */
+    private void assertMayEditChecklistGroup(String groupCode,
+                                             OffboardingWorkflowInstance instance,
+                                             Long actorId) {
+        if ("HANDOVER".equals(groupCode) && instance != null) {
+            assertMayManageHandover(instance, actorId);
+            return;
+        }
+        assertMayEditChecklistGroup(groupCode);
     }
 
     /** `HANDOVER_1755...` — unique per instance+group, which is all UX_checklist_item asks. */
@@ -1316,6 +1591,7 @@ public class OffboardingWorkflowService {
             throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
                 "L'avis du manager doit être enregistré avant la validation RH.");
         }
+        assertMayValidateAsHr(instance, actorId);
 
         LocalDate previousLastWorkingDay = instance.getLastWorkingDay();
         if (request.getLastWorkingDay() != null) {
@@ -1350,6 +1626,76 @@ public class OffboardingWorkflowService {
                 + " noticePaidNotWorked=" + instance.getNoticePaidNotWorked());
 
         return toInstanceDto(instance);
+    }
+
+    // ── Per-pays validator (V66) ──────────────────────────────────────────────
+
+    /** The signed-in user's role, for the per-pays validator check. */
+    private static final String USER_ROLE_SQL =
+        "SELECT role_id FROM [dbo].[Users] WHERE id = ?";
+
+    /**
+     * Enforces the designated validator role of the file's pays.
+     *
+     * `@PreAuthorize` cannot express this: the required role depends on the instance's pays,
+     * which needs the row loaded — the same reason `validateAsManager` checks in the service.
+     *
+     * A pays with no configured row stays on the previous rule (any RH_VALIDATE_OFFBOARDING or
+     * RH_MANAGE_OFFBOARDING holder). That is the point of the fallback: applying V66 must not
+     * freeze stage 2 everywhere until someone has configured every country.
+     */
+    private void assertMayValidateAsHr(OffboardingWorkflowInstance instance, Long actorId) {
+        Long requiredRoleId = validatorRepo.findByPaysId(instance.getPaysId())
+            .map(OffboardingValidator::getRoleId)
+            .orElse(null);
+
+        if (requiredRoleId == null) {
+            if (hasAuthority(PermissionCatalog.RH_VALIDATE_OFFBOARDING)
+                    || hasAuthority(PermissionCatalog.RH_MANAGE_OFFBOARDING)) return;
+            throw new AppException(ErrorCode.FORBIDDEN,
+                "La validation RH de l'offboarding requiert la permission "
+                + PermissionCatalog.RH_VALIDATE_OFFBOARDING + ".");
+        }
+
+        Long actorRoleId = resolveUserRoleId(actorId);
+        if (requiredRoleId.equals(actorRoleId)) return;
+
+        throw new AppException(ErrorCode.FORBIDDEN,
+            "La validation de ce départ est réservée au rôle désigné pour ce pays. "
+            + "Le rôle validateur est configuré dans l'administration de l'offboarding.");
+    }
+
+    private Long resolveUserRoleId(Long userId) {
+        if (userId == null) return null;
+        try {
+            List<Long> ids = jdbc.queryForList(USER_ROLE_SQL, Long.class, userId);
+            return ids.isEmpty() ? null : ids.get(0);
+        } catch (Exception ex) {
+            log.debug("Could not resolve the role of user {}: {}", userId, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Whether THIS caller may HR-validate THIS file — reported on the DTO so the button matches
+     * what the API will accept. A permission check on the client cannot answer it: the rule is
+     * a role designated per pays, which no permission encodes.
+     */
+    private boolean mayCurrentUserValidateAsHr(OffboardingWorkflowInstance instance) {
+        try {
+            Long requiredRoleId = validatorRepo.findByPaysId(instance.getPaysId())
+                .map(OffboardingValidator::getRoleId)
+                .orElse(null);
+            if (requiredRoleId == null) {
+                return hasAuthority(PermissionCatalog.RH_VALIDATE_OFFBOARDING)
+                    || hasAuthority(PermissionCatalog.RH_MANAGE_OFFBOARDING);
+            }
+            return requiredRoleId.equals(resolveUserRoleId(currentUserId()));
+        } catch (Exception ex) {
+            log.debug("Could not resolve the HR-validation right for instance {}: {}",
+                instance.getId(), ex.getMessage());
+            return false;
+        }
     }
 
     private void assertActive(OffboardingWorkflowInstance instance) {
@@ -1903,6 +2249,24 @@ public class OffboardingWorkflowService {
         return auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals(code));
     }
 
+    /**
+     * The signed-in user's id, read off the security context.
+     *
+     * The write paths take `actorId` from the controller, which is the right shape for an audit
+     * stamp. `toInstanceDto` has no actor parameter — it is called from read paths too — so the
+     * per-file rights it reports come from here. Same source either way: the principal is the
+     * user id (see `OffboardingController.actorId`).
+     */
+    private Long currentUserId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getPrincipal() == null) return null;
+        try {
+            return Long.valueOf(auth.getPrincipal().toString());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /**
@@ -2186,6 +2550,8 @@ public class OffboardingWorkflowService {
         String handoverManagerName = (w.getHandoverManagerProfileId() != null)
             ? resolveEmployeeName(w.getHandoverManagerProfileId())
             : null;
+        NoticePeriod notice = resolveNoticePeriod(w);
+        HandoverDuration duration = resolveHandoverDuration(w);
 
         return OffboardingWorkflowInstanceDto.builder()
             .id(w.getId())
@@ -2223,9 +2589,21 @@ public class OffboardingWorkflowService {
             .hrValidatedByName(resolveUserName(w.getHrValidatedBy()))
             .hrValidatedAt(w.getHrValidatedAt())
             .noticePaidNotWorked(w.getNoticePaidNotWorked())
-            // Stage 3 — Passation (V60)
+            .canValidateAsHr(mayCurrentUserValidateAsHr(w))
+            // Stage 3 — Passation (V60 + V65). The duration is derived from the window, the
+            // pays' weekends and the validated absences — none of which the row knows.
             .handoverMinutesUrl(w.getHandoverMinutesUrl())
             .handoverMinutesName(w.getHandoverMinutesName())
+            .handoverMinutesText(w.getHandoverMinutesText())
+            .handoverStartedAt(w.getHandoverStartedAt())
+            .handoverDuration(duration == null ? null
+                : OffboardingHandoverDurationDto.builder()
+                    .startDate(duration.startDate())
+                    .endDate(duration.endDate())
+                    .workingDays(duration.workingDays())
+                    .leaveDays(duration.leaveDays())
+                    .totalDays(duration.totalDays())
+                    .build())
             // Stage 4 — Informatique & Matériel (V61)
             .accountDeactivationAt(w.getAccountDeactivationAt())
             .dischargeDocumentUrl(w.getDischargeDocumentUrl())
@@ -2242,11 +2620,213 @@ public class OffboardingWorkflowService {
             // Stage 1 — Déclaration (V57)
             .justificationDocumentUrl(w.getJustificationDocumentUrl())
             .justificationDocumentName(w.getJustificationDocumentName())
-            .noticePeriodLabel(w.getNoticePeriodLabel())
+            // Préavis: resolved from `contract_type_config` (V64), not read off the row. The
+            // V57 columns survive with whatever was typed into them before, but the
+            // configuration is the answer — including for files created before it existed.
+            // Falls back to the stored label so an old file is not left blank if its pays has
+            // no configuration yet.
+            .noticePeriodLabel(notice.label() != null ? notice.label() : w.getNoticePeriodLabel())
+            .noticePeriodDays(notice.days())
             .noticeWaiverRequested(w.getNoticeWaiverRequested())
-            .theoreticalExitDate(w.getTheoreticalExitDate())
+            .theoreticalExitDate(notice.exitDate() != null
+                ? notice.exitDate() : w.getTheoreticalExitDate())
             .tasks(taskDtos)
             .build();
+    }
+
+    // ── Passation duration (V65) ──────────────────────────────────────────────
+
+    private static final String PAYS_WEEKENDS_SQL =
+        "SELECT [day] FROM [dbo].[pays_weekends] WHERE pays_id = ?";
+
+    /**
+     * Validated absences overlapping the window. `etat_demande = 'VALIDE'` only: a pending
+     * request is not time the employee is actually away, and counting it would let anyone
+     * reshape the passation breakdown by filing a request.
+     */
+    private static final String ABSENCES_IN_WINDOW_SQL =
+        "SELECT date_debut, date_fin FROM [dbo].[absences] " +
+        "WHERE collaborateur_id = ? AND etat_demande = 'VALIDE' " +
+        "  AND date_debut <= ? AND COALESCE(date_fin, date_debut) >= ?";
+
+    /**
+     * The passation window, broken down.
+     *
+     * `workingDays` excludes the days the employee is on validated leave, and `leaveDays`
+     * counts exactly those — so the two add up to the window and neither is double-counted.
+     * The breakdown is what the manager needs: "22 j ouvrables + 3 j congés" says how much
+     * handover time there actually is, where a single total of 25 would not.
+     */
+    private record HandoverDuration(LocalDate startDate, LocalDate endDate,
+                                    int workingDays, int leaveDays, int totalDays) {}
+
+    /** Null when the window is not defined yet, or inverted — the UI renders "à définir". */
+    private HandoverDuration resolveHandoverDuration(OffboardingWorkflowInstance w) {
+        LocalDate start = w.getHandoverStartedAt();
+        LocalDate end   = w.getLastWorkingDay();
+        if (start == null || end == null || end.isBefore(start)) return null;
+
+        try {
+            Set<DayOfWeek> weekend = loadWeekendDays(w.getPaysId());
+            Set<LocalDate> onLeave = loadLeaveDays(w.getEmployeeProfileId(), start, end);
+
+            int working = 0, leave = 0;
+            for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+                if (weekend.contains(d.getDayOfWeek())) continue;
+                if (onLeave.contains(d)) leave++; else working++;
+            }
+            return new HandoverDuration(start, end, working, leave, working + leave);
+        } catch (Exception ex) {
+            log.warn("Could not compute the handover duration for instance {}: {}",
+                w.getId(), ex.getMessage());
+            return null;
+        }
+    }
+
+    /** Per-pays weekend days. Defaults to SAT+SUN, like BreakDeductionService does. */
+    private Set<DayOfWeek> loadWeekendDays(Long paysId) {
+        Set<DayOfWeek> days = new java.util.HashSet<>();
+        try {
+            for (String raw : jdbc.queryForList(PAYS_WEEKENDS_SQL, String.class, paysId)) {
+                if (raw == null || raw.isBlank()) continue;
+                try {
+                    days.add(DayOfWeek.valueOf(raw.trim().toUpperCase()));
+                } catch (IllegalArgumentException ignored) {
+                    log.debug("Unrecognised weekend day '{}' for paysId={}", raw, paysId);
+                }
+            }
+        } catch (Exception ex) {
+            log.debug("Could not load weekend days for paysId={}: {}", paysId, ex.getMessage());
+        }
+        if (days.isEmpty()) {
+            days.add(DayOfWeek.SATURDAY);
+            days.add(DayOfWeek.SUNDAY);
+        }
+        return days;
+    }
+
+    /** Every calendar day inside the window that a validated absence covers. */
+    private Set<LocalDate> loadLeaveDays(Long profileId, LocalDate from, LocalDate to) {
+        Set<LocalDate> days = new java.util.HashSet<>();
+        List<Map<String, Object>> rows =
+            jdbc.queryForList(ABSENCES_IN_WINDOW_SQL, profileId, to, from);
+        for (Map<String, Object> row : rows) {
+            LocalDate begin = toLocalDate(row.get("date_debut"));
+            LocalDate finish = toLocalDate(row.get("date_fin"));
+            if (begin == null) continue;
+            if (finish == null || finish.isBefore(begin)) finish = begin;
+            // Clamp to the window: a leave that starts before it still only contributes the
+            // part that overlaps.
+            LocalDate cursor = begin.isBefore(from) ? from : begin;
+            LocalDate last   = finish.isAfter(to) ? to : finish;
+            for (; !cursor.isAfter(last); cursor = cursor.plusDays(1)) days.add(cursor);
+        }
+        return days;
+    }
+
+    private LocalDate toLocalDate(Object value) {
+        if (value == null) return null;
+        if (value instanceof LocalDate d) return d;
+        if (value instanceof java.sql.Date d) return d.toLocalDate();
+        if (value instanceof java.sql.Timestamp t) return t.toLocalDateTime().toLocalDate();
+        try {
+            return LocalDate.parse(value.toString().substring(0, 10));
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    // ── Préavis (V64) ─────────────────────────────────────────────────────────
+
+    /** Resolved préavis: the configured days, its display label, and the date it lands on. */
+    private record NoticePeriod(Integer days, String label, LocalDate exitDate) {
+        static final NoticePeriod UNKNOWN = new NoticePeriod(null, null, null);
+    }
+
+    /**
+     * One round-trip: the pays' préavis for this contract type, and whether the employee is a
+     * cadre — the two facts that decide which of the two configured figures applies.
+     *
+     * Joined FROM the profile so a missing configuration row yields NULLs rather than no row,
+     * which is what lets "not configured" and "configured as 0" stay distinguishable.
+     */
+    private static final String NOTICE_PERIOD_SQL =
+        "SELECT ctc.notice_period_days_standard AS days_standard, " +
+        "       ctc.notice_period_days_manager  AS days_manager, " +
+        "       g.code AS grade_code " +
+        "FROM [dbo].[employee_profiles] ep " +
+        "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
+        "LEFT JOIN [dbo].[contract_type_config] ctc " +
+        "       ON ctc.pays_id = ep.pays_id AND ctc.contract_type_code = ? " +
+        "WHERE ep.id = ?";
+
+    /**
+     * The préavis for one file, from configuration.
+     *
+     * The contract type comes from the file's own contract when it has one, else from the
+     * profile's contract in force — a file started from a profile carries `contractId` only if
+     * the employee had an open contract at the time.
+     *
+     * The exit date is `triggerDate + days` in CALENDAR days, not working ones: a préavis is a
+     * calendar notion ("un mois de préavis"), and stretching it over weekends would hand the
+     * employee days the contract never gave them. The passation duration (V65) is the one
+     * measured in working days.
+     */
+    private NoticePeriod resolveNoticePeriod(OffboardingWorkflowInstance w) {
+        String contractType = resolveContractTypeCode(w);
+        if (contractType == null) return NoticePeriod.UNKNOWN;
+
+        try {
+            List<Map<String, Object>> rows =
+                jdbc.queryForList(NOTICE_PERIOD_SQL, contractType, w.getEmployeeProfileId());
+            if (rows.isEmpty()) return NoticePeriod.UNKNOWN;
+
+            Map<String, Object> row = rows.get(0);
+            boolean isCadre = "CADRE".equalsIgnoreCase(String.valueOf(row.get("grade_code")));
+            Object raw = isCadre ? row.get("days_manager") : row.get("days_standard");
+            // A cadre with no manager figure configured falls back to the standard one rather
+            // than to "unknown" — the standard préavis is the floor, never the wrong answer.
+            if (raw == null && isCadre) raw = row.get("days_standard");
+            if (raw == null) return NoticePeriod.UNKNOWN;
+
+            int days = ((Number) raw).intValue();
+            LocalDate exit = w.getTriggerDate() != null
+                ? w.getTriggerDate().plusDays(days) : null;
+            return new NoticePeriod(days, noticeLabel(days), exit);
+        } catch (Exception ex) {
+            log.warn("Could not resolve the notice period for instance {}: {}",
+                w.getId(), ex.getMessage());
+            return NoticePeriod.UNKNOWN;
+        }
+    }
+
+    /** The file's contract type, from its own contract or from the one in force. */
+    private String resolveContractTypeCode(OffboardingWorkflowInstance w) {
+        try {
+            if (w.getContractId() != null) {
+                List<Map<String, Object>> rows =
+                    jdbc.queryForList(CONTRACT_TYPE_SQL, w.getContractId());
+                if (!rows.isEmpty()) return (String) rows.get(0).get("contract_type_code");
+            }
+            Long contractId = findActiveContractId(w.getEmployeeProfileId());
+            if (contractId == null) return null;
+            List<Map<String, Object>> rows = jdbc.queryForList(CONTRACT_TYPE_SQL, contractId);
+            return rows.isEmpty() ? null : (String) rows.get(0).get("contract_type_code");
+        } catch (Exception ex) {
+            log.debug("Could not resolve the contract type for instance {}: {}",
+                w.getId(), ex.getMessage());
+            return null;
+        }
+    }
+
+    /** "3 mois" reads as a préavis; "90 jours" reads as a countdown. Whole months win. */
+    private String noticeLabel(int days) {
+        if (days <= 0) return "Aucun préavis";
+        if (days % 30 == 0) {
+            int months = days / 30;
+            return months == 1 ? "1 mois" : months + " mois";
+        }
+        return days + (days == 1 ? " jour" : " jours");
     }
 
     private OffboardingTaskDto toTaskDto(OffboardingTask t) {

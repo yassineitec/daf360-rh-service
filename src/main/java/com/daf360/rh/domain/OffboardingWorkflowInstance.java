@@ -81,6 +81,17 @@ public class OffboardingWorkflowInstance {
     @Column(name = "handover_minutes_name", length = 255, columnDefinition = "nvarchar(255)")
     private String handoverMinutesName;
 
+    /**
+     * V65 — the manager-set start of the passation. The window is [this .. lastWorkingDay];
+     * the duration is derived from it, never stored, because approving a leave changes it.
+     */
+    @Column(name = "handover_started_at")
+    private LocalDate handoverStartedAt;
+
+    /** V65 — the PV written in place. Coexists with the uploaded file; either satisfies. */
+    @Column(name = "handover_minutes_text", columnDefinition = "nvarchar(max)")
+    private String handoverMinutesText;
+
     // ── Stage 6 — Solde de tout compte (V63) ─────────────────────────────────
 
     /** When the settlement is actually paid. The amounts live in settlement_lines. */

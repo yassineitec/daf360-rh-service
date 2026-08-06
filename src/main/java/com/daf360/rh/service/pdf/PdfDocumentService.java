@@ -363,6 +363,178 @@ public class PdfDocumentService {
         return saveGeneratedDocument(requestId, "ATTESTATION_DOMICILIATION_SALAIRE", bytes, verCode, generatedBy, emp.getFullName());
     }
 
+    // -------------------------------------------------------------------------
+    // Offboarding documents
+    //
+    // Stages 4, 5 and 6 first shipped against DocumentGenerationService, which renders plain
+    // text through PDFBox — no letterhead, no logo, no verification footer, while every other
+    // document the company hands out goes through the branded Handlebars templates here.
+    // These three methods put them on the same pipeline.
+    //
+    // All of them are REQUIRES_NEW, like generateDechargePdf above: the offboarding service
+    // calls them inside its own transaction and falls back to the plain-text renderer when
+    // pdf-service is down. Without a separate transaction, the exception that triggers that
+    // fallback would mark the caller's transaction rollback-only and its commit would fail.
+    // -------------------------------------------------------------------------
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public GeneratedDocumentResponse generateDechargeRestitutionPdf(
+            Long employeeProfileId,
+            com.daf360.rh.dto.pdf.OffboardingPdfData.DischargeData input,
+            Long generatedBy) {
+
+        EmployeeDataDto emp     = loadEmployeeData(employeeProfileId);
+        String          docRef  = generateDocumentRef("RH-DEC-RES", emp.getPaysId());
+        String          verCode = generateVerificationCode();
+
+        DgParametersDto     dg   = loadDgParameters(emp.getPaysId());
+        Map<String, Object> data = buildCommonData(emp, dg, docRef, verCode);
+        data.put("jobTitle",       emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
+        data.put("lastWorkingDay", formatDateFr(input.lastWorkingDay()));
+        data.put("itAgentName",    input.itAgentName() != null ? input.itAgentName() : "");
+
+        // Two lists rather than one: an item that was never returned is acknowledged in its own
+        // section, which is the part of the document a signature actually commits to.
+        List<Map<String, Object>> returned = new java.util.ArrayList<>();
+        List<Map<String, Object>> written  = new java.util.ArrayList<>();
+        for (var a : input.assets()) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("label",        a.label());
+            row.put("serialNumber", a.serialNumber() != null ? a.serialNumber().trim() : "");
+            row.put("returnedDate", a.returnedDate() != null ? formatDateFr(a.returnedDate()) : "");
+            row.put("condition",    a.condition() != null ? a.condition() : "");
+            row.put("notes",        a.notes() != null ? a.notes() : "");
+            (a.writtenOff() ? written : returned).add(row);
+        }
+        data.put("assets",     returned);
+        data.put("writtenOff", written);
+
+        byte[] bytes = pdfClient.generatePdf("decharge-restitution", data);
+        return saveGeneratedDocument(null, "OFFBOARDING_DISCHARGE", bytes, verCode,
+                generatedBy, emp.getFullName());
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public GeneratedDocumentResponse generateAttestationFinContratPdf(
+            Long employeeProfileId,
+            com.daf360.rh.dto.pdf.OffboardingPdfData.EndOfContractData input,
+            Long generatedBy) {
+
+        EmployeeDataDto emp     = loadEmployeeData(employeeProfileId);
+        String          docRef  = generateDocumentRef("RH-ATT-FIN", emp.getPaysId());
+        String          verCode = generateVerificationCode();
+
+        DgParametersDto     dg   = loadDgParameters(emp.getPaysId());
+        Map<String, Object> data = buildCommonData(emp, dg, docRef, verCode);
+        data.put("jobTitle",          emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
+        data.put("contractDuration",  deriveContractDuration(emp.getContractType()));
+        data.put("hireDate",          formatDateFr(emp.getHireDate()));
+        data.put("endDate",           formatDateFr(input.endDate()));
+        data.put("departureReason",   departureReasonFr(input.departureReason()));
+        data.put("noticePeriodLabel", input.noticePeriodLabel() != null ? input.noticePeriodLabel() : "");
+        data.put("noticeWorked",      !Boolean.FALSE.equals(input.noticeWorked()));
+
+        byte[] bytes = pdfClient.generatePdf("attestation-fin-contrat", data);
+        return saveGeneratedDocument(null, "OFFBOARDING_END_OF_CONTRACT", bytes, verCode,
+                generatedBy, emp.getFullName());
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public GeneratedDocumentResponse generateRecuSoldeToutComptePdf(
+            Long employeeProfileId,
+            com.daf360.rh.dto.pdf.OffboardingPdfData.SettlementReceiptData input,
+            Long generatedBy) {
+
+        EmployeeDataDto emp     = loadEmployeeData(employeeProfileId);
+        String          docRef  = generateDocumentRef("RH-STC", emp.getPaysId());
+        String          verCode = generateVerificationCode();
+
+        DgParametersDto     dg   = loadDgParameters(emp.getPaysId());
+        Map<String, Object> data = buildCommonData(emp, dg, docRef, verCode);
+        data.put("jobTitle",        emp.getGrade() != null ? emp.getGrade() : emp.getDiscipline());
+        data.put("hireDate",        formatDateFr(emp.getHireDate()));
+        data.put("lastWorkingDay",  formatDateFr(input.lastWorkingDay()));
+        data.put("departureReason", departureReasonFr(input.departureReason()));
+        data.put("paymentMode",     input.paymentMode() != null ? input.paymentMode() : "");
+        data.put("executionDate",   input.executionDate() != null ? formatDateFr(input.executionDate()) : "");
+        data.put("currency",        deriveCurrency(emp.getIsoCode()));
+
+        // Amounts stay numeric: the template's formatMillimes helper renders them at the 3
+        // decimals the DECIMAL(12,3) column carries, so no rounding happens on the way out.
+        List<Map<String, Object>> lines = new java.util.ArrayList<>();
+        for (var l : input.lines()) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("label",  l.label());
+            row.put("amount", l.amount() != null ? l.amount() : BigDecimal.ZERO);
+            row.put("note",   l.note() != null ? l.note() : "");
+            lines.add(row);
+        }
+        BigDecimal total = input.total() != null ? input.total() : BigDecimal.ZERO;
+        data.put("lines",        lines);
+        data.put("total",        total);
+        data.put("totalInWords", amountInWords(total, emp.getIsoCode()));
+
+        byte[] bytes = pdfClient.generatePdf("recu-solde-tout-compte", data);
+        return saveGeneratedDocument(null, "OFFBOARDING_SETTLEMENT_RECEIPT", bytes, verCode,
+                generatedBy, emp.getFullName());
+    }
+
+    /**
+     * The certificat de travail of the Kit RH — the existing attestation, in its own transaction.
+     *
+     * A thin wrapper rather than REQUIRES_NEW on generateAttestationTravailPdf itself: that
+     * method is shared with the employee-request workflow, where the current rollback semantics
+     * are deliberate. Entering through the proxy here gives offboarding the isolation its
+     * fallback needs without changing anything for the other caller.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public GeneratedDocumentResponse generateWorkCertificateIsolated(Long employeeProfileId,
+                                                                     Long generatedBy) {
+        return generateAttestationTravailPdf(employeeProfileId, null, generatedBy);
+    }
+
+    /** Departure codes are stored raw on the instance; the French labels live in the UI only. */
+    private String departureReasonFr(String code) {
+        if (code == null || code.isBlank()) return "";
+        return switch (code.toUpperCase()) {
+            case "RESIGNATION"  -> "démission";
+            case "FIN_CONTRAT"  -> "fin de contrat";
+            case "LICENCIEMENT" -> "licenciement";
+            case "RETRAITE"     -> "départ à la retraite";
+            case "FIN_STAGE"    -> "fin de stage";
+            case "FIN_MISSION"  -> "fin de mission";
+            case "AUTRE"        -> "autre";
+            default             -> code;
+        };
+    }
+
+    /**
+     * "mille deux cents dinars et 450 millimes" — the amount spelled out, as a receipt for
+     * solde de tout compte is expected to carry. NumberToWordsFr only handles the integer part,
+     * so the fraction is appended in figures, which is how the millimes are normally written.
+     */
+    private String amountInWords(BigDecimal amount, String iso) {
+        if (amount == null) return "";
+        String words = NumberToWordsFr.convert(amount.abs());
+        int fraction = amount.abs().remainder(BigDecimal.ONE)
+                .movePointRight(3).setScale(0, java.math.RoundingMode.HALF_UP).intValue();
+        String unit = "EG".equalsIgnoreCase(String.valueOf(iso)) ? "livres égyptiennes" : "dinars";
+        StringBuilder sb = new StringBuilder();
+        if (amount.signum() < 0) sb.append("moins ");
+        sb.append(words).append(" ").append(unit);
+        if (fraction > 0) sb.append(" et ").append(fraction).append(" millimes");
+        return sb.toString();
+    }
+
+    private String deriveCurrency(String iso) {
+        if (iso == null) return "TND";
+        return switch (iso.toUpperCase()) {
+            case "TN" -> "TND";
+            case "EG" -> "EGP";
+            default   -> "TND";
+        };
+    }
+
     @Transactional(readOnly = true)
     public List<GeneratedDocumentResponse> listByProfile(Long employeeProfileId) {
         String sql =

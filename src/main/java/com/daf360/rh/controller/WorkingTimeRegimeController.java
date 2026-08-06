@@ -184,7 +184,9 @@ public class WorkingTimeRegimeController {
     public ResponseEntity<WeeklyScheduleDto> getWeeklySchedule(@PathVariable Long id) {
         ResolvedRegimeDto regime = resolutionService.resolveForEmployee(id);
         if (regime == null) return ResponseEntity.noContent().build();
-        return ResponseEntity.ok(resolutionService.buildWeeklySchedule(regime, LocalDate.now()));
+        // "This week" is the employee's week: derived in the resolved regime's zone, so a
+        // Monday-morning caller in a +9 entity does not get last week from a UTC server.
+        return ResponseEntity.ok(resolutionService.buildWeeklySchedule(regime, todayFor(regime)));
     }
 
     // ── By portal USER id ─────────────────────────────────────────────────────
@@ -207,7 +209,9 @@ public class WorkingTimeRegimeController {
     public ResponseEntity<WeeklyScheduleDto> getWeeklyScheduleForUser(@PathVariable Long userId) {
         ResolvedRegimeDto regime = resolutionService.resolveForUser(userId);
         if (regime == null) return ResponseEntity.noContent().build();
-        return ResponseEntity.ok(resolutionService.buildWeeklySchedule(regime, LocalDate.now()));
+        // "This week" is the employee's week: derived in the resolved regime's zone, so a
+        // Monday-morning caller in a +9 entity does not get last week from a UTC server.
+        return ResponseEntity.ok(resolutionService.buildWeeklySchedule(regime, todayFor(regime)));
     }
 
     /**
@@ -275,5 +279,21 @@ public class WorkingTimeRegimeController {
         }
         if (result == null) return ResponseEntity.noContent().build();
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * "Today" in the regime's own zone, for deriving which week to build.
+     *
+     * Falls back to the server date only when the entity has no timezone — in which case the
+     * response's null `timezone` already tells the client the schedule is unconfigured.
+     */
+    private static LocalDate todayFor(ResolvedRegimeDto regime) {
+        String tz = regime.getTimezone();
+        if (tz == null || tz.isBlank()) return LocalDate.now();
+        try {
+            return LocalDate.now(java.time.ZoneId.of(tz));
+        } catch (Exception e) {
+            return LocalDate.now();
+        }
     }
 }

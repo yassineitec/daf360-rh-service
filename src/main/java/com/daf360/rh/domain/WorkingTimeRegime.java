@@ -71,6 +71,20 @@ public class WorkingTimeRegime {
     @Column(name = "seasonal_to")
     private java.time.LocalDate seasonalTo;
 
+    /**
+     * IANA timezone this regime's hours are expressed in (e.g. Asia/Tokyo).
+     *
+     * NULL — the normal case — means "inherit the entity's zone" (pays.timezone). Set it only
+     * to run a regime on a different clock than its entity: assigned as a time-boxed personal
+     * override (regime_start_date / regime_end_date), that is how business travel is expressed
+     * — contractual hours and the entity's weekends stay put, only the clock moves, and the
+     * override expires by itself.
+     *
+     * Never an offset ('GMT+9'): see V67 for why IANA ids are the only safe representation.
+     */
+    @Column(name = "timezone", length = 64)
+    private String timezone;
+
     @Column(name = "created_at", nullable = false, columnDefinition = "datetime2")
     private LocalDateTime createdAt;
 

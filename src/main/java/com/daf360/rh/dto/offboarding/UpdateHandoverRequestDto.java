@@ -19,4 +19,16 @@ public class UpdateHandoverRequestDto {
 
     private String handoverMinutesUrl;
     private String handoverMinutesName;
+
+    /**
+     * V65 — the manager-set start of the passation. The window ends on the last working day,
+     * and the duration is derived from it rather than typed.
+     */
+    private java.time.LocalDate handoverStartedAt;
+
+    /**
+     * V65 — the PV written here instead of (or alongside) an uploaded file. Unlike the other
+     * fields, a blank string clears it: a text area is how you delete what you wrote.
+     */
+    private String handoverMinutesText;
 }

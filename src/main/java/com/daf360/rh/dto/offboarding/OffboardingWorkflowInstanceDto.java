@@ -54,7 +54,13 @@ public class OffboardingWorkflowInstanceDto {
     // already declares and binds them.
     private String    justificationDocumentUrl;
     private String    justificationDocumentName;
+    /**
+     * Both derived from `contract_type_config` since V64 — the file no longer carries a typed
+     * préavis. `noticePeriodDays` is the raw figure, so the UI can say where it comes from
+     * instead of only rendering the label.
+     */
     private String    noticePeriodLabel;
+    private Integer   noticePeriodDays;
     private Boolean   noticeWaiverRequested;
     private LocalDate theoreticalExitDate;
 
@@ -68,10 +74,25 @@ public class OffboardingWorkflowInstanceDto {
     private String         hrValidatedByName;
     private OffsetDateTime hrValidatedAt;
     private Boolean        noticePaidNotWorked;
+    /**
+     * V66 — may the CALLER give the RH validation of this file? A per-file, per-pays fact
+     * (the designated validator role), so the client cannot derive it from its permissions.
+     */
+    private Boolean        canValidateAsHr;
 
-    // ── Stage 3 — Passation (V60) ────────────────────────────────────────────
-    private String handoverMinutesUrl;
-    private String handoverMinutesName;
+    // ── Stage 3 — Passation (V60 + V65) ──────────────────────────────────────
+    private String    handoverMinutesUrl;
+    private String    handoverMinutesName;
+    /** V65 — the PV written in place. Either this or the file satisfies the stage. */
+    private String    handoverMinutesText;
+    /** V65 — the manager-set start of the passation window. */
+    private LocalDate handoverStartedAt;
+    /**
+     * Derived, never stored: the window broken into working days and days on validated leave.
+     * Null until both ends of the window exist. Recomputed on every read because approving a
+     * leave request changes it.
+     */
+    private OffboardingHandoverDurationDto handoverDuration;
 
     // ── Stage 4 — Informatique & Matériel (V61) ──────────────────────────────
     private OffsetDateTime accountDeactivationAt;

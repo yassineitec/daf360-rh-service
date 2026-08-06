@@ -50,6 +50,11 @@ public class UserSyncController {
      * The managers of a given user: active users whose role is the parent of the user's role
      * (Roles.parent_role_id). Empty when the user's role is top-level. Requires a valid token
      * (called by the pointage service on the caller's behalf, forwarding their JWT).
+     *
+     * Restricted to the user's own `pays_id`: the parent role exists in every country, so this
+     * used to return the manager role's holders across ALL of them — a Tunisian employee's
+     * "managers" included the Egyptian ones. A hierarchy that crosses entities is not one.
+     * Users with no pays_id fall back to the unfiltered set rather than to nothing.
      */
     @GetMapping("/users/{userId}/managers")
     public List<UserForSyncDto> managersForUser(@PathVariable Long userId) {
@@ -66,6 +71,10 @@ public class UserSyncController {
                       JOIN Roles pr  ON pr.id = cr.parent_role_id
                       WHERE cu.id = ?
                   )
+                  AND (
+                      u.pays_id = (SELECT cu2.pays_id FROM Users cu2 WHERE cu2.id = ?)
+                      OR (SELECT cu3.pays_id FROM Users cu3 WHERE cu3.id = ?) IS NULL
+                  )
                 ORDER BY u.fullName
                 """;
         return jdbcTemplate.query(sql, (rs, rn) -> new UserForSyncDto(
@@ -76,6 +85,6 @@ public class UserSyncController {
                 rs.getLong("pays_id"),
                 rs.getString("role_name"),
                 rs.getBoolean("isActive")
-        ), userId);
+        ), userId, userId, userId);
     }
 }

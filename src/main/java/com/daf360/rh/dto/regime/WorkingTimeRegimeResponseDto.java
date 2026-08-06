@@ -22,4 +22,6 @@ public class WorkingTimeRegimeResponseDto {
     /** Seasonal window; non-null means this regime can override the entity's others. */
     private java.time.LocalDate seasonalFrom;
     private java.time.LocalDate seasonalTo;
+    /** IANA timezone override; null = the regime runs on its entity's clock. */
+    private String timezone;
 }

@@ -106,12 +106,14 @@ public class OffboardingController {
     // ── Stage 3 — Passation ───────────────────────────────────────────────────
 
     /**
-     * Names the successor and records the PV de passation. Stage 3 belongs to the manager,
-     * so it is NOT behind the RH-only declaration permission.
+     * Names the successor, sets the passation window and records the PV.
+     *
+     * Only the class-level read gate here since V65: stage 3 belongs to the departing
+     * employee's manager, and "is the caller that person" depends on the instance — the
+     * annotation cannot load it. `assertMayManageHandover` accepts the named handover manager,
+     * a hierarchical manager of the employee, or a holder of the stage/RH permission.
      */
     @PatchMapping("/api/hr/offboarding/{instanceId}/handover")
-    @PreAuthorize("hasPermission(null, 'RH_OFFBOARDING_STAGE_HANDOVER') "
-                + "or hasPermission(null, 'RH_MANAGE_OFFBOARDING')")
     public OffboardingWorkflowInstanceDto updateHandover(
             @PathVariable Long instanceId,
             @Valid @RequestBody UpdateHandoverRequestDto request,
@@ -259,6 +261,34 @@ public class OffboardingController {
             .header("Content-Disposition",
                 "attachment; filename=\"kit-rh-" + instanceId + ".zip\"")
             .body(zip);
+    }
+
+    /**
+     * The file's own documents, streamed: the décharge (stage 4), the PV de passation (stage 3)
+     * and the justification (stage 1). They all exist because the stored value is a server-side
+     * file path — rh-service serves no static resources, so the UI's `href` to it could never
+     * download anything.
+     *
+     * `discharge` shares its path with the POST that generates it; the verb tells them apart.
+     */
+    @GetMapping("/api/hr/offboarding/{instanceId}/documents/{kind:discharge|minutes|justification}")
+    public ResponseEntity<byte[]> downloadInstanceDocument(@PathVariable Long instanceId,
+                                                           @PathVariable String kind) {
+        return fileResponse(offboardingService.readInstanceDocument(instanceId, kind));
+    }
+
+    @GetMapping("/api/hr/offboarding/checklist-items/{itemId}/document")
+    public ResponseEntity<byte[]> downloadChecklistDocument(@PathVariable Long itemId) {
+        return fileResponse(offboardingService.readChecklistDocument(itemId));
+    }
+
+    private ResponseEntity<byte[]> fileResponse(
+            com.daf360.rh.service.OffboardingWorkflowService.StoredFile file) {
+        return ResponseEntity.ok()
+            .header("Content-Type", file.contentType())
+            .header("Content-Disposition",
+                "attachment; filename=\"" + file.filename() + "\"")
+            .body(file.bytes());
     }
 
     // ── Stage 6 — Solde de tout compte ────────────────────────────────────────

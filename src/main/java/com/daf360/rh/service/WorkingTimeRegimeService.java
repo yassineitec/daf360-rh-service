@@ -57,7 +57,11 @@ public class WorkingTimeRegimeService {
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
     public WorkingTimeRegimeResponseDto create(WorkingTimeRegimeCreateDto dto, Authentication auth) {
+        // 400 on a bad zone id here, rather than a regime that silently disables the presence
+        // automation of everyone assigned to it.
+        PaysTimezoneService.requireValidZone(dto.getTimezone());
         WorkingTimeRegime regime = mapper.toEntity(dto);
+        regime.setTimezone(blankToNull(dto.getTimezone()));
         regime.setCreatedAt(LocalDateTime.now());
         WorkingTimeRegime saved = regimeRepository.save(regime);
         auditService.log(actorId(auth), "CREATE_REGIME", "WorkingTimeRegime", saved.getId(), null, null);
@@ -76,6 +80,7 @@ public class WorkingTimeRegimeService {
     }
 
     public WorkingTimeRegimeResponseDto update(Long id, WorkingTimeRegimeCreateDto dto, Authentication auth) {
+        PaysTimezoneService.requireValidZone(dto.getTimezone());
         WorkingTimeRegime regime = findOrThrow(id);
         mapper.updateFromDto(dto, regime);
         // Applied outside the mapper because it ignores nulls: without this, clearing the
@@ -83,6 +88,9 @@ public class WorkingTimeRegimeService {
         // active seasonal window overrides every other assignment level.
         regime.setSeasonalFrom(dto.getSeasonalFrom());
         regime.setSeasonalTo(dto.getSeasonalTo());
+        // Same reason: clearing the timezone must restore inheritance from the entity, not
+        // leave a stale override running the regime on another country's clock.
+        regime.setTimezone(blankToNull(dto.getTimezone()));
         regime.setUpdatedAt(LocalDateTime.now());
         WorkingTimeRegime saved = regimeRepository.save(regime);
         auditService.log(actorId(auth), "UPDATE_REGIME", "WorkingTimeRegime", id, null, null);
@@ -156,6 +164,9 @@ public class WorkingTimeRegimeService {
         dto.setIsFlexible(base.getIsFlexible());
         dto.setIsDefault(base.getIsDefault());
         dto.setIsActive(base.getIsActive());
+        dto.setSeasonalFrom(base.getSeasonalFrom());
+        dto.setSeasonalTo(base.getSeasonalTo());
+        dto.setTimezone(base.getTimezone());
         dto.setEmployeeCount(empCount);
         dto.setRoleCount(roleCount);
         return dto;
@@ -362,6 +373,11 @@ public class WorkingTimeRegimeService {
     }
 
     // ── Private ───────────────────────────────────────────────────────────────
+
+    /** "" from an empty form control means "inherit", which the column stores as NULL. */
+    private static String blankToNull(String s) {
+        return (s == null || s.isBlank()) ? null : s.trim();
+    }
 
     private WorkingTimeRegime findOrThrow(Long id) {
         return regimeRepository.findById(id).orElseThrow(() ->

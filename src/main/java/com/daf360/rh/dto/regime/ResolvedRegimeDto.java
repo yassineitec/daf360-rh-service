@@ -34,6 +34,15 @@ public class ResolvedRegimeDto {
     private Long      paysId;
     /** True when this regime won because of its seasonal window. */
     private Boolean   isSeasonal;
+    /**
+     * IANA zone the hour fields below are expressed in: the regime's own override if it has
+     * one, otherwise the entity's (pays.timezone).
+     *
+     * NULL means nothing is configured, and every consumer must treat that as "no usable
+     * schedule" rather than falling back to its own clock — "08:00" without a zone is not a
+     * time, and guessing is what made presence transitions fire an hour late.
+     */
+    private String    timezone;
 
     // --- pointage-friendly aliases (computed by RegimeResolutionService) ---
     private String       regimeName;        // = regimeLabelFr

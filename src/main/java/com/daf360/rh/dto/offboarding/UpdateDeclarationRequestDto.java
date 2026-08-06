@@ -24,12 +24,12 @@ public class UpdateDeclarationRequestDto {
     /** The negotiated departure date. Setting this is what completes the declaration. */
     private LocalDate lastWorkingDay;
 
-    /** Trigger date + notice per the convention collective. May differ from the above. */
-    private LocalDate theoreticalExitDate;
+    // `theoreticalExitDate` and `noticePeriodLabel` were here and are gone on purpose: since
+    // V64 the préavis is configuration (`contract_type_config`, per pays × contract type) and
+    // the theoretical exit date is `triggerDate + préavis`. Both are computed on read, so
+    // sending them had no effect other than letting two files under the same contract disagree.
 
-    /** Free label ("3 mois", "Aucun") — the notice period is per-pays convention. */
-    private String noticePeriodLabel;
-
+    /** The waiver is still a per-file decision — it is what the parties agreed, not config. */
     private Boolean noticeWaiverRequested;
 
     /** URL + display name of the resignation letter, as returned by the document upload. */

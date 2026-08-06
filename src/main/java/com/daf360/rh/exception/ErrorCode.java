@@ -53,6 +53,7 @@ public enum ErrorCode {
     RECRUITMENT_DEMAND_INVALID_TRANSITION (HttpStatus.UNPROCESSABLE_CONTENT, "Transition de statut invalide pour la demande de recrutement"),
     RECRUITMENT_DEMAND_ALREADY_REVIEWED   (HttpStatus.CONFLICT,           "Cette demande a déjà été traitée"),
     BUSINESS_RULE_VIOLATION         (HttpStatus.UNPROCESSABLE_CONTENT,    "Règle métier non respectée"),
+    INVALID_TIMEZONE                (HttpStatus.BAD_REQUEST,              "Fuseau horaire invalide — utilisez un identifiant IANA (ex. Africa/Tunis)"),
     FORBIDDEN                       (HttpStatus.FORBIDDEN,                "Accès refusé"),
     INTERNAL_ERROR                  (HttpStatus.INTERNAL_SERVER_ERROR,    "Erreur interne — veuillez réessayer");
 

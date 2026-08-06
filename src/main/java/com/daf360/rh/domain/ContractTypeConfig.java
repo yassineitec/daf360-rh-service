@@ -40,6 +40,18 @@ public class ContractTypeConfig {
     @Builder.Default
     private Boolean trialPeriodRenewable = false;
 
+    /**
+     * Préavis in calendar days (V64) — the source of the offboarding declaration's notice
+     * period, which used to be typed per file. Nullable: NULL means "not configured for this
+     * pays yet", which the offboarding resolver reports as unknown rather than as zero.
+     */
+    @Column(name = "notice_period_days_standard")
+    private Integer noticePeriodDaysStandard;
+
+    /** The longer préavis owed by (and to) a cadre. */
+    @Column(name = "notice_period_days_manager")
+    private Integer noticePeriodDaysManager;
+
     @Column(name = "alert_days_before_expiry", nullable = false)
     @Builder.Default
     private Integer alertDaysBeforeExpiry = 30;

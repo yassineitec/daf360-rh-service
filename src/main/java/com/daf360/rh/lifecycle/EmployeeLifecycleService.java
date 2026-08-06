@@ -396,6 +396,8 @@ public class EmployeeLifecycleService {
         if (dto.getTrialPeriodDaysStandard()    != null) config.setTrialPeriodDaysStandard(dto.getTrialPeriodDaysStandard());
         if (dto.getTrialPeriodDaysManager()     != null) config.setTrialPeriodDaysManager(dto.getTrialPeriodDaysManager());
         if (dto.getTrialPeriodRenewable()       != null) config.setTrialPeriodRenewable(dto.getTrialPeriodRenewable());
+        if (dto.getNoticePeriodDaysStandard()   != null) config.setNoticePeriodDaysStandard(dto.getNoticePeriodDaysStandard());
+        if (dto.getNoticePeriodDaysManager()    != null) config.setNoticePeriodDaysManager(dto.getNoticePeriodDaysManager());
         if (dto.getAlertDaysBeforeExpiry()      != null) config.setAlertDaysBeforeExpiry(dto.getAlertDaysBeforeExpiry());
         if (dto.getIndemnityRatePct()           != null) config.setIndemnityRatePct(dto.getIndemnityRatePct());
         if (dto.getIndemnityApplicable()        != null) config.setIndemnityApplicable(dto.getIndemnityApplicable());
@@ -648,6 +650,8 @@ public class EmployeeLifecycleService {
             .trialPeriodDaysStandard(c.getTrialPeriodDaysStandard())
             .trialPeriodDaysManager(c.getTrialPeriodDaysManager())
             .trialPeriodRenewable(c.getTrialPeriodRenewable())
+            .noticePeriodDaysStandard(c.getNoticePeriodDaysStandard())
+            .noticePeriodDaysManager(c.getNoticePeriodDaysManager())
             .alertDaysBeforeExpiry(c.getAlertDaysBeforeExpiry())
             .indemnityRatePct(c.getIndemnityRatePct())
             .indemnityApplicable(c.getIndemnityApplicable())

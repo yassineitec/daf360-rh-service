@@ -43,4 +43,14 @@ public class WorkingTimeRegimeCreateDto {
      */
     private java.time.LocalDate seasonalFrom;
     private java.time.LocalDate seasonalTo;
+
+    /**
+     * IANA timezone override (e.g. Asia/Tokyo). Blank/null = inherit the entity's zone,
+     * which is what almost every regime should do.
+     *
+     * Like the seasonal dates, this is applied on update even when null so that clearing it
+     * in the UI really restores inheritance — the mapper otherwise ignores nulls.
+     */
+    @Size(max = 64)
+    private String timezone;
 }
