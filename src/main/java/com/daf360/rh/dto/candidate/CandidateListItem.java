@@ -18,6 +18,12 @@ public class CandidateListItem {
     private String gender;
     private String appliedPosition;
     private String appliedGrade;
+    /**
+     * The vacancy this candidature answers. Batch-resolved in CandidateService — null when
+     * the application was spontaneous rather than against an open demand.
+     */
+    private Long   recruitmentDemandId;
+    private String recruitmentDemandJobTitle;
     private LocalDate expectedStartDate;
     private CandidateStatus status;
     private OffsetDateTime createdAt;

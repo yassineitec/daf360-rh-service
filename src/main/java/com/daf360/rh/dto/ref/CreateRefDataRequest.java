@@ -14,4 +14,6 @@ public class CreateRefDataRequest {
     private String swiftCode;
     /** Departments only — references parent department. */
     private Long parentId;
+    /** Grades only — default préavis in calendar days (V64). Null = no default. */
+    private Integer noticePeriodDays;
 }

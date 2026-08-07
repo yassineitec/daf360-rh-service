@@ -19,7 +19,9 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -90,6 +92,81 @@ public class EmployeeDocumentService {
         auditService.log(actorId(auth), "UPLOAD_DOCUMENT", "EmployeeDocument", saved.getId(),
                 null, documentType);
         return mapper.toDto(saved);
+    }
+
+    // ── Staged uploads (onboarding, before a profile exists) ──────────────────
+
+    /**
+     * Stores a file against a CANDIDATE, for the onboarding wizard.
+     *
+     * The signed contract is uploaded on the Contrat step, which runs before completion
+     * creates the employee profile — so there is no profileId to scope it to yet. The file
+     * lands under `<storagePath>/candidates/<candidateId>/` and the returned url goes into the
+     * draft JSON; {@link #registerStagedDocument} turns it into a real document row at
+     * completion.
+     *
+     * The file is NOT moved at completion: the stored path stays valid, and moving it would
+     * add a failure mode that loses the document for no gain.
+     */
+    public Map<String, String> stageCandidateDocument(Long candidateId, MultipartFile file)
+            throws IOException {
+        String contentType = file.getContentType();
+        if (contentType == null || !ALLOWED_TYPES.contains(contentType)) {
+            throw new AppException(ErrorCode.DOCUMENT_TYPE_UNSUPPORTED);
+        }
+        if (file.getSize() > MAX_BYTES) {
+            throw new AppException(ErrorCode.DOCUMENT_SIZE_EXCEEDED);
+        }
+
+        String originalName = file.getOriginalFilename();
+        String ext = (originalName != null && originalName.contains("."))
+                ? originalName.substring(originalName.lastIndexOf('.'))
+                : contentTypeToExt(contentType);
+
+        Path dir = Paths.get(storagePath, "candidates", String.valueOf(candidateId));
+        Files.createDirectories(dir);
+        Path dest = dir.resolve(UUID.randomUUID() + ext);
+        file.transferTo(dest);
+
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("url",  dest.toString());
+        result.put("name", originalName != null ? originalName : dest.getFileName().toString());
+        return result;
+    }
+
+    /**
+     * Registers an already-stored file as a document on a profile — the completion half of
+     * {@link #stageCandidateDocument}. Idempotent on (profile, type, url) so a re-run of an
+     * incomplete onboarding does not create duplicate rows.
+     */
+    public void registerStagedDocument(Long profileId, String fileUrl, String fileName,
+                                       String documentType, Long uploadedBy) {
+        if (fileUrl == null || fileUrl.isBlank()) return;
+
+        boolean exists = documentRepository.findByEmployeeProfileId(profileId).stream()
+                .anyMatch(d -> documentType.equals(d.getDocumentType())
+                            && fileUrl.equals(d.getFileUrl()));
+        if (exists) return;
+
+        long sizeKb = 0;
+        try {
+            sizeKb = Files.size(Paths.get(fileUrl)) / 1024;
+        } catch (Exception ex) {
+            // The row is still worth creating: the size is cosmetic, the reference is not.
+            log.debug("Could not size staged document {}: {}", fileUrl, ex.getMessage());
+        }
+
+        EmployeeDocument doc = EmployeeDocument.builder()
+                .employeeProfileId(profileId)
+                .documentType(documentType)
+                .fileName(fileName)
+                .fileUrl(fileUrl)
+                .fileSizeKb((int) sizeKb)
+                .verificationStatus("PENDING")
+                .uploadedAt(OffsetDateTime.now(PARIS))
+                .uploadedBy(uploadedBy)
+                .build();
+        documentRepository.save(doc);
     }
 
     // ── List ──────────────────────────────────────────────────────────────────

@@ -79,6 +79,9 @@ public interface CandidateMapper {
     @Mapping(target = "cvOriginalName",        ignore = true)
     @Mapping(target = "cvUploadedAt",          ignore = true)
     @Mapping(target = "fitScore",              ignore = true)
+    // Still ignored, now DELIBERATELY: CandidateService.applyRecruitmentDemand owns this
+    // field because attaching a vacancy is validated (must be APPROUVEE, must be the
+    // candidate's own pays). Mapping it here would write it unchecked.
     @Mapping(target = "recruitmentDemandId",   ignore = true)
     @Mapping(target = "employmentTypeId",      ignore = true)
     // FK dimension fields — resolved by CandidateService after mapping

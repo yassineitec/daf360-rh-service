@@ -62,11 +62,18 @@ public class OfferService {
         requireApprovedInterviews(candidateId);
 
         OffsetDateTime now = OffsetDateTime.now();
+        // The préavis is negotiated here, starting from the grade's default (V64). An
+        // explicit value in the request always wins — including a deliberate 0.
+        Integer noticeDays = req.getNoticePeriodDays() != null
+                ? req.getNoticePeriodDays()
+                : gradeNoticeDefault(candidate);
         JobOffer offer = JobOffer.builder()
                 .candidateId(candidateId)
                 .askedSalary(req.getAskedSalary())
                 .proposedSalary(req.getProposedSalary())
                 .salaryNote(req.getSalaryNote())
+                .noticePeriodDays(noticeDays)
+                .noticePeriodNote(req.getNoticePeriodNote())
                 .expectedHireDate(req.getExpectedHireDate())
                 .expiryDate(req.getExpiryDate())
                 .sentAt(now)
@@ -83,7 +90,9 @@ public class OfferService {
 
         auditService.log(actorUserId != null ? actorUserId.toString() : "SYSTEM",
                 "SEND_OFFER", "CANDIDATE", candidateId,
-                "status=ACCEPTED", "status=OFFER_SENT; proposedSalary=" + req.getProposedSalary());
+                "status=ACCEPTED",
+                "status=OFFER_SENT; proposedSalary=" + req.getProposedSalary()
+                        + "; noticePeriodDays=" + noticeDays);
 
         return OfferResponse.from(offer);
     }
@@ -99,10 +108,15 @@ public class OfferService {
         assertPending(offer, candidate); // SENT + candidate OFFER_SENT
 
         OffsetDateTime now = OffsetDateTime.now();
-        String before = "proposedSalary=" + offer.getProposedSalary();
+        // job_offers is mutated in place, so this audit line is the ONLY record of what the
+        // previous round offered. Both negotiated figures belong in it.
+        String before = "proposedSalary=" + offer.getProposedSalary()
+                + "; noticePeriodDays=" + offer.getNoticePeriodDays();
         if (req.getAskedSalary() != null)      offer.setAskedSalary(req.getAskedSalary());
         if (req.getProposedSalary() != null)   offer.setProposedSalary(req.getProposedSalary());
         if (req.getSalaryNote() != null)        offer.setSalaryNote(req.getSalaryNote());
+        if (req.getNoticePeriodDays() != null)  offer.setNoticePeriodDays(req.getNoticePeriodDays());
+        if (req.getNoticePeriodNote() != null)  offer.setNoticePeriodNote(req.getNoticePeriodNote());
         if (req.getExpectedHireDate() != null)  offer.setExpectedHireDate(req.getExpectedHireDate());
         if (req.getExpiryDate() != null)        offer.setExpiryDate(req.getExpiryDate());
         offer.setSentAt(now);        // re-issued
@@ -112,7 +126,8 @@ public class OfferService {
 
         auditService.log(actorUserId != null ? actorUserId.toString() : "SYSTEM",
                 "RENEGOTIATE_OFFER", "CANDIDATE", candidateId,
-                before, "proposedSalary=" + offer.getProposedSalary());
+                before, "proposedSalary=" + offer.getProposedSalary()
+                        + "; noticePeriodDays=" + offer.getNoticePeriodDays());
 
         return OfferResponse.from(offer);
     }
@@ -168,6 +183,27 @@ public class OfferService {
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * The candidate's grade default préavis (V64), or null when the grade is unset or has
+     * no default.
+     *
+     * Null is returned rather than a constant on purpose: a fabricated default would put a
+     * figure in an offer document that nobody decided. The offer form shows it as unset and
+     * makes RH type one.
+     */
+    private Integer gradeNoticeDefault(Candidate candidate) {
+        try {
+            return candidate.getAppliedGrade() != null
+                    ? candidate.getAppliedGrade().getNoticePeriodDays() : null;
+        } catch (Exception ex) {
+            // Lazy association on a detached candidate — not worth failing the offer over.
+            log.debug("Could not read the grade préavis default for candidate {}: {}",
+                    candidate.getId(), ex.getMessage());
+            return null;
+        }
+    }
+
     /**
      * Interview gate: an offer requires the candidate to have passed the interview
      * stage — at least one interview with result PASS and none with result FAIL.

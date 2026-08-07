@@ -16,7 +16,19 @@ public class RecruitmentDemandResponse {
 
     private String jobTitle;
     private String jobExactTitle;
+    /** Department LABEL — kept for older readers; `departmentId` is the real link. */
     private String department;
+
+    /**
+     * Position dimensions (V72), the same tables employee_profiles uses. Returned so the
+     * candidate form can PREFILL its own position fields from the chosen vacancy instead of
+     * matching labels — that is the whole reason these are on the demand.
+     */
+    private Long   departmentId;
+    private Long   gradeId;
+    private String gradeLabel;
+    private Long   disciplineId;
+    private String disciplineLabel;
     private String requiredProfile;
     private String scopeOfWork;
     private String needDescription;
@@ -32,6 +44,13 @@ public class RecruitmentDemandResponse {
 
     private Long experienceLevelId;
     private String experienceLevelLabel;
+    /**
+     * The level's `value_code` (DEBUTANT / JUNIOR / …), not just its id and label.
+     *
+     * The candidate form maps the required level onto its own experience-in-YEARS slider, and
+     * doing that off the label would break the moment someone rewords it.
+     */
+    private String experienceLevelCode;
 
     private Long educationLevelId;
     private String educationLevelLabel;

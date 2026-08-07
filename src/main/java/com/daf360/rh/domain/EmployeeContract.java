@@ -61,6 +61,24 @@ public class EmployeeContract {
     @Column(name = "date_fin_pe_renouvellement")
     private LocalDate dateFinPeRenouvellement;
 
+    /**
+     * Préavis in calendar days, FROZEN when the contract is created (V69) — the source of
+     * truth for what this employee owes, and the only thing offboarding reads.
+     *
+     * Not recomputed on read: the grade default and the offer both move afterwards (an admin
+     * retunes the grade; job_offers is mutated in place on renegotiation), and resolving
+     * live would silently rewrite what someone is owed months after they signed. Same shape
+     * as {@code dateFinPeriodeEssai}, computed once in doCreateContract.
+     *
+     * Null = unknown (a contract that predates V69). Never coerce to 0.
+     */
+    @Column(name = "notice_period_days")
+    private Integer noticePeriodDays;
+
+    /** GRADE_DEFAULT | NEGOTIATED | MANUAL — lets the UI explain the figure, not just show it. */
+    @Column(name = "notice_period_source", length = 20)
+    private String noticePeriodSource;
+
     @Column(name = "end_reason_code", length = 50)
     private String endReasonCode;
 

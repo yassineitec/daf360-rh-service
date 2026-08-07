@@ -1,6 +1,7 @@
 package com.daf360.rh.dto.onboarding;
 
 import lombok.Data;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
@@ -14,6 +15,12 @@ public class SaveDraftRequest {
     private String grade;
     private String discipline;
     private String nogLevel;
+    // Section 2c — Contrat. Draft state only; frozen onto the contract at completion.
+    // The draft is stored as JSON in onboarding_drafts.draft_data, so these need no migration.
+    private Integer    noticePeriodDays;
+    private BigDecimal agreedNetSalary;
+    private String     contractDocumentUrl;
+    private String     contractDocumentName;
     // Section 3 — Regime
     private Long regimeTemplateId;
     private LocalDate regimeStartDate;

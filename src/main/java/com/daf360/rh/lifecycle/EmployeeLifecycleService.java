@@ -102,6 +102,8 @@ public class EmployeeLifecycleService {
         LocalDate trialEnd = calculateTrialEndDate(
             dto.getDateDebut(), dto.getContractTypeCode(), dto.isManagerProfile(), config);
 
+        ResolvedNotice notice = resolveNoticePeriod(dto, profile);
+
         EmployeeContract contract = EmployeeContract.builder()
             .employeeProfile(profile)
             .paysId(dto.getPaysId())
@@ -110,6 +112,8 @@ public class EmployeeLifecycleService {
             .dateDebut(dto.getDateDebut())
             .dateFinPrevue(dto.getDateFinPrevue())
             .dateFinPeriodeEssai(trialEnd)
+            .noticePeriodDays(notice.days())
+            .noticePeriodSource(notice.source())
             .referenceContrat(dto.getReferenceContrat())
             .civpAnetiReference(dto.getCivpAnetiReference())
             .civpConventionDate(dto.getCivpConventionDate())
@@ -396,8 +400,6 @@ public class EmployeeLifecycleService {
         if (dto.getTrialPeriodDaysStandard()    != null) config.setTrialPeriodDaysStandard(dto.getTrialPeriodDaysStandard());
         if (dto.getTrialPeriodDaysManager()     != null) config.setTrialPeriodDaysManager(dto.getTrialPeriodDaysManager());
         if (dto.getTrialPeriodRenewable()       != null) config.setTrialPeriodRenewable(dto.getTrialPeriodRenewable());
-        if (dto.getNoticePeriodDaysStandard()   != null) config.setNoticePeriodDaysStandard(dto.getNoticePeriodDaysStandard());
-        if (dto.getNoticePeriodDaysManager()    != null) config.setNoticePeriodDaysManager(dto.getNoticePeriodDaysManager());
         if (dto.getAlertDaysBeforeExpiry()      != null) config.setAlertDaysBeforeExpiry(dto.getAlertDaysBeforeExpiry());
         if (dto.getIndemnityRatePct()           != null) config.setIndemnityRatePct(dto.getIndemnityRatePct());
         if (dto.getIndemnityApplicable()        != null) config.setIndemnityApplicable(dto.getIndemnityApplicable());
@@ -442,6 +444,61 @@ public class EmployeeLifecycleService {
                 && (dto.getCivpAnetiReference() == null || dto.getCivpAnetiReference().isBlank())) {
             throw new BusinessRuleException("D3-98",
                 "La référence ANETI est obligatoire pour un CIVP en Tunisie.");
+        }
+    }
+
+    // ── Préavis resolution (V69) ──────────────────────────────────────────────
+
+    /** The préavis to freeze on the contract, and where it came from. */
+    record ResolvedNotice(Integer days, String source) {
+        static final ResolvedNotice UNKNOWN = new ResolvedNotice(null, null);
+    }
+
+    private static final String OFFER_NOTICE_SQL =
+        "SELECT TOP 1 jo.notice_period_days " +
+        "FROM [dbo].[employee_profiles] ep " +
+        "JOIN [dbo].[job_offers] jo ON jo.candidate_id = ep.candidate_id " +
+        "WHERE ep.id = ? AND jo.notice_period_days IS NOT NULL";
+
+    private static final String GRADE_NOTICE_SQL =
+        "SELECT g.notice_period_days " +
+        "FROM [dbo].[employee_profiles] ep " +
+        "JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
+        "WHERE ep.id = ?";
+
+    /**
+     * Resolves the préavis once, at creation time: explicit request value → the candidate's
+     * offer → the employee's grade default → unknown.
+     *
+     * The request wins outright (including a deliberate 0) because that is RH confirming the
+     * figure on the Contrat step, which is the last word by design. Nothing here is
+     * recomputed later — see EmployeeContract.noticePeriodDays.
+     */
+    ResolvedNotice resolveNoticePeriod(CreateContractRequest dto, EmployeeProfile profile) {
+        if (dto.getNoticePeriodDays() != null) {
+            return new ResolvedNotice(dto.getNoticePeriodDays(), "MANUAL");
+        }
+        Integer fromOffer = queryNotice(OFFER_NOTICE_SQL, profile.getId());
+        if (fromOffer != null) return new ResolvedNotice(fromOffer, "NEGOTIATED");
+
+        Integer fromGrade = queryNotice(GRADE_NOTICE_SQL, profile.getId());
+        if (fromGrade != null) return new ResolvedNotice(fromGrade, "GRADE_DEFAULT");
+
+        // Loud, because a contract with no préavis makes the offboarding exit date
+        // unknowable and nothing downstream can invent one.
+        log.warn("Contract for profile {} created with NO préavis: no value supplied, no offer "
+                 + "figure, and its grade has no default", profile.getId());
+        return ResolvedNotice.UNKNOWN;
+    }
+
+    /** Never throws: a missing column or absent row must not block contract creation. */
+    private Integer queryNotice(String sql, Long profileId) {
+        try {
+            List<Integer> rows = jdbc.queryForList(sql, Integer.class, profileId);
+            return rows.isEmpty() ? null : rows.get(0);
+        } catch (Exception ex) {
+            log.debug("Préavis lookup failed for profile {}: {}", profileId, ex.getMessage());
+            return null;
         }
     }
 
@@ -568,6 +625,8 @@ public class EmployeeLifecycleService {
             .dateFinPeriodeEssai(c.getDateFinPeriodeEssai())
             .periodeEssaiRenouvelee(c.getPeriodeEssaiRenouvelee())
             .dateFinPeRenouvellement(c.getDateFinPeRenouvellement())
+            .noticePeriodDays(c.getNoticePeriodDays())
+            .noticePeriodSource(c.getNoticePeriodSource())
             .endReasonCode(c.getEndReasonCode())
             .endNotes(c.getEndNotes())
             .referenceContrat(c.getReferenceContrat())
@@ -603,6 +662,8 @@ public class EmployeeLifecycleService {
             .dateDebut(c.getDateDebut())
             .dateFinPrevue(c.getDateFinPrevue())
             .dateFinPeriodeEssai(c.getDateFinPeriodeEssai())
+            .noticePeriodDays(c.getNoticePeriodDays())
+            .noticePeriodSource(c.getNoticePeriodSource())
             .isActive(c.getIsActive())
             .dossierLocked(c.getDossierLocked())
             .referenceContrat(c.getReferenceContrat())
@@ -650,8 +711,6 @@ public class EmployeeLifecycleService {
             .trialPeriodDaysStandard(c.getTrialPeriodDaysStandard())
             .trialPeriodDaysManager(c.getTrialPeriodDaysManager())
             .trialPeriodRenewable(c.getTrialPeriodRenewable())
-            .noticePeriodDaysStandard(c.getNoticePeriodDaysStandard())
-            .noticePeriodDaysManager(c.getNoticePeriodDaysManager())
             .alertDaysBeforeExpiry(c.getAlertDaysBeforeExpiry())
             .indemnityRatePct(c.getIndemnityRatePct())
             .indemnityApplicable(c.getIndemnityApplicable())

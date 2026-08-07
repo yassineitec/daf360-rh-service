@@ -22,4 +22,9 @@ public class RefDataItemDto {
     private String swiftCode;
     /** Parent department id — only populated for departments. */
     private Long parentId;
+    /**
+     * Default préavis in calendar days — only populated for grades (V64). Null means the
+     * grade has no default, which the UI must show as unset rather than as zero.
+     */
+    private Integer noticePeriodDays;
 }

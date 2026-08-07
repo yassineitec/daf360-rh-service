@@ -17,6 +17,10 @@ public class ContractListDto {
     private LocalDate dateDebut;
     private LocalDate dateFinPrevue;
     private LocalDate dateFinPeriodeEssai;
+    /** Préavis frozen on this contract (V69); null before it existed. */
+    private Integer noticePeriodDays;
+    /** GRADE_DEFAULT | NEGOTIATED | MANUAL */
+    private String noticePeriodSource;
     private Boolean isActive;
     private Boolean dossierLocked;
     private String referenceContrat;

@@ -4,9 +4,11 @@ import com.daf360.rh.config.AppProperties;
 import com.daf360.rh.domain.Candidate;
 import com.daf360.rh.domain.EmployeeProfile;
 import com.daf360.rh.domain.ItProvisioning;
+import com.daf360.rh.domain.RecruitmentDemand;
 import com.daf360.rh.domain.enums.CandidateStatus;
 import com.daf360.rh.domain.enums.ItProvisioningStatus;
 import com.daf360.rh.domain.enums.LifecycleStatus;
+import com.daf360.rh.domain.enums.RecruitmentDemandStatus;
 import com.daf360.rh.dto.candidate.*;
 import com.daf360.rh.dto.lifecycle.CreateContractRequest;
 import com.daf360.rh.exception.AppException;
@@ -115,6 +117,9 @@ public class CandidateService {
         applyDimensionFks(candidate,
                 request.getNationalityId(), request.getAppliedGradeId(),
                 request.getAppliedDisciplineId(), request.getDepartmentId());
+        // After the FKs: the pays check inside needs the candidate's own paysId, which
+        // toEntity has already copied from the request.
+        applyRecruitmentDemand(candidate, request.getRecruitmentDemandId());
         candidate.setCreatedBy(actorUserId);
         candidate.setCreatedAt(OffsetDateTime.now());
         candidate.setUpdatedAt(OffsetDateTime.now());
@@ -143,11 +148,17 @@ public class CandidateService {
         applyDimensionFks(candidate,
                 request.getNationalityId(), request.getAppliedGradeId(),
                 request.getAppliedDisciplineId(), request.getDepartmentId());
+        // Absent → left as it was; present (including null) → applied. That is what lets a
+        // spontaneous application be attached to a vacancy later, or detached.
+        if (request.isRecruitmentDemandProvided()) {
+            applyRecruitmentDemand(candidate, request.getRecruitmentDemandId());
+        }
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidate = candidateRepo.save(candidate);
 
         auditService.log(actorUserId.toString(), "UPDATE", "CANDIDATE", candidate.getId(),
-                before, "email=" + candidate.getEmailPersonal());
+                before, "email=" + candidate.getEmailPersonal()
+                      + "; recruitmentDemandId=" + candidate.getRecruitmentDemandId());
 
         return toFullResponse(candidate);
     }
@@ -268,6 +279,10 @@ public class CandidateService {
         contractReq.setDateDebut(req.getHireDate());
         contractReq.setDateFinPrevue(req.getDateFinPrevue());
         contractReq.setManagerProfile(req.isManagerProfile());
+        // No noticePeriodDays: leaving it null lets doCreateContract resolve the négociated
+        // figure from this candidate's own offer (stamped NEGOTIATED), then the grade default.
+        // Setting it here would only be able to repeat the same lookup and would stamp the
+        // result MANUAL, losing where it came from.
 
         var created = lifecycleService.createContractFromBridge(contractReq, actorUserId);
 
@@ -301,11 +316,16 @@ public class CandidateService {
 
         Map<Long, String> contractLabels = resolveEmploymentTypeLabels(page.getContent());
         Map<Long, CandidateInterview> nextInterviews = resolveNextInterviews(page.getContent());
+        Map<Long, String> demandTitles = resolveDemandTitles(page.getContent());
 
         return page.map(candidate -> {
             CandidateListItem item = mapper.toListItem(candidate);
             if (candidate.getEmploymentTypeId() != null) {
                 item.setContractType(contractLabels.get(candidate.getEmploymentTypeId()));
+            }
+            item.setRecruitmentDemandId(candidate.getRecruitmentDemandId());
+            if (candidate.getRecruitmentDemandId() != null) {
+                item.setRecruitmentDemandJobTitle(demandTitles.get(candidate.getRecruitmentDemandId()));
             }
             CandidateInterview next = nextInterviews.get(candidate.getId());
             if (next != null) {
@@ -335,6 +355,27 @@ public class CandidateService {
     }
 
     /** Batch-loads employment-type labels for a page of candidates (avoids N+1). */
+    /**
+     * Batch-loads the vacancy title for a page of candidates.
+     *
+     * One query for the page rather than {@code demandTitle()} per row: the list is paged at
+     * 20+ and several candidatures usually answer the SAME demand, so per-row lookups would be
+     * both N+1 and largely duplicated.
+     */
+    private Map<Long, String> resolveDemandTitles(List<Candidate> candidates) {
+        Set<Long> ids = candidates.stream()
+                .map(Candidate::getRecruitmentDemandId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        if (ids.isEmpty()) return Map.of();
+        Map<Long, String> titles = new java.util.HashMap<>();
+        recruitmentDemandRepo.findAllById(ids).forEach(d ->
+                titles.put(d.getId(),
+                        d.getJobExactTitle() != null && !d.getJobExactTitle().isBlank()
+                                ? d.getJobExactTitle() : d.getJobTitle()));
+        return titles;
+    }
+
     private Map<Long, String> resolveEmploymentTypeLabels(List<Candidate> candidates) {
         Set<Long> typeIds = candidates.stream()
                 .map(Candidate::getEmploymentTypeId)
@@ -610,11 +651,60 @@ public class CandidateService {
         if (departmentId  != null) departmentRepo.findById(departmentId).ifPresent(candidate::setDepartment);
     }
 
+    /**
+     * Attaches the candidature to the vacancy it answers — `candidates.recruitment_demand_id`.
+     *
+     * The column, the entity field and the request field all existed already, but nothing ever
+     * wrote it: the mapper ignores it (it is a plain Long, not one of the FK dimension
+     * associations) and the service never set it, so every candidate carried null and
+     * `recruitmentDemandJobTitle` was permanently empty.
+     *
+     * Validated rather than trusted: only an APPROVED demand of the candidate's own entity can
+     * be attached. An unapproved demand is not yet a vacancy, and a demand from another pays
+     * would leak one entity's headcount into another's pipeline.
+     *
+     * Null clears the link, which is deliberate — a spontaneous application that turns out not
+     * to match the vacancy must be detachable.
+     */
+    private void applyRecruitmentDemand(Candidate candidate, Long demandId) {
+        if (demandId == null) {
+            candidate.setRecruitmentDemandId(null);
+            return;
+        }
+        RecruitmentDemand demand = recruitmentDemandRepo.findById(demandId)
+                .orElseThrow(() -> new AppException(ErrorCode.RECRUITMENT_DEMAND_NOT_FOUND,
+                        "Demande de recrutement introuvable : id=" + demandId));
+
+        if (demand.getStatut() != RecruitmentDemandStatus.APPROUVEE) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Seule une demande de recrutement approuvée peut recevoir des candidatures "
+                  + "(demande " + demandId + " : " + demand.getStatut() + ").");
+        }
+        if (candidate.getPaysId() != null && demand.getPaysId() != null
+                && !candidate.getPaysId().equals(demand.getPaysId())) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "La demande de recrutement appartient à une autre entité.");
+        }
+        candidate.setRecruitmentDemandId(demandId);
+    }
+
+    /** The vacancy's title for display — `jobExactTitle` when set, else the generic one. */
+    private String demandTitle(Long demandId) {
+        if (demandId == null) return null;
+        return recruitmentDemandRepo.findById(demandId)
+                .map(d -> d.getJobExactTitle() != null && !d.getJobExactTitle().isBlank()
+                        ? d.getJobExactTitle() : d.getJobTitle())
+                .orElse(null);
+    }
+
     private CandidateResponse toFullResponse(Candidate candidate) {
         CandidateResponse response = mapper.toResponse(candidate);
         itProvRepo.findByCandidateId(candidate.getId())
                 .map(mapper::toItSummary)
                 .ifPresent(response::setItProvisioning);
+        // The mapper ignores this (recruitmentDemandId is a plain Long, not an association it
+        // can navigate), so it was always null. Filled here, where the repo is available.
+        response.setRecruitmentDemandJobTitle(demandTitle(candidate.getRecruitmentDemandId()));
         if (candidate.getEmploymentTypeId() != null) {
             listValueRepo.findById(candidate.getEmploymentTypeId())
                     .ifPresent(v -> response.setEmploymentTypeLabel(

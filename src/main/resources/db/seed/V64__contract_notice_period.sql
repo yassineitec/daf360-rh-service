@@ -1,64 +1,51 @@
 -- ============================================================
--- V64 — Préavis (notice period) on contract_type_config
+-- V64 — Préavis (notice period) default per GRADE
 --
--- ⚠️ The module 500s until this is applied (ddl-auto: none, mapped columns).
+-- ⚠️ The module 500s until this is applied (ddl-auto: none, mapped column).
 --
--- WHY HERE: the préavis was typed by hand into the offboarding declaration
--- (`notice_period_label`, V57), so every file could carry a different figure for the
--- same contract. It is a property of the contract, not of the departure — and
--- `contract_type_config` already holds the trial-period pair, the indemnity rate and the
--- CIVP/stage rules for the same (pays × contract type) key, and is already editable from
--- the admin screen through EmployeeLifecycleController.updateConfig.
+-- WHY GRADES: the préavis is negotiated per employee, and the only thing that is
+-- configuration is the DEFAULT the negotiation starts from. That default belongs to the
+-- grade (séniorité), not to the country × contract type: two people in the same country on
+-- the same CDI can owe different préavis, and that is the normal case, not the exception.
 --
--- No per-employee override: a negotiated contract that departs from the convention is out
--- of scope. When it is needed, it belongs on employee_contracts, not here.
+-- `grades` is already scoped per pays (`grades.pays_id`), so "a different default per
+-- country" comes for free without a second key.
 --
--- NULLABLE, not NOT NULL DEFAULT 0: a NULL says "not configured for this pays yet", which
--- the resolver reports as unknown instead of silently offering a same-day exit.
+-- THE CHAIN THIS OPENS:
+--     grades.notice_period_days           default, here
+--   → job_offers.notice_period_days       negotiated at offer time (V68)
+--   → employee_contracts.notice_period_days  frozen when the contract is created (V69)
 --
--- THE SEEDED VALUES ARE DEFAULTS TO REVIEW, not legal advice. Tunisian practice for a CDI
--- is one month for a non-cadre and three for a cadre; the contract types that end at their
--- own term get 0. Adjust per pays in the admin screen.
+-- Only the contract is ever read afterwards. The grade is a fallback for rows that predate
+-- V69, and the offer is an input to the contract — never a source after hiring.
+--
+-- NULLABLE, AND DELIBERATELY NOT SEEDED: a NULL says "no default agreed for this grade",
+-- which the resolver reports as unknown. A seeded 30/90 would look like a decided figure
+-- and nobody would ever revisit it. The grades admin screen flags unset grades instead.
 --
 --   sqlcmd -S <server> -d DAF360_HR -i V64__contract_notice_period.sql
--- Re-runnable: guarded columns, and the seed only fills rows that are still NULL.
--- Created: 2026-08-05
+-- Re-runnable: guarded column, no seed.
+-- Created: 2026-08-05 · Rewritten 2026-08-06 (was pays × contract_type — wrong premise)
 -- ============================================================
 
-IF COL_LENGTH('dbo.contract_type_config', 'notice_period_days_standard') IS NULL
-  ALTER TABLE [dbo].[contract_type_config]
-    ADD [notice_period_days_standard] INT NULL;
+IF COL_LENGTH('dbo.grades', 'notice_period_days') IS NULL
+  ALTER TABLE [dbo].[grades]
+    ADD [notice_period_days] INT NULL;
 GO
 
-IF COL_LENGTH('dbo.contract_type_config', 'notice_period_days_manager') IS NULL
-  ALTER TABLE [dbo].[contract_type_config]
-    ADD [notice_period_days_manager] INT NULL;
+-- A negative préavis is not a thing; 0 is (a contract that ends at its own term).
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_Grades_NoticePeriodDays')
+  ALTER TABLE [dbo].[grades]
+    ADD CONSTRAINT [CK_Grades_NoticePeriodDays]
+        CHECK ([notice_period_days] IS NULL OR [notice_period_days] >= 0);
 GO
 
--- Seed every existing (pays × type) row by its type code. `WHERE ... IS NULL` makes this
--- re-runnable and, more importantly, never overwrites a value an admin has since changed.
-UPDATE [dbo].[contract_type_config]
-   SET [notice_period_days_standard] = 30,
-       [notice_period_days_manager]  = 90
- WHERE [contract_type_code] = 'CDI'
-   AND [notice_period_days_standard] IS NULL;
+PRINT '--- Active grades with NO préavis default (negotiation will start from nothing) ---';
+SELECT g.pays_id, g.code, g.label_fr
+FROM [dbo].[grades] g
+WHERE g.is_active = 1 AND g.[notice_period_days] IS NULL
+ORDER BY g.pays_id, g.sort_order;
 GO
 
-UPDATE [dbo].[contract_type_config]
-   SET [notice_period_days_standard] = 30,
-       [notice_period_days_manager]  = 30
- WHERE [contract_type_code] = 'DETACHEMENT'
-   AND [notice_period_days_standard] IS NULL;
-GO
-
--- CDD, CIVP, STAGE and PORTAGE end at their own term: leaving early is a rupture, not a
--- préavis, so 0 is the configured answer rather than an unfilled one.
-UPDATE [dbo].[contract_type_config]
-   SET [notice_period_days_standard] = 0,
-       [notice_period_days_manager]  = 0
- WHERE [contract_type_code] IN ('CDD', 'CIVP', 'STAGE', 'PORTAGE')
-   AND [notice_period_days_standard] IS NULL;
-GO
-
-PRINT 'V64 applied: notice_period_days_standard / _manager on contract_type_config.';
+PRINT 'V64 applied: grades.notice_period_days (nullable, unseeded by design).';
 GO

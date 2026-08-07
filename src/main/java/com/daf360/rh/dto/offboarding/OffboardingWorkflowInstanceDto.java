@@ -55,7 +55,8 @@ public class OffboardingWorkflowInstanceDto {
     private String    justificationDocumentUrl;
     private String    justificationDocumentName;
     /**
-     * Both derived from `contract_type_config` since V64 — the file no longer carries a typed
+     * Both read from the préavis frozen on the employee's contract (V69), with their grade's
+     * default as a fallback for contracts that predate it — the file no longer carries a typed
      * préavis. `noticePeriodDays` is the raw figure, so the UI can say where it comes from
      * instead of only rendering the label.
      */

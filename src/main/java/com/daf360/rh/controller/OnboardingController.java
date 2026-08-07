@@ -5,9 +5,13 @@ import com.daf360.rh.service.OnboardingService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -43,6 +47,23 @@ public class OnboardingController {
             @RequestBody SaveDraftRequest dto,
             Authentication auth) {
         return onboardingService.saveDraft(candidateId, dto, actorId(auth));
+    }
+
+    /**
+     * POST /api/hr/onboarding/{candidateId}/contract-document
+     *
+     * Uploads the signed contract PDF on the Contrat step, which runs BEFORE completion
+     * creates the employee profile — so the file is staged against the candidate and returned
+     * as {url, name} for the draft to carry. Completion turns it into a document on the
+     * profile (documentType CONTRACT_SIGNED).
+     */
+    @PostMapping(value = "/{candidateId}/contract-document",
+                 consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
+    public Map<String, String> uploadContractDocument(
+            @PathVariable Long candidateId,
+            @RequestParam("file") MultipartFile file) throws IOException {
+        return onboardingService.stageContractDocument(candidateId, file);
     }
 
     @PostMapping("/{candidateId}/complete")

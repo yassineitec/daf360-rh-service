@@ -10,11 +10,13 @@ import com.daf360.rh.domain.WorkingTimeRegime;
 import com.daf360.rh.domain.enums.CandidateStatus;
 import com.daf360.rh.domain.enums.ItProvisioningStatus;
 import com.daf360.rh.domain.enums.LifecycleStatus;
+import com.daf360.rh.dto.lifecycle.CreateContractRequest;
 import com.daf360.rh.dto.onboarding.CompleteProfileRequest;
 import com.daf360.rh.dto.onboarding.CompletionResult;
 import com.daf360.rh.dto.onboarding.OnboardingFormResponse;
 import com.daf360.rh.dto.onboarding.OnboardingKpiDto;
 import com.daf360.rh.dto.onboarding.OnboardingListItem;
+import com.daf360.rh.dto.onboarding.OnboardingRecruitmentDto;
 import com.daf360.rh.dto.onboarding.RegimeSummary;
 import com.daf360.rh.dto.onboarding.SaveDraftRequest;
 import com.daf360.rh.exception.AppException;
@@ -31,7 +33,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -66,6 +71,12 @@ public class OnboardingService {
     private final com.daf360.rh.repository.NationalityRepository  natRepo;
     private final com.daf360.rh.repository.BankRepository         bankRepo;
     private final com.daf360.rh.lifecycle.ContractTypeBridge      contractTypeBridge;
+    /**
+     * Contract creation at completion (V69). Safe injection: EmployeeLifecycleService knows
+     * nothing about onboarding, so there is no cycle.
+     */
+    private final com.daf360.rh.lifecycle.EmployeeLifecycleService lifecycleService;
+    private final EmployeeDocumentService                          documentService;
 
     // ─── Valid statuses for the onboarding pending list ──────────────────────
     private static final Set<CandidateStatus> PENDING_STATUSES =
@@ -293,6 +304,12 @@ public class OnboardingService {
         profile.setContractEndDate(dto.getContractEndDate());
         profile.setProbationEndDate(dto.getProbationEndDate());
         profile.setIsOnProbation(dto.getIsOnProbation());
+        // The salary RH confirmed on the Contrat step. Before this, the négociated figure
+        // reached no profile field at all and had to be retyped on the profile page later.
+        // Guarded so a wizard submitted without the step does not blank an existing value.
+        if (dto.getAgreedNetSalary() != null) {
+            profile.setSalaireNetRh(dto.getAgreedNetSalary());
+        }
         // Regime
         profile.setRegimeTemplateId(dto.getRegimeTemplateId());
         profile.setRegimeStartDate(dto.getRegimeStartDate());
@@ -333,6 +350,18 @@ public class OnboardingService {
         candidate.setStatus(CandidateStatus.HIRED);
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidateRepo.save(candidate);
+
+        // STEP 2b — Create the lifecycle contract, carrying the agreed préavis.
+        //
+        // This used to be skipped entirely: onboarding wrote contract_type / hire_date onto the
+        // PROFILE and never created an employee_contracts row, so a wizard-completed employee
+        // had no contract, no state machine and nowhere for the préavis to live. Only the
+        // candidates-page hire flow created one.
+        createLifecycleContract(saved, candidate, dto, hrOfficerId);
+
+        // STEP 2c — Attach the signed contract PDF, staged against the candidate while the
+        // profile did not yet exist.
+        linkContractDocument(saved, dto, hrOfficerId);
 
         // STEP 3 — Delete onboarding draft
         jdbc.update("DELETE FROM [dbo].[onboarding_drafts] WHERE candidate_id = ?", candidateId);
@@ -520,6 +549,10 @@ public class OnboardingService {
                 .nationalId(hasDraft ? draft.getNationalId()
                           : hasProfile ? existingProfile.getNationalId() : c.getNationalId())
                 .ms365Email(prov != null ? prov.getMs365Email() : null)
+                // The vacancy behind this hire — read straight off the candidate, so it holds
+                // for the whole wizard without another lookup per step.
+                .recruitmentDemandId(c.getRecruitmentDemandId())
+                .recruitmentDemandJobTitle(resolveDemandTitle(c.getRecruitmentDemandId()))
                 // Section 2 — Employment
                 .appliedPosition(c.getAppliedPosition())
                 .appliedGrade(c.getAppliedGrade() != null ? c.getAppliedGrade().getLabelFr() : null)
@@ -545,6 +578,22 @@ public class OnboardingService {
                 .departmentId(hasProfile && existingProfile.getDepartment() != null
                         ? existingProfile.getDepartment().getId()
                         : c.getDepartment() != null ? c.getDepartment().getId() : null)
+                // Section 2c — Contrat
+                .recruitment(buildRecruitmentSummary(c))
+                // Préavis: draft > profile's contract > the accepted offer > grade default.
+                // The offer/grade fallbacks make the field arrive PREFILLED so RH confirms a
+                // figure instead of typing one from memory — which is the whole point of the
+                // step. It stays editable; only after completion is it fixed.
+                .noticePeriodDays(hasDraft && draft.getNoticePeriodDays() != null
+                                ? draft.getNoticePeriodDays()
+                                : resolvePrefilledNotice(c, existingProfile))
+                .agreedNetSalary(hasDraft && draft.getAgreedNetSalary() != null
+                               ? draft.getAgreedNetSalary()
+                               : hasProfile && existingProfile.getSalaireNetRh() != null
+                                 ? existingProfile.getSalaireNetRh()
+                                 : resolveOfferSalary(c))
+                .contractDocumentUrl(hasDraft ? draft.getContractDocumentUrl() : null)
+                .contractDocumentName(hasDraft ? draft.getContractDocumentName() : null)
                 // Section 3 — Regime
                 .availableRegimes(regimes.stream().map(this::toRegimeSummary).collect(Collectors.toList()))
                 .selectedRegimeId(hasDraft ? draft.getRegimeTemplateId()
@@ -608,5 +657,287 @@ public class OnboardingService {
                 .hasDraft(hasDraft)
                 .draftSavedAt(draftSavedAt)
                 .build();
+    }
+
+    // ─── Section 2c — Contrat: the signed PDF ─────────────────────────────────
+
+    /**
+     * Stages the signed contract against the candidate and returns {url, name} for the draft.
+     *
+     * Gated on the same candidate statuses as saving a draft, so a file cannot be attached to
+     * a candidature that is closed or not yet at the onboarding stage.
+     */
+    public Map<String, String> stageContractDocument(Long candidateId, MultipartFile file)
+            throws java.io.IOException {
+        Candidate candidate = candidateRepo.findById(candidateId)
+                .orElseThrow(() -> new AppException(ErrorCode.CANDIDATE_NOT_FOUND,
+                        "Candidat introuvable : id=" + candidateId));
+        if (!DRAFT_ALLOWED_STATUSES.contains(candidate.getStatus())) {
+            throw new AppException(ErrorCode.CANDIDATE_STATUS_INVALID,
+                    "Le contrat ne peut être joint qu'à un candidat en cours d'onboarding.");
+        }
+        return documentService.stageCandidateDocument(candidateId, file);
+    }
+
+    // ─── Section 2c — Contrat: completion side effects ────────────────────────
+
+    /**
+     * Creates the employee_contracts row this completion implies, carrying the agreed préavis.
+     *
+     * NON-FATAL by design. `createContractFromBridge` throws when the pays × contract type has
+     * no ContractTypeConfig row, and refusing to finish an otherwise-complete onboarding over
+     * a missing configuration row would strand the employee mid-hire — with the candidate
+     * already HIRED and the workflow already created. It warns loudly instead; the contract can
+     * be created from the profile afterwards, which is the same screen that would fix the
+     * configuration.
+     *
+     * Skipped when the profile already has a contract: a candidate can arrive here after the
+     * candidates-page hire flow, and two contracts for one hire is worse than none.
+     */
+    private void createLifecycleContract(EmployeeProfile profile, Candidate candidate,
+                                         CompleteProfileRequest dto, Long hrOfficerId) {
+        if (profile.getCurrentContractId() != null) {
+            log.info("Profile {} already has contract {} — onboarding will not create a second one.",
+                    profile.getId(), profile.getCurrentContractId());
+            return;
+        }
+        try {
+            String contractTypeCode = contractTypeBridge.resolveContractTypeCode(
+                    candidate.getEmploymentTypeId());
+            if (contractTypeCode == null) {
+                log.warn("No contract type resolvable for candidate {} (employmentTypeId={}) — "
+                         + "no lifecycle contract created, so its préavis has nowhere to live.",
+                        candidate.getId(), candidate.getEmploymentTypeId());
+                return;
+            }
+
+            CreateContractRequest req = new CreateContractRequest();
+            req.setEmployeeProfileId(profile.getId());
+            req.setPaysId(candidate.getPaysId());
+            req.setContractTypeCode(contractTypeCode);
+            req.setDateDebut(dto.getHireDate());
+            req.setDateFinPrevue(dto.getContractEndDate());
+            // Null is fine and meaningful: doCreateContract then resolves the négociated figure
+            // from the offer, then the grade default, and records which one it used.
+            req.setNoticePeriodDays(dto.getNoticePeriodDays());
+
+            var created = lifecycleService.createContractFromBridge(req, hrOfficerId);
+            log.info("Onboarding created contract {} for profile {} — préavis {} j",
+                    created.getId(), profile.getId(), created.getNoticePeriodDays());
+        } catch (Exception ex) {
+            log.warn("Could not create the lifecycle contract for profile {} during onboarding: {}"
+                     + " — the profile is complete but has no contract row.",
+                    profile.getId(), ex.getMessage());
+        }
+    }
+
+    /** Turns the contract PDF staged against the candidate into a document on the profile. */
+    private void linkContractDocument(EmployeeProfile profile, CompleteProfileRequest dto,
+                                      Long hrOfficerId) {
+        if (dto.getContractDocumentUrl() == null || dto.getContractDocumentUrl().isBlank()) return;
+        try {
+            documentService.registerStagedDocument(
+                    profile.getId(), dto.getContractDocumentUrl(), dto.getContractDocumentName(),
+                    "CONTRACT_SIGNED", hrOfficerId);
+        } catch (Exception ex) {
+            // The file is on disk either way; losing the row is recoverable by re-uploading.
+            log.warn("Could not attach the signed contract to profile {}: {}",
+                    profile.getId(), ex.getMessage());
+        }
+    }
+
+    // ─── Section 2c — Contrat: the recruitment recap ─────────────────────────
+
+    private static final String OFFER_SQL =
+            "SELECT asked_salary, proposed_salary, salary_note, notice_period_days, " +
+            "       notice_period_note, expected_hire_date, expiry_date, status, sent_at, decided_at " +
+            "FROM [dbo].[job_offers] WHERE candidate_id = ?";
+
+    private static final String COST_APPROVAL_SQL =
+            "SELECT status, salaire_net_rh, salaire_net_candidat, contre_prop_salaire, " +
+            "       approval_notes, submitted_at, approved_at " +
+            "FROM [dbo].[candidate_cost_approvals] WHERE candidate_id = ? ORDER BY submitted_at DESC";
+
+    private static final String INTERVIEW_NOTES_SQL =
+            "SELECT ci.sequence_number, it.name AS interview_type, ci.result, " +
+            "       ci.interviewer_notes, ci.scheduled_at " +
+            "FROM [dbo].[candidate_interviews] ci " +
+            "LEFT JOIN [dbo].[interview_types] it ON it.id = ci.interview_type_id " +
+            "WHERE ci.candidate_id = ? AND ci.interviewer_notes IS NOT NULL " +
+            "  AND LTRIM(RTRIM(ci.interviewer_notes)) <> '' " +
+            "ORDER BY ci.sequence_number ASC";
+
+    /**
+     * Gathers what recruitment already decided, for RH to confirm rather than retype.
+     *
+     * Read via JdbcTemplate rather than the JPA entities on purpose: this is a read-only
+     * recap assembled inside a form response, and going through JobOffer /
+     * CandidateCostApproval / CandidateInterview would drag three lazy graphs into it for
+     * fields the step only displays.
+     *
+     * Degrades to nulls and empty lists — an incomplete recap is worth showing; a 500 on the
+     * onboarding form because a candidate has no offer is not.
+     */
+    private OnboardingRecruitmentDto buildRecruitmentSummary(Candidate c) {
+        OnboardingRecruitmentDto.OfferSummary offer = null;
+        try {
+            List<Map<String, Object>> rows = jdbc.queryForList(OFFER_SQL, c.getId());
+            if (!rows.isEmpty()) {
+                Map<String, Object> r = rows.get(0);
+                offer = OnboardingRecruitmentDto.OfferSummary.builder()
+                        .askedSalary(bigDecimal(r.get("asked_salary")))
+                        .proposedSalary(bigDecimal(r.get("proposed_salary")))
+                        .salaryNote((String) r.get("salary_note"))
+                        .noticePeriodDays(integer(r.get("notice_period_days")))
+                        .noticePeriodNote((String) r.get("notice_period_note"))
+                        .expectedHireDate(localDate(r.get("expected_hire_date")))
+                        .expiryDate(localDate(r.get("expiry_date")))
+                        .status((String) r.get("status"))
+                        .sentAt(offsetDateTime(r.get("sent_at")))
+                        .decidedAt(offsetDateTime(r.get("decided_at")))
+                        .build();
+            }
+        } catch (Exception ex) {
+            log.debug("Could not read the offer for candidate {}: {}", c.getId(), ex.getMessage());
+        }
+
+        List<OnboardingRecruitmentDto.CostApprovalSummary> approvals = List.of();
+        try {
+            approvals = jdbc.queryForList(COST_APPROVAL_SQL, c.getId()).stream()
+                    .map(r -> OnboardingRecruitmentDto.CostApprovalSummary.builder()
+                            .status((String) r.get("status"))
+                            .salaireNetRh(bigDecimal(r.get("salaire_net_rh")))
+                            .salaireNetCandidat(bigDecimal(r.get("salaire_net_candidat")))
+                            .contrePropSalaire(bigDecimal(r.get("contre_prop_salaire")))
+                            .approvalNotes((String) r.get("approval_notes"))
+                            .submittedAt(offsetDateTime(r.get("submitted_at")))
+                            .approvedAt(offsetDateTime(r.get("approved_at")))
+                            .build())
+                    .collect(Collectors.toList());
+        } catch (Exception ex) {
+            log.debug("Could not read cost approvals for candidate {}: {}", c.getId(), ex.getMessage());
+        }
+
+        List<OnboardingRecruitmentDto.InterviewNote> notes = List.of();
+        try {
+            notes = jdbc.queryForList(INTERVIEW_NOTES_SQL, c.getId()).stream()
+                    .map(r -> OnboardingRecruitmentDto.InterviewNote.builder()
+                            .sequenceNumber(integer(r.get("sequence_number")))
+                            .interviewType((String) r.get("interview_type"))
+                            .result((String) r.get("result"))
+                            .interviewerNotes((String) r.get("interviewer_notes"))
+                            .scheduledAt(offsetDateTime(r.get("scheduled_at")))
+                            .build())
+                    .collect(Collectors.toList());
+        } catch (Exception ex) {
+            log.debug("Could not read interview notes for candidate {}: {}", c.getId(), ex.getMessage());
+        }
+
+        Integer gradeDefault = null;
+        try {
+            gradeDefault = c.getAppliedGrade() != null
+                    ? c.getAppliedGrade().getNoticePeriodDays() : null;
+        } catch (Exception ex) {
+            log.debug("Could not read the grade préavis default for candidate {}: {}",
+                    c.getId(), ex.getMessage());
+        }
+
+        return OnboardingRecruitmentDto.builder()
+                .offer(offer)
+                .candidateDeclaredNetSalary(c.getSalaireNetCandidat())
+                .hrAssessedNetSalary(c.getSalaireNetRh())
+                .gradeNoticePeriodDays(gradeDefault)
+                .costApprovals(approvals)
+                .interviewNotes(notes)
+                .build();
+    }
+
+    /**
+     * The préavis the Contrat step opens on: the figure already frozen on the employee's
+     * contract if one exists (re-running an incomplete onboarding must not silently propose a
+     * different number), else the negotiated offer, else the grade default.
+     */
+    private Integer resolvePrefilledNotice(Candidate c, EmployeeProfile profile) {
+        if (profile != null && profile.getCurrentContractId() != null) {
+            Integer fromContract = queryInteger(
+                    "SELECT notice_period_days FROM [dbo].[employee_contracts] WHERE id = ?",
+                    profile.getCurrentContractId());
+            if (fromContract != null) return fromContract;
+        }
+        Integer fromOffer = queryInteger(
+                "SELECT notice_period_days FROM [dbo].[job_offers] WHERE candidate_id = ?", c.getId());
+        if (fromOffer != null) return fromOffer;
+        try {
+            return c.getAppliedGrade() != null ? c.getAppliedGrade().getNoticePeriodDays() : null;
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    /** The salary actually offered — the figure that used to have to be retyped. */
+    private BigDecimal resolveOfferSalary(Candidate c) {
+        try {
+            List<BigDecimal> rows = jdbc.queryForList(
+                    "SELECT proposed_salary FROM [dbo].[job_offers] WHERE candidate_id = ?",
+                    BigDecimal.class, c.getId());
+            if (!rows.isEmpty() && rows.get(0) != null) return rows.get(0);
+        } catch (Exception ex) {
+            log.debug("Could not read the offer salary for candidate {}: {}", c.getId(), ex.getMessage());
+        }
+        // Falls back to HR's assessment, then the candidate's own declaration.
+        return c.getSalaireNetRh() != null ? c.getSalaireNetRh() : c.getSalaireNetCandidat();
+    }
+
+    /**
+     * The vacancy's display title. Read via JdbcTemplate rather than the repository so this
+     * stays a one-column lookup — the wizard only shows the name.
+     */
+    private String resolveDemandTitle(Long demandId) {
+        if (demandId == null) return null;
+        try {
+            List<String> rows = jdbc.queryForList(
+                    "SELECT COALESCE(NULLIF(LTRIM(RTRIM(job_exact_title)), ''), job_title) "
+                  + "FROM [dbo].[recruitment_demands] WHERE id = ?",
+                    String.class, demandId);
+            return rows.isEmpty() ? null : rows.get(0);
+        } catch (Exception ex) {
+            log.debug("Could not read the recruitment demand title for {}: {}", demandId, ex.getMessage());
+            return null;
+        }
+    }
+
+    private Integer queryInteger(String sql, Object arg) {
+        try {
+            List<Integer> rows = jdbc.queryForList(sql, Integer.class, arg);
+            return rows.isEmpty() ? null : rows.get(0);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    // ─── Null-safe JDBC coercions for the recap ──────────────────────────────
+
+    private static BigDecimal bigDecimal(Object v) {
+        if (v == null) return null;
+        if (v instanceof BigDecimal b) return b;
+        return v instanceof Number n ? BigDecimal.valueOf(n.doubleValue()) : null;
+    }
+
+    private static Integer integer(Object v) {
+        return v instanceof Number n ? n.intValue() : null;
+    }
+
+    private static LocalDate localDate(Object v) {
+        if (v == null) return null;
+        if (v instanceof LocalDate d) return d;
+        if (v instanceof java.sql.Date d) return d.toLocalDate();
+        return null;
+    }
+
+    private static OffsetDateTime offsetDateTime(Object v) {
+        if (v == null) return null;
+        if (v instanceof OffsetDateTime o) return o;
+        if (v instanceof java.sql.Timestamp t) return t.toInstant().atOffset(java.time.ZoneOffset.UTC);
+        return null;
     }
 }

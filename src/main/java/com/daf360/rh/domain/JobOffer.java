@@ -45,6 +45,20 @@ public class JobOffer {
     @Column(name = "salary_note", length = 255, columnDefinition = "nvarchar(255)")
     private String salaryNote;
 
+    /**
+     * Préavis négocié, in calendar days (V68) — prefilled from the candidate's grade default
+     * and overridable, because this is the conversation where it is actually agreed.
+     *
+     * Null = not discussed. An input to the contract, which freezes its own copy: once
+     * hired, nothing reads this again.
+     */
+    @Column(name = "notice_period_days")
+    private Integer noticePeriodDays;
+
+    /** Why the négociation landed away from the grade default. */
+    @Column(name = "notice_period_note", length = 255, columnDefinition = "nvarchar(255)")
+    private String noticePeriodNote;
+
     /** Target start date proposed in the offer. */
     @Column(name = "expected_hire_date")
     private LocalDate expectedHireDate;

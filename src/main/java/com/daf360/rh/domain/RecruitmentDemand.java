@@ -33,8 +33,33 @@ public class RecruitmentDemand {
     @Column(name = "job_title", nullable = false, length = 255, columnDefinition = "nvarchar(255)")
     private String jobTitle;
 
+    /**
+     * The department LABEL. Kept alongside `department_id` (V72) for the demands that predate
+     * it — new demands write both, so old readers keep working.
+     */
     @Column(name = "department", length = 255, columnDefinition = "nvarchar(255)")
     private String department;
+
+    /**
+     * The position's dimensions (V72) — the SAME tables employee_profiles points at
+     * (`grades`, `disciplines`, `departments`), so a vacancy and the profile it becomes cannot
+     * describe the position differently.
+     *
+     * Plain Long FKs rather than @ManyToOne associations, matching how this entity already
+     * treats every other FK (pays, user, list values): it is read as a flat row by the pipeline
+     * SQL as often as through JPA, and lazy proxies here bought nothing.
+     *
+     * gradeId also makes the préavis default (V64 lives on the grade) knowable when the
+     * vacancy is opened rather than when the contract is signed.
+     */
+    @Column(name = "grade_id")
+    private Long gradeId;
+
+    @Column(name = "discipline_id")
+    private Long disciplineId;
+
+    @Column(name = "department_id")
+    private Long departmentId;
 
     @Column(name = "required_profile", nullable = false, length = 2000, columnDefinition = "nvarchar(2000)")
     private String requiredProfile;

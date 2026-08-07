@@ -24,10 +24,10 @@ public class UpdateDeclarationRequestDto {
     /** The negotiated departure date. Setting this is what completes the declaration. */
     private LocalDate lastWorkingDay;
 
-    // `theoreticalExitDate` and `noticePeriodLabel` were here and are gone on purpose: since
-    // V64 the préavis is configuration (`contract_type_config`, per pays × contract type) and
-    // the theoretical exit date is `triggerDate + préavis`. Both are computed on read, so
-    // sending them had no effect other than letting two files under the same contract disagree.
+    // `theoreticalExitDate` and `noticePeriodLabel` were here and are gone on purpose: the
+    // préavis is frozen on the employee's contract (V69, négocié at hiring) and the theoretical
+    // exit date is `triggerDate + préavis`. Both are derived on read, so sending them had no
+    // effect other than letting two files under the same contract disagree.
 
     /** The waiver is still a per-file decision — it is what the parties agreed, not config. */
     private Boolean noticeWaiverRequested;

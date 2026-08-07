@@ -13,6 +13,24 @@ import java.time.LocalDate;
 @Data
 public class UpdateCandidateRequest {
 
+    /**
+     * The vacancy this candidature answers — `recruitment_demands.id`.
+     *
+     * Tracked with an explicit "was it in the payload" flag because null is MEANINGFUL here:
+     * absent means "leave the link alone", null means "detach from the vacancy". A plain
+     * nullable field cannot tell those apart, and every other field on this DTO uses
+     * absent-means-unchanged (see the mapper's NullValuePropertyMappingStrategy.IGNORE).
+     */
+    private Long recruitmentDemandId;
+    /** Derived from the payload, never sent by a client. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private boolean recruitmentDemandProvided;
+
+    public void setRecruitmentDemandId(Long recruitmentDemandId) {
+        this.recruitmentDemandId = recruitmentDemandId;
+        this.recruitmentDemandProvided = true;   // Jackson only calls this when the key is present
+    }
+
     @Size(max = 100)
     private String firstName;
 

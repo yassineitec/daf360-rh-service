@@ -15,8 +15,18 @@ public class CreateRecruitmentDemandRequest {
     @NotBlank @Size(max = 255)
     private String jobTitle;
 
+    /** Department LABEL — kept for callers that only have a name. Prefer `departmentId`. */
     @Size(max = 255)
     private String department;
+
+    /**
+     * Position dimensions (V72), from the same tables the employee profiles use. Optional:
+     * a manager raising a need does not always know the grade, and forcing one would invent
+     * data. When `gradeId` IS given, the préavis default is known from the vacancy onwards.
+     */
+    private Long gradeId;
+    private Long disciplineId;
+    private Long departmentId;
 
     @NotBlank @Size(max = 2000)
     private String requiredProfile;
@@ -24,8 +34,23 @@ public class CreateRecruitmentDemandRequest {
     @NotBlank @Size(max = 2000)
     private String scopeOfWork;
 
-    @NotNull
+    /**
+     * Either this OR {@link #urgencyLevelCode} — checked in the service, not here.
+     *
+     * No longer @NotNull: the self-service hiring form drives urgency as a slider over a
+     * HARDCODED scale, so it holds codes, not ids. Requiring the id would force that form to
+     * fetch the configurable list purely to translate a fixed scale into primary keys, and a
+     * failed fetch would then block a required field.
+     */
     private Long urgencyLevelId;
+
+    /** `configurable_list_values.value_code` under URGENCY_LEVEL — e.g. URGENT. */
+    @Size(max = 50)
+    private String urgencyLevelCode;
+
+    /** Same idea for the experience scale — `value_code` under EXPERIENCE_LEVEL. */
+    @Size(max = 50)
+    private String experienceLevelCode;
 
     /** CREATION_POSTE | REMPLACEMENT | ACCROISSEMENT */
     @Pattern(regexp = "CREATION_POSTE|REMPLACEMENT|ACCROISSEMENT",

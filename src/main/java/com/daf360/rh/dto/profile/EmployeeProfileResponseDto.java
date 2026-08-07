@@ -11,6 +11,15 @@ public class EmployeeProfileResponseDto {
 
     private Long   id;
     private Long   userId;
+    /**
+     * The entity's id, not just its label.
+     *
+     * Every write the profile page makes on the employee's behalf needs it — creating a
+     * contract, assigning a regime — and it was absent while `paysLabel` was present, so the
+     * frontend's `EmployeeProfile.paysId` typed fine and was `undefined` at runtime. That is
+     * what made POST /lifecycle/contracts reject `paysId: ne doit pas être nul`.
+     */
+    private Long   paysId;
     private String   paysLabel;
     private LifecycleStatus lifecycleStatus;
 

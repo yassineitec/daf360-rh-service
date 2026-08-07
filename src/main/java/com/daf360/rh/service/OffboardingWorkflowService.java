@@ -2744,28 +2744,35 @@ public class OffboardingWorkflowService {
     }
 
     /**
-     * One round-trip: the pays' préavis for this contract type, and whether the employee is a
-     * cadre — the two facts that decide which of the two configured figures applies.
+     * The préavis frozen on a specific contract (V69), plus its source.
      *
-     * Joined FROM the profile so a missing configuration row yields NULLs rather than no row,
-     * which is what lets "not configured" and "configured as 0" stay distinguishable.
+     * Read by id, not by "the contract in force": an offboarding file that names a contract
+     * must be judged on that contract's terms, not on whatever is current.
      */
-    private static final String NOTICE_PERIOD_SQL =
-        "SELECT ctc.notice_period_days_standard AS days_standard, " +
-        "       ctc.notice_period_days_manager  AS days_manager, " +
-        "       g.code AS grade_code " +
+    private static final String CONTRACT_NOTICE_SQL =
+        "SELECT notice_period_days, notice_period_source " +
+        "FROM [dbo].[employee_contracts] WHERE id = ?";
+
+    /**
+     * Fallback for contracts created before V69: the employee's grade default.
+     *
+     * Only a fallback — it can have drifted since the contract was signed, which is precisely
+     * why V69 freezes the figure. Used to avoid a blank on historical files, never in
+     * preference to the contract's own value.
+     */
+    private static final String GRADE_NOTICE_SQL =
+        "SELECT g.notice_period_days " +
         "FROM [dbo].[employee_profiles] ep " +
-        "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
-        "LEFT JOIN [dbo].[contract_type_config] ctc " +
-        "       ON ctc.pays_id = ep.pays_id AND ctc.contract_type_code = ? " +
+        "JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
         "WHERE ep.id = ?";
 
     /**
-     * The préavis for one file, from configuration.
+     * The préavis for one file: the figure frozen on its contract, else the employee's grade
+     * default for contracts that predate V69.
      *
-     * The contract type comes from the file's own contract when it has one, else from the
-     * profile's contract in force — a file started from a profile carries `contractId` only if
-     * the employee had an open contract at the time.
+     * The contract is the file's own when it has one, else the profile's contract in force —
+     * a file started from a profile carries `contractId` only if the employee had an open
+     * contract at the time.
      *
      * The exit date is `triggerDate + days` in CALENDAR days, not working ones: a préavis is a
      * calendar notion ("un mois de préavis"), and stretching it over weekends would hand the
@@ -2773,23 +2780,27 @@ public class OffboardingWorkflowService {
      * measured in working days.
      */
     private NoticePeriod resolveNoticePeriod(OffboardingWorkflowInstance w) {
-        String contractType = resolveContractTypeCode(w);
-        if (contractType == null) return NoticePeriod.UNKNOWN;
-
         try {
-            List<Map<String, Object>> rows =
-                jdbc.queryForList(NOTICE_PERIOD_SQL, contractType, w.getEmployeeProfileId());
-            if (rows.isEmpty()) return NoticePeriod.UNKNOWN;
+            Long contractId = w.getContractId() != null
+                ? w.getContractId() : findActiveContractId(w.getEmployeeProfileId());
 
-            Map<String, Object> row = rows.get(0);
-            boolean isCadre = "CADRE".equalsIgnoreCase(String.valueOf(row.get("grade_code")));
-            Object raw = isCadre ? row.get("days_manager") : row.get("days_standard");
-            // A cadre with no manager figure configured falls back to the standard one rather
-            // than to "unknown" — the standard préavis is the floor, never the wrong answer.
-            if (raw == null && isCadre) raw = row.get("days_standard");
-            if (raw == null) return NoticePeriod.UNKNOWN;
+            Integer days = null;
+            if (contractId != null) {
+                List<Map<String, Object>> rows = jdbc.queryForList(CONTRACT_NOTICE_SQL, contractId);
+                if (!rows.isEmpty()) {
+                    Object raw = rows.get(0).get("notice_period_days");
+                    if (raw != null) days = ((Number) raw).intValue();
+                }
+            }
+            // Pre-V69 contract: fall back to the grade so the file is not blank. Deliberately
+            // second — the frozen value wins even when the grade has since been retuned.
+            if (days == null) {
+                List<Integer> gradeRows =
+                    jdbc.queryForList(GRADE_NOTICE_SQL, Integer.class, w.getEmployeeProfileId());
+                if (!gradeRows.isEmpty()) days = gradeRows.get(0);
+            }
+            if (days == null) return NoticePeriod.UNKNOWN;
 
-            int days = ((Number) raw).intValue();
             LocalDate exit = w.getTriggerDate() != null
                 ? w.getTriggerDate().plusDays(days) : null;
             return new NoticePeriod(days, noticeLabel(days), exit);
@@ -2800,24 +2811,8 @@ public class OffboardingWorkflowService {
         }
     }
 
-    /** The file's contract type, from its own contract or from the one in force. */
-    private String resolveContractTypeCode(OffboardingWorkflowInstance w) {
-        try {
-            if (w.getContractId() != null) {
-                List<Map<String, Object>> rows =
-                    jdbc.queryForList(CONTRACT_TYPE_SQL, w.getContractId());
-                if (!rows.isEmpty()) return (String) rows.get(0).get("contract_type_code");
-            }
-            Long contractId = findActiveContractId(w.getEmployeeProfileId());
-            if (contractId == null) return null;
-            List<Map<String, Object>> rows = jdbc.queryForList(CONTRACT_TYPE_SQL, contractId);
-            return rows.isEmpty() ? null : (String) rows.get(0).get("contract_type_code");
-        } catch (Exception ex) {
-            log.debug("Could not resolve the contract type for instance {}: {}",
-                w.getId(), ex.getMessage());
-            return null;
-        }
-    }
+    // resolveContractTypeCode is gone: it existed only to key the préavis by contract type,
+    // which V69 replaced with the figure frozen on the contract itself.
 
     /** "3 mois" reads as a préavis; "90 jours" reads as a countdown. Whole months win. */
     private String noticeLabel(int days) {

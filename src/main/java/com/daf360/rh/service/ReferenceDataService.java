@@ -3,6 +3,8 @@ package com.daf360.rh.service;
 import com.daf360.rh.domain.*;
 import com.daf360.rh.dto.ref.CreateRefDataRequest;
 import com.daf360.rh.dto.ref.RefDataItemDto;
+import com.daf360.rh.exception.AppException;
+import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -41,8 +43,32 @@ public class ReferenceDataService {
                 .labelFr(req.getLabelFr())
                 .labelEn(req.getLabelEn() != null ? req.getLabelEn() : req.getLabelFr())
                 .sortOrder(req.getSortOrder() != null ? req.getSortOrder() : 0)
+                .noticePeriodDays(requireValidNoticePeriod(req.getNoticePeriodDays()))
                 .build();
         return toDto(gradeRepo.save(g));
+    }
+
+    /**
+     * Set (or clear) the grade's default préavis — V64.
+     *
+     * A null body clears it, which is allowed on purpose: an admin who typed the wrong
+     * figure must be able to get back to "not configured" rather than being stuck with a
+     * number that looks decided.
+     */
+    public RefDataItemDto setGradeNoticePeriod(Long id, Integer days) {
+        Grade g = gradeRepo.findById(id)
+                .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND, "Grade introuvable : id=" + id));
+        g.setNoticePeriodDays(requireValidNoticePeriod(days));
+        return toDto(gradeRepo.save(g));
+    }
+
+    /** 0 is legitimate (a grade whose contracts end at their own term); negative is not. */
+    private Integer requireValidNoticePeriod(Integer days) {
+        if (days != null && days < 0) {
+            throw new AppException(ErrorCode.INVALID_NOTICE_PERIOD,
+                    "Le préavis ne peut pas être négatif : " + days);
+        }
+        return days;
     }
 
     public void deleteGrade(Long id) {
@@ -222,6 +248,7 @@ public class ReferenceDataService {
                 .id(g.getId()).paysId(g.getPaysId())
                 .code(g.getCode()).labelFr(g.getLabelFr()).labelEn(g.getLabelEn())
                 .sortOrder(g.getSortOrder()).isActive(g.getIsActive())
+                .noticePeriodDays(g.getNoticePeriodDays())
                 .build();
     }
 

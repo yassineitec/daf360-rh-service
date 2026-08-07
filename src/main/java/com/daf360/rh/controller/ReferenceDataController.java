@@ -4,6 +4,7 @@ import com.daf360.rh.dto.ref.CreateRefDataRequest;
 import com.daf360.rh.dto.ref.PaysTimezoneDto;
 import com.daf360.rh.dto.ref.RefDataItemDto;
 import com.daf360.rh.dto.ref.TimezoneOptionDto;
+import com.daf360.rh.dto.ref.UpdateGradeNoticePeriodRequest;
 import com.daf360.rh.dto.ref.UpdatePaysTimezoneRequest;
 import com.daf360.rh.service.PaysTimezoneService;
 import com.daf360.rh.service.ReferenceDataService;
@@ -39,6 +40,20 @@ public class ReferenceDataController {
     @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ResponseEntity<RefDataItemDto> createGrade(@RequestBody CreateRefDataRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(refService.createGrade(req));
+    }
+
+    /**
+     * PUT /api/hr/ref/grades/{id}/notice-period — the grade's DEFAULT préavis (V64).
+     *
+     * Not the employee's: the agreed figure is frozen on their contract. This only moves
+     * the number a future negotiation starts from, so it never rewrites history.
+     * A null/absent body clears the default.
+     */
+    @PutMapping("/grades/{id}/notice-period")
+    @PreAuthorize("hasAnyAuthority('ADMIN_LISTS', 'ADMIN_ROLES')")
+    public RefDataItemDto setGradeNoticePeriod(@PathVariable Long id,
+                                              @RequestBody UpdateGradeNoticePeriodRequest req) {
+        return refService.setGradeNoticePeriod(id, req.getNoticePeriodDays());
     }
 
     @DeleteMapping("/grades/{id}")

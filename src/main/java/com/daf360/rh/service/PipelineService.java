@@ -82,11 +82,17 @@ public class PipelineService {
             c.experience_years, c.location, c.cv_path,
             ep.gender, ep.contract_type, ep.onboarding_completed,
             rd.budget_range, rd.technical_skills,
+            c.recruitment_demand_id AS demand_id,
+            -- jobExactTitle when set, else the generic title: the same precedence
+            -- CandidateService.demandTitle uses, so a card and a detail page never disagree.
+            COALESCE(NULLIF(LTRIM(RTRIM(rd.job_exact_title)), ''), rd.job_title) AS demand_title,
             CONVERT(datetime2, ni.scheduled_at) AS next_interview_at, ni.location AS next_interview_location,
             itp.name AS next_interview_type,
             ipv.status AS prov_status,
             jo.asked_salary AS offer_asked_salary, jo.proposed_salary AS offer_salary,
-            jo.expiry_date AS offer_expiry, jo.status AS offer_status
+            jo.expiry_date AS offer_expiry, jo.status AS offer_status,
+            jo.notice_period_days AS offer_notice_period_days,
+            g.notice_period_days  AS grade_notice_period_days
             """;
 
     /** FROM + joins: employee profile, linked demand, IT provisioning and next planned interview. */
@@ -103,6 +109,7 @@ public class PipelineService {
              ) ni
              LEFT JOIN [dbo].[interview_types] itp ON itp.id = ni.interview_type_id
              LEFT JOIN [dbo].[job_offers] jo ON jo.candidate_id = c.id
+             LEFT JOIN [dbo].[grades] g ON g.id = c.applied_grade_id
             """;
 
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
@@ -455,7 +462,11 @@ public class PipelineService {
                 askedSalary,
                 proposedSalary,
                 offerExpiry,
-                offerStatus
+                offerStatus,
+                toLong(r.get("demand_id")),
+                str(r, "demand_title"),
+                toIntOrNull(r.get("offer_notice_period_days")),
+                toIntOrNull(r.get("grade_notice_period_days"))
         );
     }
 

@@ -3,6 +3,7 @@ package com.daf360.rh.dto.onboarding;
 import com.daf360.rh.domain.enums.CandidateStatus;
 import lombok.Builder;
 import lombok.Data;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -22,6 +23,14 @@ public class OnboardingFormResponse {
     private String nationalId;
     private String ms365Email;      // from it_provisioning
 
+    /**
+     * The vacancy this hire fills, carried through from the candidature so the last step of
+     * recruitment still names the opening the first step started from. Null for a spontaneous
+     * application.
+     */
+    private Long   recruitmentDemandId;
+    private String recruitmentDemandJobTitle;
+
     // Section 2 — Employment
     private String appliedPosition;
     private String appliedGrade;
@@ -39,6 +48,25 @@ public class OnboardingFormResponse {
     private Long disciplineId;
     private Long nogLevelId;
     private Long departmentId;
+
+    // ── Section 2c — Contrat ─────────────────────────────────────────────────
+    /**
+     * What recruitment already decided — read-only evidence for the Contrat step. Never
+     * echoed back on save.
+     */
+    private OnboardingRecruitmentDto recruitment;
+
+    /**
+     * Préavis to freeze on the contract, in calendar days. Prefilled from the accepted
+     * offer, then the grade default; editable by RH here and NOT afterwards — a different
+     * figure means a new contract.
+     */
+    private Integer    noticePeriodDays;
+    /** Net salary agreed — persisted to the profile at completion, ending the retype. */
+    private BigDecimal agreedNetSalary;
+    /** Signed contract PDF, uploaded against the candidate before the profile exists. */
+    private String     contractDocumentUrl;
+    private String     contractDocumentName;
 
     // Section 3 — Working-time regime
     private List<RegimeSummary> availableRegimes;

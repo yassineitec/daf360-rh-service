@@ -25,6 +25,15 @@ public class ContractDetailDto {
     private Boolean periodeEssaiRenouvelee;
     private LocalDate dateFinPeRenouvellement;
 
+    /**
+     * Préavis frozen on this contract (V69), in calendar days; null on contracts created
+     * before it existed. `noticePeriodSource` says where it came from so the UI can render
+     * "30 j (défaut du grade)" rather than an unexplained number.
+     */
+    private Integer noticePeriodDays;
+    /** GRADE_DEFAULT | NEGOTIATED | MANUAL */
+    private String noticePeriodSource;
+
     private String endReasonCode;
     private String endNotes;
     private String referenceContrat;

@@ -583,6 +583,9 @@ public class EmployeeProfileService {
         } catch (Exception ignored) {
             // If Users row not found, leave matricule/fullName null
         }
+        // Set outside the try: the label lookup can fail (missing pays row) but the id is
+        // already on the entity, and the page needs it to create contracts.
+        dto.setPaysId(profile.getPaysId());
         try {
             String paysLabel = jdbcTemplate.queryForObject(
                     "SELECT french_label FROM [dbo].[pays] WHERE id = ?",

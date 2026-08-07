@@ -13,6 +13,9 @@ public record OfferResponse(
         BigDecimal askedSalary,
         BigDecimal proposedSalary,
         String salaryNote,
+        /** Préavis négocié in calendar days (V68); null when it was not discussed. */
+        Integer noticePeriodDays,
+        String noticePeriodNote,
         LocalDate expectedHireDate,
         LocalDate expiryDate,
         OffsetDateTime sentAt,
@@ -27,6 +30,8 @@ public record OfferResponse(
                 o.getAskedSalary(),
                 o.getProposedSalary(),
                 o.getSalaryNote(),
+                o.getNoticePeriodDays(),
+                o.getNoticePeriodNote(),
                 o.getExpectedHireDate(),
                 o.getExpiryDate(),
                 o.getSentAt(),

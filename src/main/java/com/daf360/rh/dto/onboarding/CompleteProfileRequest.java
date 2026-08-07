@@ -1,8 +1,11 @@
 package com.daf360.rh.dto.onboarding;
 
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
@@ -13,6 +16,26 @@ public class CompleteProfileRequest {
     private LocalDate contractEndDate;
     private LocalDate probationEndDate;
     @NotNull  private Boolean isOnProbation;
+
+    // ── Section 2c — Contrat (V69) ────────────────────────────────────────────
+    /**
+     * Préavis agreed with the employee, in calendar days — frozen onto the contract this
+     * completion creates and NOT editable afterwards.
+     *
+     * Null is allowed and means "no figure confirmed": the contract then resolves it from the
+     * accepted offer, then the grade default. That is deliberate — a wizard finished before
+     * this step existed must not be blocked, and a null here is honest about not knowing.
+     */
+    @Min(value = 0, message = "Le préavis ne peut pas être négatif.")
+    private Integer noticePeriodDays;
+
+    /** Net salary agreed — written to the profile so the negotiated figure stops being retyped. */
+    @DecimalMin(value = "0", message = "Le salaire ne peut pas être négatif.")
+    private BigDecimal agreedNetSalary;
+
+    /** Signed contract PDF, staged against the candidate; linked to the profile on completion. */
+    private String contractDocumentUrl;
+    private String contractDocumentName;
 
     // Dimension FK IDs (V23) — optional, HR patches later via PATCH /profiles/{id}
     private Long   gradeId;
