@@ -36,3 +36,4 @@ build/
 
 ### VS Code ###
 .vscode/
+src/main/resources/db/seed/verify_schema_state.sql

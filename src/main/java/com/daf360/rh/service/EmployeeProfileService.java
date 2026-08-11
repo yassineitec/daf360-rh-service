@@ -525,25 +525,106 @@ public class EmployeeProfileService {
     }
 
     /**
-     * Serve the profile photo as bytes.
-     * Returns the LATEST file in the profiles/{profileId}/ directory.
+     * Resolve avatars for a batch of <b>user</b> ids.
+     *
+     * <p>Exists because every other module stores a person as a user id — facturation's
+     * {@code affaires.responsable_user_id}, for one — while the photo hangs off the RH
+     * profile and is served by <b>profile</b> id. Without this, a consumer had to either
+     * search profiles by name (fragile: homonyms, paging) or fetch a full profile per
+     * person just to read one column.
+     *
+     * <p>Batched on purpose: a card showing a project team asks once for N people rather
+     * than firing N requests. Unknown or soft-deleted users are simply absent from the
+     * result — callers key by {@code userId} and fall back to initials, so a missing row
+     * is a normal outcome, not an error.
+     *
+     * <p>JdbcTemplate rather than JPA for the same reason as {@code listAllEmployees}:
+     * {@code [dbo].[Users]} is not a JPA entity in this service, and {@code fullName}
+     * lives there.
+     */
+    @Transactional(readOnly = true)
+    public List<EmployeeAvatarDto> resolveAvatars(List<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) return List.of();
+
+        // Bound the batch: this is called from a page render, and an unbounded IN list
+        // would let a caller turn one request into a full table scan.
+        List<Long> ids = userIds.stream().filter(java.util.Objects::nonNull).distinct().limit(100).toList();
+        if (ids.isEmpty()) return List.of();
+
+        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        String sql =
+            "SELECT u.id AS user_id, ep.id AS profile_id, ep.photo_url AS photo_url, " +
+            "ep.updated_at AS updated_at, u.fullName AS full_name, ep.gender AS gender " +
+            "FROM [dbo].[Users] u " +
+            // LEFT JOIN, not JOIN: a user with no RH profile is a legitimate answer
+            // (fullName for the initials, no photo) — inner-joining would drop them and
+            // the caller would show an empty circle instead of initials.
+            "LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.deleted = 0 " +
+            "WHERE u.id IN (" + placeholders + ")";
+
+        return jdbcTemplate.query(
+            sql,
+            (rs, rowNum) -> {
+                // getTimestamp rather than getObject(..., OffsetDateTime.class): the column is
+                // DATETIMEOFFSET and only the instant matters here, since this is a version token.
+                java.sql.Timestamp updatedAt = rs.getTimestamp("updated_at");
+                return new EmployeeAvatarDto(
+                    rs.getLong("user_id"),
+                    rs.getObject("profile_id") != null ? rs.getLong("profile_id") : null,
+                    rs.getString("photo_url"),
+                    updatedAt != null ? updatedAt.getTime() : null,
+                    rs.getString("full_name"),
+                    rs.getString("gender")
+                );
+            },
+            ids.toArray());
+    }
+
+    /**
+     * Serve the profile photo as bytes, or null when there is nothing to serve.
+     *
+     * <p><b>Null is a normal answer</b>, not a failure: the caller turns it into a cached
+     * 404 and the UI falls back to initials. So every failure mode has to come out of here
+     * as null — a photo that cannot be read must never become a 500 on a page that merely
+     * wanted to draw a face.
+     *
+     * <p>Two bugs this used to have, both of which surfaced as HTTP 500 once avatars
+     * started being requested in bulk (the affaire "Équipe projet" tile):
+     * <ul>
+     *   <li>{@code Files.list()} returns a stream that <b>must be closed</b> — it holds an
+     *       open directory handle. Leaking one per request exhausts file descriptors, and
+     *       on Windows it also keeps the directory locked so the next upload cannot write
+     *       into it. Now in a try-with-resources.</li>
+     *   <li>Lazy traversal of that stream throws {@link java.io.UncheckedIOException},
+     *       which is a <b>RuntimeException</b> and therefore walked straight past the old
+     *       {@code catch (IOException)} and out of the method. Same for a storage path that
+     *       is not a valid path ({@link java.nio.file.InvalidPathException}). The catch is
+     *       now on {@code Exception}.</li>
+     * </ul>
      */
     @Transactional(readOnly = true)
     public byte[] servePhoto(Long profileId) {
         try {
             java.nio.file.Path dir = java.nio.file.Paths.get(
                     appProperties.getStoragePath(), "profiles", profileId.toString());
-            if (!java.nio.file.Files.exists(dir)) return null;
-            // Find latest file in directory
-            java.util.Optional<java.nio.file.Path> latest = java.nio.file.Files.list(dir)
-                    .filter(p -> !java.nio.file.Files.isDirectory(p))
-                    .max(java.util.Comparator.comparingLong(p -> {
-                        try { return java.nio.file.Files.getLastModifiedTime(p).toMillis(); }
-                        catch (java.io.IOException e) { return 0L; }
-                    }));
-            return latest.isPresent() ? java.nio.file.Files.readAllBytes(latest.get()) : null;
-        } catch (java.io.IOException e) {
-            log.warn("Cannot serve photo for profile {}: {}", profileId, e.getMessage());
+            if (!java.nio.file.Files.isDirectory(dir)) return null;
+
+            java.nio.file.Path latest;
+            try (java.util.stream.Stream<java.nio.file.Path> entries = java.nio.file.Files.list(dir)) {
+                latest = entries
+                        .filter(java.nio.file.Files::isRegularFile)
+                        .max(java.util.Comparator.comparingLong(p -> {
+                            try { return java.nio.file.Files.getLastModifiedTime(p).toMillis(); }
+                            catch (java.io.IOException e) { return 0L; }
+                        }))
+                        .orElse(null);
+            }
+            return latest != null ? java.nio.file.Files.readAllBytes(latest) : null;
+
+        } catch (Exception e) {
+            // Exception, not IOException: see the class-level note above.
+            log.warn("Cannot serve photo for profile {}: {}: {}",
+                    profileId, e.getClass().getSimpleName(), e.getMessage());
             return null;
         }
     }

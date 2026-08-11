@@ -196,6 +196,31 @@ public class EmployeeProfileController {
     }
 
     /**
+     * GET /api/hr/profiles/avatars?userIds=1,2,3
+     *
+     * <p>Batch user id → avatar reference. Consumed cross-module: the other services store
+     * a person as a <b>user</b> id while the photo hangs off the RH <b>profile</b> and is
+     * served by profile id, so without this a consumer had to search profiles by name or
+     * fetch a whole profile per person. First caller is facturation's affaire detail page
+     * ("Équipe projet").
+     *
+     * <p>Only authentication is required — no HR permission. This returns a name, a
+     * profile id and a photo-presence flag, i.e. strictly less than what
+     * {@code GET /api/hr/profiles/{id}/photo} already serves to anyone with no auth at all.
+     * Gating it on {@code HR_*} would make every non-HR module unable to draw a face.
+     *
+     * <p>Unknown, profile-less or soft-deleted users are simply absent from the response
+     * (or come back with a null {@code profileId}); the caller keys by {@code userId} and
+     * falls back to initials. The batch is capped at 100 ids server-side.
+     */
+    @GetMapping("/avatars")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<EmployeeAvatarDto>> resolveAvatars(
+            @RequestParam List<Long> userIds) {
+        return ResponseEntity.ok(profileService.resolveAvatars(userIds));
+    }
+
+    /**
      * PATCH /api/hr/profiles/users/{userId}
      * Update Users table fields (fullName, roleId) for a given user.
      */
