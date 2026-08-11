@@ -2,10 +2,12 @@ package com.daf360.rh.service;
 
 import com.daf360.rh.common.DocumentVariableCatalog;
 import com.daf360.rh.domain.DocumentTemplate;
+import com.daf360.rh.domain.DocumentTemplateVersion;
 import com.daf360.rh.dto.document.*;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.repository.DocumentTemplateRepository;
+import com.daf360.rh.repository.DocumentTemplateVersionRepository;
 import com.daf360.rh.security.TenantContext;
 import com.daf360.rh.security.TenantService;
 import com.daf360.rh.service.pdf.NumberToWordsFr;
@@ -34,11 +36,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class DocumentTemplateService {
 
-    private final DocumentTemplateRepository repo;
-    private final PdfClientService           pdfClient;
-    private final JdbcTemplate               jdbc;
-    private final ObjectMapper               objectMapper;
-    private final TenantService              tenantService;
+    private final DocumentTemplateRepository        repo;
+    private final DocumentTemplateVersionRepository versionRepository;
+    private final PdfClientService                  pdfClient;
+    private final JdbcTemplate                      jdbc;
+    private final ObjectMapper                      objectMapper;
+    private final TenantService                     tenantService;
 
     private static final DateTimeFormatter DATE_FR  = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final Pattern           VAR_PATTERN = Pattern.compile("\\{\\{([^}]+)}}");
@@ -143,6 +146,15 @@ public class DocumentTemplateService {
             throw new AppException(ErrorCode.ALREADY_EXISTS,
                 "Une maquette nommée \"" + dto.getName() + "\" existe déjà pour ce pays.");
         }
+        // Save version snapshot BEFORE updating
+        int nextVersion = versionRepository.countByTemplateId(id) + 1;
+        versionRepository.save(DocumentTemplateVersion.builder()
+            .templateId(id)
+            .versionNumber(nextVersion)
+            .htmlContent(tmpl.getHtmlContent())
+            .changedAt(OffsetDateTime.now())
+            .build());
+
         tmpl.setCategory(dto.getCategory());
         tmpl.setName(dto.getName().trim());
         tmpl.setDescription(dto.getDescription());
@@ -167,6 +179,43 @@ public class DocumentTemplateService {
         tmpl.setIsActive(false);
         tmpl.setUpdatedAt(OffsetDateTime.now());
         repo.save(tmpl);
+    }
+
+    // ── Versioning ────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public List<DocumentTemplateVersionDto> getVersions(Long templateId) {
+        DocumentTemplate tmpl = findOrThrow(templateId);
+        assertPaysOwnership(tmpl);
+        return versionRepository.findByTemplateIdOrderByVersionNumberDesc(templateId)
+            .stream().map(v -> new DocumentTemplateVersionDto(
+                v.getId(), v.getTemplateId(), v.getVersionNumber(),
+                v.getHtmlContent(), v.getChangedBy(), v.getChangedAt(), v.getChangeSummary()))
+            .collect(Collectors.toList());
+    }
+
+    public DocumentTemplateDto restore(Long templateId, Long versionId) {
+        DocumentTemplate tmpl = findOrThrow(templateId);
+        assertPaysOwnership(tmpl);
+        DocumentTemplateVersion version = versionRepository.findById(versionId)
+            .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
+                "Version introuvable: id=" + versionId));
+        if (!version.getTemplateId().equals(templateId)) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                "Cette version n'appartient pas à cette maquette.");
+        }
+        // Save snapshot of current content before restoring
+        int nextVersion = versionRepository.countByTemplateId(templateId) + 1;
+        versionRepository.save(DocumentTemplateVersion.builder()
+            .templateId(templateId)
+            .versionNumber(nextVersion)
+            .htmlContent(tmpl.getHtmlContent())
+            .changedAt(OffsetDateTime.now())
+            .build());
+        tmpl.setHtmlContent(version.getHtmlContent());
+        tmpl.setVariables(extractVariablesJson(version.getHtmlContent()));
+        tmpl.setUpdatedAt(OffsetDateTime.now());
+        return toDto(repo.save(tmpl));
     }
 
     // ── Render ────────────────────────────────────────────────────────────────

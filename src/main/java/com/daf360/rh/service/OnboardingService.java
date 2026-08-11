@@ -1,6 +1,5 @@
 package com.daf360.rh.service;
 
-import com.daf360.rh.config.AppProperties;
 import com.daf360.rh.common.GenderNormalizer;
 import com.daf360.rh.domain.Candidate;
 import com.daf360.rh.domain.EmployeeProfile;
@@ -51,9 +50,7 @@ public class OnboardingService {
     private final EmployeeProfileRepository  profileRepo;
     private final WorkingTimeRegimeRepository regimeRepo;
     private final WorkflowInstanceService    workflowInstanceService;
-    private final MailService                mailService;
     private final AuditService               auditService;
-    private final AppProperties              appProperties;
     private final JdbcTemplate               jdbc;
     private final ObjectMapper               objectMapper;
     private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
@@ -344,19 +341,10 @@ public class OnboardingService {
         Long workflowId = workflowInstanceService.createOnboardingInstance(
                 saved.getId(), triggeredBy, candidate.getPaysId(), dto.getHireDate());
 
-        // STEP 5 — Send welcome email (non-fatal)
-        try {
-            mailService.sendWelcomeEmail(
-                    prov.getMs365Email(),
-                    candidate.getFirstName(),
-                    prov.getMs365Email(),
-                    appProperties.getPortalUrl());
-        } catch (Exception ex) {
-            log.error("Failed to send welcome email to {} for candidateId={}: {}",
-                    prov.getMs365Email(), candidateId, ex.getMessage());
-        }
+        // STEP 5 — Welcome email is dispatched by the ONBOARDING_COMPLETED routing rule below,
+        // so the template is editable from the admin UI (Notifications & Emails).
 
-        // STEP 6 — In-app notification to new employee (non-fatal)
+        // STEP 6 — In-app + email notification to new employee (non-fatal)
         notificationRoutingService.resolveAndDispatch(
             RoutingContext.builder()
                 .eventCode("ONBOARDING_COMPLETED")

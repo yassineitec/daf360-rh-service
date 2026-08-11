@@ -42,6 +42,13 @@ public class NotificationRoutingService {
         "AND (u.isActive = 1 OR u.isActive IS NULL) " +
         "AND COALESCE(u.username, u.email) IS NOT NULL";
 
+    private static final String USER_EMAIL_BY_ID_SQL =
+        "SELECT COALESCE(u.username, u.email) " +
+        "FROM [dbo].[Users] u " +
+        "WHERE u.id = ? " +
+        "AND (u.isActive = 1 OR u.isActive IS NULL) " +
+        "AND COALESCE(u.username, u.email) IS NOT NULL";
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /**
@@ -150,6 +157,12 @@ public class NotificationRoutingService {
     }
 
     private EmailAddresses resolveEmailRecipients(NotificationRoutingRule rule, RoutingContext ctx) {
+        // Direct user: send to that specific user's email, ignore role-based recipients
+        if (ctx.getDirectUserId() != null) {
+            List<String> emails = jdbc.queryForList(USER_EMAIL_BY_ID_SQL, String.class, ctx.getDirectUserId());
+            return new EmailAddresses(dedupe(emails), List.of(), List.of());
+        }
+
         List<EmailRoutingRecipient> emailRecipients =
             emailRecipientRepo.findByRuleIdAndIsActiveTrue(rule.getId());
 

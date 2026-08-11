@@ -77,6 +77,9 @@ public interface EmployeeProfileRepository
 
     java.util.List<EmployeeProfile> findByPaysIdAndDeletedFalse(Long paysId);
 
+    /** Used by InternalPayrollSyncController for cohort simulation data. @SQLRestriction handles deleted filter. */
+    java.util.List<EmployeeProfile> findByPaysIdAndLifecycleStatus(Long paysId, LifecycleStatus status);
+
     long countByRegimeTemplateIdAndDeletedFalse(Long regimeTemplateId);
 
     long countByPaysIdAndRegimeTemplateIdNotNullAndDeletedFalse(Long paysId);

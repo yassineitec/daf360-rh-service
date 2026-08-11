@@ -47,15 +47,15 @@ public class ItProvisioningService {
             ItProvisioningStatus.EMAIL_CREATED,
             ItProvisioningStatus.COMPLETED);
 
-    private static final String CHECK_USERNAME_SQL =
-        "SELECT COUNT(*) FROM [dbo].[Users] WHERE username = ?";
+    private static final String FIND_USER_BY_EMAIL_SQL =
+        "SELECT TOP 1 id FROM [dbo].[Users] WHERE username = ? OR email = ? OR azure_upn = ?";
 
     private static final String COLLABORATEUR_ROLE_SQL =
         "SELECT id FROM [dbo].[Roles] WHERE frenchName = 'Collaborateur' AND (deleted = 0 OR deleted IS NULL)";
 
     private static final String INSERT_USER_SQL =
-        "INSERT INTO [dbo].[Users] (fullName, username, email, azure_upn, pays_id, isActive, role_id, created_at) " +
-        "VALUES (?, ?, ?, ?, ?, 1, ?, SYSDATETIMEOFFSET())";
+        "INSERT INTO [dbo].[Users] (fullName, first_name, last_name, username, email, azure_upn, pays_id, isActive, role_id, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, SYSDATETIMEOFFSET())";
 
     private static final String UPDATE_MATRICULE_SQL =
         "UPDATE [dbo].[Users] SET employee_id = ? WHERE id = ?";
@@ -261,43 +261,52 @@ public class ItProvisioningService {
         Candidate candidate = candidateRepo.findById(prov.getCandidateId())
                 .orElseThrow(() -> new AppException(ErrorCode.CANDIDATE_NOT_FOUND));
 
-        Integer usernameCount = jdbc.queryForObject(CHECK_USERNAME_SQL, Integer.class, ms365Email);
-        if (usernameCount != null && usernameCount > 0) {
+        if (prov.getStatus() == ItProvisioningStatus.EMAIL_CREATED
+                || prov.getStatus() == ItProvisioningStatus.COMPLETED) {
             throw new AppException(ErrorCode.IT_EMAIL_ALREADY_IN_USE,
-                    "L'email " + ms365Email + " est déjà utilisé comme identifiant système");
+                    "Le compte MS365 a déjà été créé pour ce provisioning");
         }
 
-        Long collaborateurRoleId = jdbc.queryForObject(COLLABORATEUR_ROLE_SQL, Long.class);
-        if (collaborateurRoleId == null) {
-            throw new AppException(ErrorCode.IT_COLLABORATEUR_ROLE_NOT_FOUND);
+        // Reuse existing user if the email is already registered, otherwise create a new one
+        List<Long> existingIds = jdbc.queryForList(FIND_USER_BY_EMAIL_SQL, Long.class,
+                ms365Email, ms365Email, ms365Email);
+
+        Long userId;
+        if (!existingIds.isEmpty()) {
+            userId = existingIds.get(0);
+            log.info("Reusing existing User id={} for email={}", userId, ms365Email);
+        } else {
+            Long collaborateurRoleId = jdbc.queryForObject(COLLABORATEUR_ROLE_SQL, Long.class);
+            if (collaborateurRoleId == null) {
+                throw new AppException(ErrorCode.IT_COLLABORATEUR_ROLE_NOT_FOUND);
+            }
+
+            String fullName = candidate.getFirstName() + " " + candidate.getLastName();
+            KeyHolder keyHolder = new GeneratedKeyHolder();
+            jdbc.update(connection -> {
+                PreparedStatement ps = connection.prepareStatement(INSERT_USER_SQL,
+                        Statement.RETURN_GENERATED_KEYS);
+                ps.setString(1, fullName);
+                ps.setString(2, candidate.getFirstName());
+                ps.setString(3, candidate.getLastName());
+                ps.setString(4, ms365Email);
+                ps.setString(5, ms365Email);
+                ps.setString(6, ms365Email);
+                ps.setLong(7, candidate.getPaysId());
+                ps.setLong(8, collaborateurRoleId);
+                return ps;
+            }, keyHolder);
+            userId = Objects.requireNonNull(keyHolder.getKey()).longValue();
+
+            String matricule = idGeneratorService.generate(
+                    candidate.getLastName(), candidate.getFirstName(), userId);
+            jdbc.update(UPDATE_MATRICULE_SQL, matricule, userId);
+            log.info("Created User id={} matricule={} email={}", userId, matricule, ms365Email);
         }
-
-        String fullName = candidate.getFirstName() + " " + candidate.getLastName();
-        KeyHolder keyHolder = new GeneratedKeyHolder();
-        jdbc.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(INSERT_USER_SQL,
-                    Statement.RETURN_GENERATED_KEYS);
-            ps.setString(1, fullName);
-            ps.setString(2, ms365Email);
-            ps.setString(3, ms365Email);
-            ps.setString(4, ms365Email);
-            ps.setLong(5, candidate.getPaysId());
-            ps.setLong(6, collaborateurRoleId);
-            return ps;
-        }, keyHolder);
-        Long newUserId = Objects.requireNonNull(keyHolder.getKey()).longValue();
-
-        // Generate matricule AFTER INSERT — userId is needed for uniqueness
-        // Format: [3 letters lastName][3 letters firstName][userId]
-        // Example: Dupont Pierre, id=125 → DUPPIE125
-        String matricule = idGeneratorService.generate(
-                candidate.getLastName(), candidate.getFirstName(), newUserId);
-        jdbc.update(UPDATE_MATRICULE_SQL, matricule, newUserId);
-        log.info("Created User id={} matricule={} email={}", newUserId, matricule, ms365Email);
 
         prov.setMs365Email(ms365Email);
         prov.setMs365EmailCreatedAt(OffsetDateTime.now());
-        prov.setUserId(newUserId);
+        prov.setUserId(userId);
         prov.setStatus(ItProvisioningStatus.EMAIL_CREATED);
         prov.setUpdatedAt(OffsetDateTime.now());
         prov = itProvRepo.save(prov);
@@ -320,7 +329,7 @@ public class ItProvisioningService {
 
         auditService.log(itManagerId != null ? itManagerId.toString() : "SYSTEM", "SUBMIT_MS365_EMAIL", "IT_PROVISIONING",
                 prov.getId(), "status=IN_PROGRESS",
-                "status=EMAIL_CREATED; email=" + ms365Email + "; userId=" + newUserId);
+                "status=EMAIL_CREATED; email=" + ms365Email + "; userId=" + userId);
 
         List<ItAsset> assets = assetRepo.findByProvisioningId(prov.getId());
         return toResponse(prov, candidate, assets);

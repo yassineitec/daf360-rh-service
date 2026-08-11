@@ -19,7 +19,8 @@ import java.util.List;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "mail.enabled", havingValue = "true")
+@ConditionalOnProperty(name = "mail.enabled",  havingValue = "true")
+@ConditionalOnProperty(name = "mail.provider", havingValue = "smtp", matchIfMissing = true)
 public class SmtpMailServiceImpl implements MailService {
 
     private final JavaMailSender mailSender;

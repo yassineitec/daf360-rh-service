@@ -73,6 +73,18 @@ public class DocumentTemplateController {
         svc.delete(id);
     }
 
+    // ── Versioning ────────────────────────────────────────────────────────────
+
+    @GetMapping("/api/hr/admin/document-templates/{id}/versions")
+    public List<DocumentTemplateVersionDto> getVersions(@PathVariable Long id) {
+        return svc.getVersions(id);
+    }
+
+    @PostMapping("/api/hr/admin/document-templates/{id}/versions/{versionId}/restore")
+    public DocumentTemplateDto restore(@PathVariable Long id, @PathVariable Long versionId) {
+        return svc.restore(id, versionId);
+    }
+
     // ── Render ────────────────────────────────────────────────────────────────
 
     @PostMapping("/api/hr/admin/document-templates/{id}/render")

@@ -55,6 +55,8 @@ public class SecurityConfig {
                 // (log-service presence scheduler). Authenticated by the X-Internal-Key
                 // shared secret inside InternalRegimeController — fails closed when unset.
                 .requestMatchers(HttpMethod.GET, "/api/hr/internal/**").permitAll()
+                // Internal payroll-service endpoints — validated by X-Service-Key header in controller
+                .requestMatchers("/api/internal/**").permitAll()
                 // Baseline: every other endpoint requires a valid session. Privileged
                 // actions add a specific @PreAuthorize on top; the rest are simply
                 // authenticated-only (any logged-in user).

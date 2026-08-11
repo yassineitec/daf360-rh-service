@@ -91,11 +91,16 @@ public class EmployeeRequestService {
 
         EmployeeRequest saved = requestRepo.save(request);
 
-        // Notify HR manager
-        notificationService.sendToHrManager(
-                "Nouvelle demande #" + saved.getId(),
-                "Demande " + type.getDisplayNameFr() + " soumise par profileId=" + profileId
-                + "\nSLA: " + type.getDefaultSlaDays() + " jour(s)");
+        // Notify HR team via routing rule (template editable from admin UI)
+        try {
+            notificationRoutingService.resolveAndDispatch(RoutingContext.builder()
+                    .eventCode("REQUEST_SUBMITTED")
+                    .paysId(profile.getPaysId())
+                    .templateVars(java.util.Map.of("requestType", type.getDisplayNameFr()))
+                    .build());
+        } catch (Exception e) {
+            log.warn("REQUEST_SUBMITTED notification failed for requestId={}: {}", saved.getId(), e.getMessage());
+        }
 
         auditService.log(actorId(auth), "SUBMIT_REQUEST", "EmployeeRequest", saved.getId(),
                 null, type.getTypeCode());

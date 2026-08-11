@@ -29,6 +29,8 @@ public class AppProperties {
      * those endpoints entirely.
      */
     private String internalApiKey  = "";
+    /** Shared key for inter-service calls (payroll-service → rh-service). */
+    private String serviceKey      = "";
 
     public String getPdfServiceUrl() { return pdfServiceUrl; }
 }
