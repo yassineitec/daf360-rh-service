@@ -71,8 +71,17 @@ public class CandidateInterviewService {
         // Panels for the whole timeline in one query + one name lookup (no N+1).
         Map<Long, List<Long>> panels = panelsByInterview(
                 interviews.stream().map(CandidateInterview::getId).toList());
-        Map<Long, String> names = userNames(
-                panels.values().stream().flatMap(List::stream).collect(Collectors.toSet()));
+        // Le lead entre AUSSI dans la recherche de noms. Une ligne écrite avant V73 (ou dont
+        // le backfill n'a pas tourné) porte `interviewer_user_id` sans aucune ligne de panel :
+        // n'interroger que le panel laissait alors `interviewerName` à null, et l'intervieweur
+        // disparaissait de l'écran alors qu'il est bien en base.
+        Set<Long> nameIds = new LinkedHashSet<>(
+                panels.values().stream().flatMap(List::stream).toList());
+        interviews.stream()
+                .map(CandidateInterview::getInterviewerUserId)
+                .filter(java.util.Objects::nonNull)
+                .forEach(nameIds::add);
+        Map<Long, String> names = userNames(nameIds);
         return interviews.stream()
                 .map(ci -> toDto(ci, typeNames.get(ci.getInterviewTypeId()),
                                  panels.getOrDefault(ci.getId(), List.of()), names))
@@ -154,7 +163,7 @@ public class CandidateInterviewService {
         // A null panel means "leave it alone"; an empty list clears it.
         List<Long> panel = req.interviewerUserIds() != null
                 ? normalizePanel(req.interviewerUserIds())
-                : panelOf(interview.getId());
+                : effectivePanel(interview, panelOf(interview.getId()));
         if (req.interviewerUserIds() != null) {
             interview.setInterviewerUserId(panel.isEmpty() ? null : panel.get(0));
         }
@@ -342,9 +351,26 @@ public class CandidateInterviewService {
         return candidate;
     }
 
+    /**
+     * Le panel exposé n'est JAMAIS vide quand un lead existe.
+     *
+     * Ce n'est pas un détail d'affichage : le formulaire d'édition côté client se réamorce
+     * sur `interviewers` et renvoie la liste telle quelle comme nouveau panel. Une ligne
+     * d'avant V73 (lead renseigné, aucune ligne de panel) revenait donc avec
+     * `interviewers: []`, et le simple fait de corriger le lieu d'un entretien effaçait
+     * silencieusement son intervieweur — panel vidé ET `interviewer_user_id` remis à null.
+     *
+     * On retombe donc sur le lead, ce qui rend aussi le backfill de V73 non bloquant pour
+     * l'affichage.
+     */
+    private List<Long> effectivePanel(CandidateInterview ci, List<Long> panel) {
+        if (!panel.isEmpty()) return panel;
+        return ci.getInterviewerUserId() != null ? List.of(ci.getInterviewerUserId()) : List.of();
+    }
+
     private CandidateInterviewDto toDto(CandidateInterview ci, String typeName,
                                         List<Long> panel, Map<Long, String> names) {
-        List<UserPickerDto> interviewers = panel.stream()
+        List<UserPickerDto> interviewers = effectivePanel(ci, panel).stream()
                 .map(uid -> new UserPickerDto(uid, names.get(uid)))
                 .toList();
         String leadName = ci.getInterviewerUserId() != null
