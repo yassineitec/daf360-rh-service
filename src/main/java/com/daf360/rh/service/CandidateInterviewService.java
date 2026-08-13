@@ -2,6 +2,7 @@ package com.daf360.rh.service;
 
 import com.daf360.rh.domain.Candidate;
 import com.daf360.rh.domain.CandidateInterview;
+import com.daf360.rh.domain.CandidateInterviewInterviewer;
 import com.daf360.rh.domain.InterviewType;
 import com.daf360.rh.domain.enums.InterviewResult;
 import com.daf360.rh.domain.enums.InterviewStatus;
@@ -12,6 +13,7 @@ import com.daf360.rh.dto.interview.UpdateInterviewRequest;
 import com.daf360.rh.dto.interview.UserPickerDto;
 import com.daf360.rh.exception.BusinessRuleException;
 import com.daf360.rh.exception.ResourceNotFoundException;
+import com.daf360.rh.repository.CandidateInterviewInterviewerRepository;
 import com.daf360.rh.repository.CandidateInterviewRepository;
 import com.daf360.rh.repository.CandidateRepository;
 import com.daf360.rh.repository.InterviewTypeRepository;
@@ -24,6 +26,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,6 +42,7 @@ import java.util.stream.Collectors;
 public class CandidateInterviewService {
 
     private final CandidateInterviewRepository interviewRepo;
+    private final CandidateInterviewInterviewerRepository panelRepo;
     private final InterviewTypeRepository      typeRepo;
     private final CandidateRepository          candidateRepo;
     private final TenantService                tenantService;
@@ -61,8 +68,14 @@ public class CandidateInterviewService {
                 .collect(Collectors.toSet());
         Map<Long, String> typeNames = typeRepo.findAllById(typeIds).stream()
                 .collect(Collectors.toMap(InterviewType::getId, InterviewType::getName));
+        // Panels for the whole timeline in one query + one name lookup (no N+1).
+        Map<Long, List<Long>> panels = panelsByInterview(
+                interviews.stream().map(CandidateInterview::getId).toList());
+        Map<Long, String> names = userNames(
+                panels.values().stream().flatMap(List::stream).collect(Collectors.toSet()));
         return interviews.stream()
-                .map(ci -> toDto(ci, typeNames.get(ci.getInterviewTypeId())))
+                .map(ci -> toDto(ci, typeNames.get(ci.getInterviewTypeId()),
+                                 panels.getOrDefault(ci.getId(), List.of()), names))
                 .toList();
     }
 
@@ -70,27 +83,15 @@ public class CandidateInterviewService {
     public CandidateInterviewDto create(Long candidateId, CreateInterviewRequest req, Long actorId) {
         Candidate candidate = loadCandidateWithTenantCheck(candidateId);
 
-        InterviewType type = typeRepo.findById(req.interviewTypeId())
-                .orElseThrow(() -> new ResourceNotFoundException("InterviewType", req.interviewTypeId()));
+        InterviewType type = assertUsableType(req.interviewTypeId(), candidate.getPaysId());
+        assertNoOtherPlannedOfType(candidateId, type, null);
 
-        if (!type.getPaysId().equals(candidate.getPaysId())) {
-            throw new BusinessRuleException(
-                    "Ce type d'entretien n'appartient pas à l'entité du candidat");
-        }
-        if (!Boolean.TRUE.equals(type.getIsActive())) {
-            throw new BusinessRuleException(
-                    "Ce type d'entretien est désactivé et ne peut pas être utilisé");
-        }
-        // Anti-duplication: user-friendly message before the DB filtered unique index fires
-        if (interviewRepo.existsByCandidateIdAndInterviewTypeIdAndStatus(
-                candidateId, req.interviewTypeId(), InterviewStatus.PLANNED)) {
-            throw new BusinessRuleException(
-                    "Un entretien de type '" + type.getName() + "' est déjà planifié pour ce candidat. "
-                    + "Terminez ou annulez l'entretien existant avant d'en créer un nouveau.");
-        }
+        List<Long> panel = normalizePanel(req.interviewerUserIds());
 
-        // Prevent double-booking the interviewer at the same time slot.
-        assertInterviewerFree(req.interviewerUserId(), req.scheduledAt(), null);
+        // Prevent double-booking any panel member at the same time slot.
+        for (Long userId : panel) {
+            assertInterviewerFree(userId, req.scheduledAt(), null);
+        }
 
         int sequenceNumber = (int) (interviewRepo.countByCandidateId(candidateId) + 1);
 
@@ -100,14 +101,16 @@ public class CandidateInterviewService {
                 .scheduledAt(req.scheduledAt())
                 .location(req.location())
                 .interviewerNotes(req.interviewerNotes())
-                .interviewerUserId(req.interviewerUserId())
+                .interviewerUserId(panel.isEmpty() ? null : panel.get(0))
                 .status(InterviewStatus.PLANNED)
                 .sequenceNumber(sequenceNumber)
                 .createdBy(actorId)
                 .createdAt(OffsetDateTime.now())
                 .build();
 
-        return toDto(interviewRepo.save(interview), type.getName());
+        CandidateInterview saved = interviewRepo.save(interview);
+        if (!panel.isEmpty()) savePanel(saved.getId(), panel);
+        return toDto(saved, type.getName(), panel, userNames(panel));
     }
 
     @PreAuthorize("hasPermission(null, 'RH_MANAGE_INTERVIEWS')")
@@ -116,7 +119,13 @@ public class CandidateInterviewService {
                 .orElseThrow(() -> new ResourceNotFoundException("CandidateInterview", interviewId));
 
         // Multi-tenant check via candidate
-        loadCandidateWithTenantCheck(interview.getCandidateId());
+        Candidate candidate = loadCandidateWithTenantCheck(interview.getCandidateId());
+
+        // A finished interview is a record, not a draft: nothing on it can change anymore.
+        if (interview.getStatus() == InterviewStatus.DONE) {
+            throw new BusinessRuleException(
+                    "Cet entretien est terminé et ne peut plus être modifié");
+        }
 
         // result (PASS/FAIL) can only be set when status = DONE
         if (req.result() != null) {
@@ -129,23 +138,39 @@ public class CandidateInterviewService {
             }
         }
 
+        if (req.interviewTypeId() != null && !req.interviewTypeId().equals(interview.getInterviewTypeId())) {
+            InterviewType newType = assertUsableType(req.interviewTypeId(), candidate.getPaysId());
+            assertNoOtherPlannedOfType(interview.getCandidateId(), newType, interview.getId());
+            interview.setInterviewTypeId(req.interviewTypeId());
+        }
+
         if (req.scheduledAt() != null)      interview.setScheduledAt(req.scheduledAt());
         if (req.location() != null)         interview.setLocation(req.location());
         if (req.interviewerNotes() != null) interview.setInterviewerNotes(req.interviewerNotes());
-        if (req.interviewerUserId() != null) interview.setInterviewerUserId(req.interviewerUserId());
         if (req.status() != null)           interview.setStatus(InterviewStatus.valueOf(req.status()));
         if (req.result() != null)           interview.setResult(InterviewResult.valueOf(req.result()));
         interview.setUpdatedAt(OffsetDateTime.now());
 
-        // Re-check double-booking if it's still a planned interview (time/interviewer may have changed).
+        // A null panel means "leave it alone"; an empty list clears it.
+        List<Long> panel = req.interviewerUserIds() != null
+                ? normalizePanel(req.interviewerUserIds())
+                : panelOf(interview.getId());
+        if (req.interviewerUserIds() != null) {
+            interview.setInterviewerUserId(panel.isEmpty() ? null : panel.get(0));
+        }
+
+        // Re-check double-booking if it's still a planned interview (time/panel may have changed).
         if (interview.getStatus() == InterviewStatus.PLANNED) {
-            assertInterviewerFree(interview.getInterviewerUserId(), interview.getScheduledAt(), interview.getId());
+            for (Long userId : panel) {
+                assertInterviewerFree(userId, interview.getScheduledAt(), interview.getId());
+            }
         }
 
         CandidateInterview saved = interviewRepo.save(interview);
+        if (req.interviewerUserIds() != null) savePanel(saved.getId(), panel);
         String typeName = typeRepo.findById(saved.getInterviewTypeId())
                 .map(InterviewType::getName).orElse(null);
-        return toDto(saved, typeName);
+        return toDto(saved, typeName, panel, userNames(panel));
     }
 
     /**
@@ -163,7 +188,9 @@ public class CandidateInterviewService {
               FROM [dbo].[candidate_interviews] ci
               JOIN [dbo].[candidates] c ON c.id = ci.candidate_id
               LEFT JOIN [dbo].[interview_types] it ON it.id = ci.interview_type_id
-             WHERE ci.interviewer_user_id = ?
+             WHERE (ci.interviewer_user_id = ?
+                    OR EXISTS (SELECT 1 FROM [dbo].[candidate_interview_interviewers] p
+                                WHERE p.interview_id = ci.id AND p.user_id = ?))
                AND ci.status = 'PLANNED'
                AND ci.scheduled_at >= ?
                AND ci.scheduled_at <  DATEADD(day, 1, ?)
@@ -184,7 +211,7 @@ public class CandidateInterviewService {
                     when,
                     rs.getString("location"),
                     title);
-        }, userId, from, to);
+        }, userId, userId, from, to);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
@@ -209,11 +236,100 @@ public class CandidateInterviewService {
                 .toList();
         if (!conflicts.isEmpty()) {
             String when = conflicts.get(0).getScheduledAt().format(FR_DATETIME);
+            // Name the clashing interviewer: with a panel, "cet intervieweur" is ambiguous.
+            String who = userNames(List.of(interviewerUserId))
+                    .getOrDefault(interviewerUserId, "Cet intervieweur");
             throw new BusinessRuleException(
-                    "Cet intervieweur a déjà un entretien planifié le " + when
+                    who + " a déjà un entretien planifié le " + when
                     + " (créneau d'environ " + INTERVIEW_SLOT_MINUTES + " min). "
                     + "Choisissez un autre horaire ou un autre intervieweur.");
         }
+    }
+
+    /** Loads a type and rejects it if it belongs to another entity or is deactivated. */
+    private InterviewType assertUsableType(Long typeId, Long candidatePaysId) {
+        InterviewType type = typeRepo.findById(typeId)
+                .orElseThrow(() -> new ResourceNotFoundException("InterviewType", typeId));
+        if (!type.getPaysId().equals(candidatePaysId)) {
+            throw new BusinessRuleException(
+                    "Ce type d'entretien n'appartient pas à l'entité du candidat");
+        }
+        if (!Boolean.TRUE.equals(type.getIsActive())) {
+            throw new BusinessRuleException(
+                    "Ce type d'entretien est désactivé et ne peut pas être utilisé");
+        }
+        return type;
+    }
+
+    /**
+     * Anti-duplication: at most one PLANNED interview per type per candidate. Raised here
+     * with a readable message before the DB filtered unique index fires. {@code excludeId}
+     * skips the interview being edited.
+     */
+    private void assertNoOtherPlannedOfType(Long candidateId, InterviewType type, Long excludeId) {
+        boolean clash = (excludeId == null)
+                ? interviewRepo.existsByCandidateIdAndInterviewTypeIdAndStatus(
+                        candidateId, type.getId(), InterviewStatus.PLANNED)
+                : interviewRepo.findByCandidateIdOrderBySequenceNumber(candidateId).stream()
+                        .anyMatch(ci -> ci.getStatus() == InterviewStatus.PLANNED
+                                     && type.getId().equals(ci.getInterviewTypeId())
+                                     && !excludeId.equals(ci.getId()));
+        if (clash) {
+            throw new BusinessRuleException(
+                    "Un entretien de type '" + type.getName() + "' est déjà planifié pour ce candidat. "
+                    + "Terminez ou annulez l'entretien existant avant d'en créer un nouveau.");
+        }
+    }
+
+    // ── interview panel ───────────────────────────────────────────────────────
+
+    /** Drops nulls and duplicates while keeping the caller's order — index 0 is the lead. */
+    private List<Long> normalizePanel(List<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) return List.of();
+        return new ArrayList<>(userIds.stream()
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new)));
+    }
+
+    private List<Long> panelOf(Long interviewId) {
+        return panelRepo.findByInterviewIdOrderByIdAsc(interviewId).stream()
+                .map(CandidateInterviewInterviewer::getUserId)
+                .toList();
+    }
+
+    private Map<Long, List<Long>> panelsByInterview(Collection<Long> interviewIds) {
+        if (interviewIds.isEmpty()) return Map.of();
+        Map<Long, List<Long>> byInterview = new LinkedHashMap<>();
+        for (CandidateInterviewInterviewer p : panelRepo.findByInterviewIdInOrderByIdAsc(interviewIds)) {
+            byInterview.computeIfAbsent(p.getInterviewId(), k -> new ArrayList<>()).add(p.getUserId());
+        }
+        return byInterview;
+    }
+
+    /** Replaces the stored panel wholesale — simpler than diffing, and the sets are tiny. */
+    private void savePanel(Long interviewId, List<Long> userIds) {
+        panelRepo.deleteByInterviewId(interviewId);
+        // Explicit flush: Hibernate orders inserts before deletes at commit, so keeping the
+        // same interviewer across an edit would otherwise collide with the unique index.
+        panelRepo.flush();
+        if (userIds.isEmpty()) return;
+        panelRepo.saveAll(userIds.stream()
+                .map(uid -> CandidateInterviewInterviewer.builder()
+                        .interviewId(interviewId).userId(uid).build())
+                .toList());
+    }
+
+    /** userId → fullName for a batch of users, in one query. */
+    private Map<Long, String> userNames(Collection<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) return Map.of();
+        String placeholders = userIds.stream().map(id -> "?").collect(Collectors.joining(","));
+        List<UserPickerDto> rows = jdbcTemplate.query(
+                "SELECT id, fullName FROM Users WHERE id IN (" + placeholders + ")",
+                (rs, rn) -> new UserPickerDto(rs.getLong("id"), rs.getString("fullName")),
+                userIds.toArray());
+        Map<Long, String> names = new LinkedHashMap<>();
+        rows.forEach(u -> names.put(u.id(), u.fullName()));
+        return names;
     }
 
     private Candidate loadCandidateWithTenantCheck(Long candidateId) {
@@ -226,15 +342,14 @@ public class CandidateInterviewService {
         return candidate;
     }
 
-    private CandidateInterviewDto toDto(CandidateInterview ci, String typeName) {
-        String interviewerName = null;
-        if (ci.getInterviewerUserId() != null) {
-            List<String> names = jdbcTemplate.query(
-                    "SELECT fullName FROM Users WHERE id = ?",
-                    (rs, rn) -> rs.getString("fullName"),
-                    ci.getInterviewerUserId());
-            interviewerName = names.isEmpty() ? null : names.get(0);
-        }
+    private CandidateInterviewDto toDto(CandidateInterview ci, String typeName,
+                                        List<Long> panel, Map<Long, String> names) {
+        List<UserPickerDto> interviewers = panel.stream()
+                .map(uid -> new UserPickerDto(uid, names.get(uid)))
+                .toList();
+        String leadName = ci.getInterviewerUserId() != null
+                ? names.get(ci.getInterviewerUserId())
+                : null;
         return new CandidateInterviewDto(
                 ci.getId(),
                 ci.getCandidateId(),
@@ -244,7 +359,8 @@ public class CandidateInterviewService {
                 ci.getLocation(),
                 ci.getInterviewerNotes(),
                 ci.getInterviewerUserId(),
-                interviewerName,
+                leadName,
+                interviewers,
                 ci.getStatus().name(),
                 ci.getResult() != null ? ci.getResult().name() : null,
                 ci.getSequenceNumber(),

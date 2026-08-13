@@ -8,8 +8,10 @@ import com.daf360.rh.domain.enums.InterviewStatus;
 import com.daf360.rh.dto.interview.CandidateInterviewDto;
 import com.daf360.rh.dto.interview.CreateInterviewRequest;
 import com.daf360.rh.dto.interview.UpdateInterviewRequest;
+import com.daf360.rh.dto.interview.UserPickerDto;
 import com.daf360.rh.exception.BusinessRuleException;
 import com.daf360.rh.exception.ResourceNotFoundException;
+import com.daf360.rh.repository.CandidateInterviewInterviewerRepository;
 import com.daf360.rh.repository.CandidateInterviewRepository;
 import com.daf360.rh.repository.CandidateRepository;
 import com.daf360.rh.repository.InterviewTypeRepository;
@@ -29,12 +31,14 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class CandidateInterviewServiceTest {
 
     @Mock CandidateInterviewRepository interviewRepo;
+    @Mock CandidateInterviewInterviewerRepository panelRepo;
     @Mock InterviewTypeRepository      typeRepo;
     @Mock CandidateRepository          candidateRepo;
     @Mock TenantService                tenantService;
@@ -77,7 +81,6 @@ class CandidateInterviewServiceTest {
         when(interviewRepo.findByCandidateIdOrderBySequenceNumber(CANDIDATE_ID))
                 .thenReturn(List.of(plannedInterview()));
         when(typeRepo.findAllById(any())).thenReturn(List.of(activeType(PAYS_ID)));
-        when(jdbcTemplate.query(any(String.class), any(RowMapper.class), any())).thenReturn(List.of());
 
         List<CandidateInterviewDto> result = service.listByCandidate(CANDIDATE_ID);
 
@@ -110,7 +113,6 @@ class CandidateInterviewServiceTest {
             ci.setId(100L);
             return ci;
         });
-        when(jdbcTemplate.query(any(String.class), any(RowMapper.class), any())).thenReturn(List.of());
 
         CreateInterviewRequest req = new CreateInterviewRequest(
                 TYPE_ID, OffsetDateTime.now().plusDays(3), "Salle A", null, null);
@@ -181,10 +183,9 @@ class CandidateInterviewServiceTest {
         when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(PAYS_ID)));
         when(interviewRepo.save(any())).thenAnswer(i -> i.getArgument(0));
         when(typeRepo.findById(TYPE_ID)).thenReturn(Optional.of(activeType(PAYS_ID)));
-        when(jdbcTemplate.query(any(String.class), any(RowMapper.class), any())).thenReturn(List.of());
 
         // Setting status=DONE and result=PASS in same request
-        UpdateInterviewRequest req = new UpdateInterviewRequest(null, null, null, null, "DONE", "PASS");
+        UpdateInterviewRequest req = new UpdateInterviewRequest(null, null, null, null, null, "DONE", "PASS");
         CandidateInterviewDto result = service.update(100L, req, ACTOR_ID);
 
         assertEquals("DONE", result.status());
@@ -203,7 +204,7 @@ class CandidateInterviewServiceTest {
         when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(PAYS_ID)));
 
         // result given but status stays PLANNED
-        UpdateInterviewRequest req = new UpdateInterviewRequest(null, null, null, null, null, "PASS");
+        UpdateInterviewRequest req = new UpdateInterviewRequest(null, null, null, null, null, null, "PASS");
         BusinessRuleException ex = assertThrows(BusinessRuleException.class,
                 () -> service.update(100L, req, ACTOR_ID));
 
@@ -221,8 +222,98 @@ class CandidateInterviewServiceTest {
         when(tenantService.getEffectivePaysId()).thenReturn(PAYS_ID);
         when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(99L)));
 
-        UpdateInterviewRequest req = new UpdateInterviewRequest(null, "New Location", null, null, null, null);
+        UpdateInterviewRequest req = new UpdateInterviewRequest(null, null, "New Location", null, null, null, null);
         assertThrows(BusinessRuleException.class, () -> service.update(100L, req, ACTOR_ID));
+    }
+
+    @Test
+    void update_doneInterview_isRejected() {
+        CandidateInterview done = CandidateInterview.builder()
+                .id(100L).candidateId(CANDIDATE_ID).interviewTypeId(TYPE_ID)
+                .scheduledAt(OffsetDateTime.now().minusDays(2))
+                .status(InterviewStatus.DONE).sequenceNumber(1)
+                .createdBy(ACTOR_ID).createdAt(OffsetDateTime.now()).build();
+        when(interviewRepo.findById(100L)).thenReturn(Optional.of(done));
+        when(tenantService.getEffectivePaysId()).thenReturn(PAYS_ID);
+        when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(PAYS_ID)));
+
+        UpdateInterviewRequest req = new UpdateInterviewRequest(
+                null, OffsetDateTime.now().plusDays(1), null, null, null, null, null);
+        BusinessRuleException ex = assertThrows(BusinessRuleException.class,
+                () -> service.update(100L, req, ACTOR_ID));
+
+        assertTrue(ex.getMessage().contains("terminé"));
+        verify(interviewRepo, never()).save(any());
+    }
+
+    @Test
+    void update_replacesPanelAndKeepsFirstAsLead() {
+        CandidateInterview interview = plannedInterview();
+        interview.setInterviewerUserId(7L);
+        when(interviewRepo.findById(100L)).thenReturn(Optional.of(interview));
+        when(tenantService.getEffectivePaysId()).thenReturn(PAYS_ID);
+        when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(PAYS_ID)));
+        when(interviewRepo.findInterviewerConflicts(any(), any(), any())).thenReturn(List.of());
+        when(interviewRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(typeRepo.findById(TYPE_ID)).thenReturn(Optional.of(activeType(PAYS_ID)));
+        when(jdbcTemplate.query(any(String.class), any(RowMapper.class), any())).thenReturn(List.of());
+
+        UpdateInterviewRequest req = new UpdateInterviewRequest(
+                null, null, null, null, List.of(9L, 3L, 9L), null, null);
+        CandidateInterviewDto result = service.update(100L, req, ACTOR_ID);
+
+        // De-duplicated, order preserved, first entry promoted to lead
+        assertEquals(List.of(9L, 3L), result.interviewers().stream().map(UserPickerDto::id).toList());
+        assertEquals(Long.valueOf(9L), result.interviewerUserId());
+        verify(panelRepo).deleteByInterviewId(100L);
+        verify(panelRepo).saveAll(any());
+    }
+
+    @Test
+    void create_multipleInterviewers_checksEachForConflicts() {
+        when(tenantService.getEffectivePaysId()).thenReturn(PAYS_ID);
+        when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(PAYS_ID)));
+        when(typeRepo.findById(TYPE_ID)).thenReturn(Optional.of(activeType(PAYS_ID)));
+        when(interviewRepo.existsByCandidateIdAndInterviewTypeIdAndStatus(
+                CANDIDATE_ID, TYPE_ID, InterviewStatus.PLANNED)).thenReturn(false);
+        when(interviewRepo.findInterviewerConflicts(any(), any(), any())).thenReturn(List.of());
+        when(interviewRepo.countByCandidateId(CANDIDATE_ID)).thenReturn(0L);
+        when(interviewRepo.save(any())).thenAnswer(i -> {
+            CandidateInterview ci = i.getArgument(0);
+            ci.setId(100L);
+            return ci;
+        });
+        when(jdbcTemplate.query(any(String.class), any(RowMapper.class), any())).thenReturn(List.of());
+
+        CreateInterviewRequest req = new CreateInterviewRequest(
+                TYPE_ID, OffsetDateTime.now().plusDays(3), null, null, List.of(4L, 5L));
+        CandidateInterviewDto result = service.create(CANDIDATE_ID, req, ACTOR_ID);
+
+        assertEquals(2, result.interviewers().size());
+        assertEquals(Long.valueOf(4L), result.interviewerUserId());
+        verify(interviewRepo).findInterviewerConflicts(eq(4L), any(), any());
+        verify(interviewRepo).findInterviewerConflicts(eq(5L), any(), any());
+        verify(panelRepo).saveAll(any());
+    }
+
+    @Test
+    void create_interviewerAlreadyBooked_throwsBusinessRuleException() {
+        OffsetDateTime slot = OffsetDateTime.now().plusDays(3);
+        CandidateInterview clash = plannedInterview();
+        clash.setScheduledAt(slot);
+        when(tenantService.getEffectivePaysId()).thenReturn(PAYS_ID);
+        when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(PAYS_ID)));
+        when(typeRepo.findById(TYPE_ID)).thenReturn(Optional.of(activeType(PAYS_ID)));
+        when(interviewRepo.existsByCandidateIdAndInterviewTypeIdAndStatus(
+                CANDIDATE_ID, TYPE_ID, InterviewStatus.PLANNED)).thenReturn(false);
+        when(interviewRepo.findInterviewerConflicts(eq(4L), any(), any())).thenReturn(List.of(clash));
+
+        CreateInterviewRequest req = new CreateInterviewRequest(
+                TYPE_ID, slot, null, null, List.of(4L));
+        BusinessRuleException ex = assertThrows(BusinessRuleException.class,
+                () -> service.create(CANDIDATE_ID, req, ACTOR_ID));
+
+        assertTrue(ex.getMessage().contains("déjà un entretien planifié"));
     }
 
     @Test
@@ -231,6 +322,6 @@ class CandidateInterviewServiceTest {
 
         assertThrows(ResourceNotFoundException.class,
                 () -> service.update(999L,
-                        new UpdateInterviewRequest(null, null, null, null, null, null), ACTOR_ID));
+                        new UpdateInterviewRequest(null, null, null, null, null, null, null), ACTOR_ID));
     }
 }

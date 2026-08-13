@@ -4,11 +4,13 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 
 public record CreateInterviewRequest(
         @NotNull Long interviewTypeId,
         @NotNull OffsetDateTime scheduledAt,
         @Size(max = 255) String location,
         @Size(max = 1000) String interviewerNotes,
-        Long interviewerUserId
+        /** Full interview panel; the first entry becomes the lead interviewer. */
+        @Size(max = 20) List<Long> interviewerUserIds
 ) {}

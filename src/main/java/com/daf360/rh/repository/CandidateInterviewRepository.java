@@ -36,15 +36,18 @@ public interface CandidateInterviewRepository extends JpaRepository<CandidateInt
             @Param("candidateIds") Collection<Long> candidateIds);
 
     /**
-     * PLANNED interviews assigned to an interviewer whose scheduled time falls in
-     * [from, to] — used to prevent double-booking the same interviewer.
+     * PLANNED interviews where the user sits on the panel and whose scheduled time falls
+     * in [from, to] — used to prevent double-booking the same interviewer. Matches both
+     * the lead column and the panel table, so rows written before V73 still count.
      */
     @Query("""
         SELECT ci FROM CandidateInterview ci
-        WHERE ci.interviewerUserId = :userId
-          AND ci.status = 'PLANNED'
+        WHERE ci.status = 'PLANNED'
           AND ci.scheduledAt >= :from
           AND ci.scheduledAt <= :to
+          AND (ci.interviewerUserId = :userId
+               OR EXISTS (SELECT 1 FROM CandidateInterviewInterviewer p
+                          WHERE p.interviewId = ci.id AND p.userId = :userId))
         ORDER BY ci.scheduledAt ASC
         """)
     List<CandidateInterview> findInterviewerConflicts(
