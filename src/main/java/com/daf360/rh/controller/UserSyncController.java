@@ -40,7 +40,13 @@ public class UserSyncController {
                 rs.getString("azure_oid"),
                 rs.getString("fullName"),
                 rs.getString("email"),
-                rs.getLong("pays_id"),
+                // `getObject(..., Long.class)` et NON `getLong` : sur une colonne NULL,
+                // `getLong` renvoie 0. Ce 0 partait tel quel dans le réplica des services
+                // consommateurs, où `pays_id` porte une clé étrangère vers `pays_ref` —
+                // aucune entité n'a l'id 0, donc l'insertion échouait et, `saveAll` étant
+                // transactionnel, un seul utilisateur sans entité bloquait la
+                // synchronisation de TOUS les autres.
+                rs.getObject("pays_id", Long.class),
                 rs.getString("role_name"),
                 rs.getBoolean("isActive")
         ));
