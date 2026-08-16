@@ -1,5 +1,6 @@
 package com.daf360.rh.controller;
 
+import com.daf360.rh.dto.PaysForSyncDto;
 import com.daf360.rh.dto.UserForSyncDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,6 +50,35 @@ public class UserSyncController {
                 rs.getObject("pays_id", Long.class),
                 rs.getString("role_name"),
                 rs.getBoolean("isActive")
+        ));
+    }
+
+    /**
+     * Entities (pays) for the consuming services' `pays_ref` shadow tables.
+     *
+     * The payroll service has called this since day one (`ProfileSyncService.syncPays`)
+     * but it did not exist: the sync threw on every run, the exception was swallowed by
+     * its own `catch`, and `pays_ref` stayed empty — which is why the country dropdown
+     * was blank on EVERY payroll screen (simulateur, administration, calibration…).
+     *
+     * `deleted = 0` only: a soft-deleted entity must not come back as a selectable
+     * country in another service.
+     */
+    @GetMapping("/pays-for-sync")
+    public List<PaysForSyncDto> paysForSync() {
+        log.debug("UserSyncController: serving pays-for-sync");
+        String sql = """
+                SELECT id, iso_code, french_label
+                FROM [dbo].[pays]
+                WHERE deleted = 0
+                ORDER BY id
+                """;
+        return jdbcTemplate.query(sql, (rs, rn) -> new PaysForSyncDto(
+                rs.getLong("id"),
+                rs.getString("iso_code"),
+                rs.getString("french_label"),
+                // No currency column on [dbo].[pays] — see PaysForSyncDto.
+                null
         ));
     }
 
