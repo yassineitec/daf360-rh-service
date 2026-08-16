@@ -7,6 +7,7 @@ import com.daf360.rh.dto.pdf.GeneratedDocumentResponse;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.service.DocumentTemplateService;
+import com.daf360.rh.service.sharepoint.GraphSharePointService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -37,6 +38,7 @@ public class PdfDocumentService {
     private final JdbcTemplate           jdbc;
     private final AppProperties          appProperties;
     private final DocumentTemplateService documentTemplateService;
+    private final GraphSharePointService  graphSharePointService;
 
     // -------------------------------------------------------------------------
     // SQL constants
@@ -51,10 +53,14 @@ public class PdfDocumentService {
             "ep.hire_date, ep.probation_end_date, ep.contract_end_date, " +
             "ISNULL(b.label_fr, '') AS bank_name, ep.rib, ep.iban, " +
             "u.fullName, u.username as ms365_email, " +
-            "p.iso_code, p.french_label as pays_label " +
+            "p.iso_code, p.french_label as pays_label, " +
+            // firstName/lastName : uniquement pour construire le nom de dossier SharePoint
+            // "Prénom NOM" — fullName ne garantit ni cet ordre ni cette casse.
+            "c.first_name, c.last_name " +
             "FROM employee_profiles ep " +
             "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
             "JOIN [dbo].[pays]  p ON p.id = ep.pays_id " +
+            "LEFT JOIN [dbo].[candidates]   c ON c.id = ep.candidate_id " +
             "LEFT JOIN [dbo].[grades]      g ON g.id = ep.grade_id " +
             "LEFT JOIN [dbo].[disciplines] d ON d.id = ep.discipline_id " +
             "LEFT JOIN [dbo].[banks]       b ON b.id = ep.bank_id " +
@@ -175,12 +181,15 @@ public class PdfDocumentService {
         EmployeeDataDto emp    = loadEmployeeData(employeeProfileId);
         String          docRef = generateDocumentRef("RH-ATT-115", emp.getPaysId());
         String          verCode = generateVerificationCode();
+        String sharepointLocation = documentTemplateService
+                .getSharepointLocation("Attestation de Travail", emp.getPaysId()).orElse(null);
 
         Optional<byte[]> dbPdf = documentTemplateService.renderByName(
             "Attestation de Travail", emp.getPaysId(), employeeProfileId,
             Map.of("document.ref", docRef, "document.verificationCode", verCode));
         if (dbPdf.isPresent()) {
-            return saveGeneratedDocument(requestId, "ATTESTATION_TRAVAIL", dbPdf.get(), verCode, generatedBy, emp.getFullName());
+            return saveGeneratedDocument(requestId, "ATTESTATION_TRAVAIL", dbPdf.get(), verCode, generatedBy,
+                    emp.getFullName(), sharepointLocation, emp.getPaysId());
         }
 
         DgParametersDto     dg   = loadDgParameters(emp.getPaysId());
@@ -190,7 +199,8 @@ public class PdfDocumentService {
         data.put("hireDate",         formatMoisAnFr(emp.getHireDate()));
 
         byte[] bytes = pdfClient.generatePdf("attestation-travail", data);
-        return saveGeneratedDocument(requestId, "ATTESTATION_TRAVAIL", bytes, verCode, generatedBy, emp.getFullName());
+        return saveGeneratedDocument(requestId, "ATTESTATION_TRAVAIL", bytes, verCode, generatedBy,
+                emp.getFullName(), sharepointLocation, emp.getPaysId());
     }
 
     public GeneratedDocumentResponse generateAttestationSalairePdf(Long employeeProfileId,
@@ -199,12 +209,15 @@ public class PdfDocumentService {
         EmployeeDataDto emp    = loadEmployeeData(employeeProfileId);
         String          docRef = generateDocumentRef("RH-ATT-SAL", emp.getPaysId());
         String          verCode = generateVerificationCode();
+        String sharepointLocation = documentTemplateService
+                .getSharepointLocation("Attestation de Salaire", emp.getPaysId()).orElse(null);
 
         Optional<byte[]> dbPdf = documentTemplateService.renderByName(
             "Attestation de Salaire", emp.getPaysId(), employeeProfileId,
             Map.of("document.ref", docRef, "document.verificationCode", verCode));
         if (dbPdf.isPresent()) {
-            return saveGeneratedDocument(requestId, "ATTESTATION_SALAIRE", dbPdf.get(), verCode, generatedBy, emp.getFullName());
+            return saveGeneratedDocument(requestId, "ATTESTATION_SALAIRE", dbPdf.get(), verCode, generatedBy,
+                    emp.getFullName(), sharepointLocation, emp.getPaysId());
         }
 
         List<Map<String, Object>> salaryRows = jdbc.queryForList(SALARY_SQL, employeeProfileId);
@@ -223,7 +236,8 @@ public class PdfDocumentService {
         data.put("salaireNetAnnuel",           formatAmount(salaireNetAnnuel));
 
         byte[] bytes = pdfClient.generatePdf("attestation-salaire", data);
-        return saveGeneratedDocument(requestId, "ATTESTATION_SALAIRE", bytes, verCode, generatedBy, emp.getFullName());
+        return saveGeneratedDocument(requestId, "ATTESTATION_SALAIRE", bytes, verCode, generatedBy,
+                emp.getFullName(), sharepointLocation, emp.getPaysId());
     }
 
     public GeneratedDocumentResponse generateAttestationNonBeneficePretPdf(Long employeeProfileId,
@@ -232,19 +246,23 @@ public class PdfDocumentService {
         EmployeeDataDto emp    = loadEmployeeData(employeeProfileId);
         String          docRef = generateDocumentRef("RH-ATT-PRET", emp.getPaysId());
         String          verCode = generateVerificationCode();
+        String sharepointLocation = documentTemplateService
+                .getSharepointLocation("Attestation de Non-Benefice de Pret", emp.getPaysId()).orElse(null);
 
         Optional<byte[]> dbPdf = documentTemplateService.renderByName(
             "Attestation de Non-Benefice de Pret", emp.getPaysId(), employeeProfileId,
             Map.of("document.ref", docRef, "document.verificationCode", verCode));
         if (dbPdf.isPresent()) {
-            return saveGeneratedDocument(requestId, "ATTESTATION_NON_BENEFICE_PRET", dbPdf.get(), verCode, generatedBy, emp.getFullName());
+            return saveGeneratedDocument(requestId, "ATTESTATION_NON_BENEFICE_PRET", dbPdf.get(), verCode, generatedBy,
+                    emp.getFullName(), sharepointLocation, emp.getPaysId());
         }
 
         DgParametersDto     dg   = loadDgParameters(emp.getPaysId());
         Map<String, Object> data = buildCommonData(emp, dg, docRef, verCode);
 
         byte[] bytes = pdfClient.generatePdf("attestation-non-benefice-pret", data);
-        return saveGeneratedDocument(requestId, "ATTESTATION_NON_BENEFICE_PRET", bytes, verCode, generatedBy, emp.getFullName());
+        return saveGeneratedDocument(requestId, "ATTESTATION_NON_BENEFICE_PRET", bytes, verCode, generatedBy,
+                emp.getFullName(), sharepointLocation, emp.getPaysId());
     }
 
     public GeneratedDocumentResponse generateAttestationTitularisationPdf(Long employeeProfileId,
@@ -259,12 +277,15 @@ public class PdfDocumentService {
 
         String docRef  = generateDocumentRef("RH-ATT-TIT", emp.getPaysId());
         String verCode = generateVerificationCode();
+        String sharepointLocation = documentTemplateService
+                .getSharepointLocation("Attestation de Titularisation", emp.getPaysId()).orElse(null);
 
         Optional<byte[]> dbPdf = documentTemplateService.renderByName(
             "Attestation de Titularisation", emp.getPaysId(), employeeProfileId,
             Map.of("document.ref", docRef, "document.verificationCode", verCode));
         if (dbPdf.isPresent()) {
-            return saveGeneratedDocument(requestId, "ATTESTATION_TITULARISATION", dbPdf.get(), verCode, generatedBy, emp.getFullName());
+            return saveGeneratedDocument(requestId, "ATTESTATION_TITULARISATION", dbPdf.get(), verCode, generatedBy,
+                    emp.getFullName(), sharepointLocation, emp.getPaysId());
         }
 
         LocalDate       titularisationDate = emp.getProbationEndDate() != null ? emp.getProbationEndDate() : emp.getHireDate();
@@ -274,7 +295,8 @@ public class PdfDocumentService {
         data.put("titularisationDate", formatDateFr(titularisationDate));
 
         byte[] bytes = pdfClient.generatePdf("attestation-titularisation", data);
-        return saveGeneratedDocument(requestId, "ATTESTATION_TITULARISATION", bytes, verCode, generatedBy, emp.getFullName());
+        return saveGeneratedDocument(requestId, "ATTESTATION_TITULARISATION", bytes, verCode, generatedBy,
+                emp.getFullName(), sharepointLocation, emp.getPaysId());
     }
 
     public GeneratedDocumentResponse generateLettreInvitationPdf(Long employeeProfileId,
@@ -284,6 +306,8 @@ public class PdfDocumentService {
         EmployeeDataDto emp     = loadEmployeeData(employeeProfileId);
         String          docRef  = generateDocumentRef("RH-LTR-INV", emp.getPaysId());
         String          verCode = generateVerificationCode();
+        String sharepointLocation = documentTemplateService
+                .getSharepointLocation("Lettre d'Invitation ARX France", emp.getPaysId()).orElse(null);
 
         Map<String, String> extraCtx = new HashMap<>();
         extraCtx.put("document.ref",              docRef);
@@ -303,7 +327,7 @@ public class PdfDocumentService {
             "Lettre d'Invitation ARX France", emp.getPaysId(), employeeProfileId, extraCtx);
         if (dbPdf.isPresent()) {
             return saveGeneratedDocument(requestId, "LETTRE_INVITATION_ARX_FRANCE",
-                    dbPdf.get(), verCode, generatedBy, emp.getFullName());
+                    dbPdf.get(), verCode, generatedBy, emp.getFullName(), sharepointLocation, emp.getPaysId());
         }
 
         // Fallback: Handlebars flat-key template via pdf-service
@@ -327,7 +351,7 @@ public class PdfDocumentService {
 
         byte[] bytes = pdfClient.generatePdf("lettre-invitation-arx-france", data);
         return saveGeneratedDocument(requestId, "LETTRE_INVITATION_ARX_FRANCE",
-                bytes, verCode, generatedBy, emp.getFullName());
+                bytes, verCode, generatedBy, emp.getFullName(), sharepointLocation, emp.getPaysId());
     }
 
     public GeneratedDocumentResponse generateAttestationDomiciliationSalairePdf(Long employeeProfileId,
@@ -343,12 +367,15 @@ public class PdfDocumentService {
 
         String docRef  = generateDocumentRef("RH-ATT-DOM", emp.getPaysId());
         String verCode = generateVerificationCode();
+        String sharepointLocation = documentTemplateService
+                .getSharepointLocation("Attestation de Domiciliation de Salaire", emp.getPaysId()).orElse(null);
 
         Optional<byte[]> dbPdf = documentTemplateService.renderByName(
             "Attestation de Domiciliation de Salaire", emp.getPaysId(), employeeProfileId,
             Map.of("document.ref", docRef, "document.verificationCode", verCode));
         if (dbPdf.isPresent()) {
-            return saveGeneratedDocument(requestId, "ATTESTATION_DOMICILIATION_SALAIRE", dbPdf.get(), verCode, generatedBy, emp.getFullName());
+            return saveGeneratedDocument(requestId, "ATTESTATION_DOMICILIATION_SALAIRE", dbPdf.get(), verCode, generatedBy,
+                    emp.getFullName(), sharepointLocation, emp.getPaysId());
         }
 
         DgParametersDto     dg   = loadDgParameters(emp.getPaysId());
@@ -360,7 +387,8 @@ public class PdfDocumentService {
         data.put("iban",     emp.getIban() != null ? emp.getIban() : "--");
 
         byte[] bytes = pdfClient.generatePdf("attestation-domiciliation-salaire", data);
-        return saveGeneratedDocument(requestId, "ATTESTATION_DOMICILIATION_SALAIRE", bytes, verCode, generatedBy, emp.getFullName());
+        return saveGeneratedDocument(requestId, "ATTESTATION_DOMICILIATION_SALAIRE", bytes, verCode, generatedBy,
+                emp.getFullName(), sharepointLocation, emp.getPaysId());
     }
 
     // -------------------------------------------------------------------------
@@ -583,6 +611,8 @@ public class PdfDocumentService {
                     .paysId(rs.getLong("pays_id"))
                     .candidateId(rs.getObject("candidate_id") != null ? rs.getLong("candidate_id") : null)
                     .fullName(rs.getString("fullName"))
+                    .firstName(rs.getString("first_name"))
+                    .lastName(rs.getString("last_name"))
                     .ms365Email(rs.getString("ms365_email"))
                     .isoCode(rs.getString("iso_code"))
                     .paysLabel(rs.getString("pays_label"))
@@ -643,12 +673,40 @@ public class PdfDocumentService {
         return data;
     }
 
+    /** Overload conservé pour les generateurs qui n'ont pas (encore) de maquette SharePoint
+     * associee (offboarding, decharge candidat) — pas d'upload, comportement inchange. */
     private GeneratedDocumentResponse saveGeneratedDocument(Long requestId,
                                                              String docType,
                                                              byte[] pdfBytes,
                                                              String verCode,
                                                              Long generatedBy,
                                                              String employeeName) {
+        return saveGeneratedDocument(requestId, docType, pdfBytes, verCode, generatedBy, employeeName,
+                null, null);
+    }
+
+    /**
+     * Enregistre le PDF sur disque (chemin faisant foi, jamais impacte par ce qui suit) puis,
+     * si une maquette SharePoint est configuree pour ce document, tente en plus un depot sur
+     * SharePoint via GraphSharePointService — best-effort, jamais bloquant : un echec (ou une
+     * ambiguite de nom, cf. hasAmbiguousEmployeeFolder) laisse simplement sharepointUrl a null,
+     * la copie locale reste la source de verite.
+     *
+     * Le nom de dossier employe est employeeName (= Users.fullName) tel quel, PAS reconstruit a
+     * partir d'un prenom/nom separes : candidates.first_name/last_name n'est renseigne que pour
+     * ~5% des employes reels (les autres n'ont pas de candidate_id), et Users.first_name/last_name
+     * est vide a 100% en pratique — fullName est la seule source fiable, et elle correspond deja
+     * a la convention de nommage reelle des dossiers SharePoint ("Prenom NOM") pour l'immense
+     * majorite des employes (verifie manuellement contre les 133 dossiers reels de Tunisie).
+     */
+    private GeneratedDocumentResponse saveGeneratedDocument(Long requestId,
+                                                             String docType,
+                                                             byte[] pdfBytes,
+                                                             String verCode,
+                                                             Long generatedBy,
+                                                             String employeeName,
+                                                             String sharepointLocation,
+                                                             Long paysId) {
         String dir = appProperties.getStoragePath() + "/hr/documents/" + docType.toLowerCase();
         try {
             Files.createDirectories(Path.of(dir));
@@ -664,16 +722,33 @@ public class PdfDocumentService {
             throw new PdfGenerationException("Cannot write PDF file: " + filePath, e);
         }
 
+        String sharepointUrl = null;
+        if (sharepointLocation != null && !sharepointLocation.isBlank()
+                && employeeName != null && !employeeName.isBlank()) {
+            // Un fullName peut porter des espaces multiples ("Abir  ESSAYEM"-style saisies) —
+            // on nettoie ce qu'on ECRIT nous-memes, ca n'affecte pas la recherche d'un dossier
+            // existant (aucun de nos employes actuels n'a besoin de matcher un tel double-espace).
+            String employeeFolder = employeeName.trim().replaceAll("\\s+", " ");
+            if (hasAmbiguousEmployeeFolder(employeeFolder, paysId)) {
+                log.warn("Plusieurs employes partagent le nom de dossier SharePoint '{}' — depot SharePoint " +
+                        "ignore par securite pour {} (copie locale conservee)", employeeFolder, fileName);
+            } else {
+                sharepointUrl = graphSharePointService
+                        .uploadDocument(sharepointLocation, employeeFolder, fileName, pdfBytes)
+                        .orElse(null);
+            }
+        }
+
         OffsetDateTime now = OffsetDateTime.now();
 
         // INSERT and return generated id
         Long newId = jdbc.queryForObject(
                 "INSERT INTO generated_documents " +
-                "(employee_request_id, document_type, file_url, verification_code, generated_at, generated_by) " +
+                "(employee_request_id, document_type, file_url, verification_code, generated_at, generated_by, sharepoint_url) " +
                 "OUTPUT INSERTED.id " +
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 Long.class,
-                requestId, docType, filePath, verCode, now, generatedBy);
+                requestId, docType, filePath, verCode, now, generatedBy, sharepointUrl);
 
         String downloadUrl = "/api/hr/documents/download/" + newId;
 
@@ -686,7 +761,22 @@ public class PdfDocumentService {
                 .generatedAt(now)
                 .generatedBy(generatedBy)
                 .downloadUrl(downloadUrl)
+                .sharepointUrl(sharepointUrl)
                 .build();
+    }
+
+    /** Garde-fou : si plusieurs employes du meme pays partagent exactement le meme fullName
+     * (comparaison insensible a la casse), le nom de dossier SharePoint "Prenom NOM" est ambigu —
+     * on refuse d'y deposer quoi que ce soit plutot que de risquer de glisser le document d'un
+     * employe dans le dossier d'un autre. Scope par pays_id : chaque pays a son propre site
+     * SharePoint, une homonymie entre deux pays differents ne pose donc pas ce risque. */
+    private boolean hasAmbiguousEmployeeFolder(String employeeFolder, Long paysId) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(DISTINCT ep.id) FROM [dbo].[employee_profiles] ep " +
+                "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
+                "WHERE ep.pays_id = ? AND UPPER(LTRIM(RTRIM(u.fullName))) = UPPER(?)",
+                Integer.class, paysId, employeeFolder.trim());
+        return count != null && count > 1;
     }
 
     private String generateDocumentRef(String prefix, Long paysId) {

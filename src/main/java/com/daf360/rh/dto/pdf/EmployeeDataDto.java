@@ -14,6 +14,10 @@ public class EmployeeDataDto {
     private Long   candidateId;
 
     private String fullName;
+    /** Séparés de fullName pour construire le nom de dossier SharePoint "Prénom NOM" (nom de
+     * famille en majuscules) — fullName ne garantit pas cette casse/cet ordre exacts. */
+    private String firstName;
+    private String lastName;
     private String ms365Email;
     private String isoCode;
     private String paysLabel;

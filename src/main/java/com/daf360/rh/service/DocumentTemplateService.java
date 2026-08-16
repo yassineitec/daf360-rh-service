@@ -129,6 +129,7 @@ public class DocumentTemplateService {
             .htmlContent(dto.getHtmlContent())
             .variables(extractVariablesJson(dto.getHtmlContent()))
             .pageSize(dto.getPageSize() != null ? dto.getPageSize() : "A4")
+            .sharepointLocation(dto.getSharepointLocation())
             .isActive(true)
             .createdBy(actorId)
             .createdAt(OffsetDateTime.now())
@@ -149,6 +150,7 @@ public class DocumentTemplateService {
         tmpl.setHtmlContent(dto.getHtmlContent());
         tmpl.setVariables(extractVariablesJson(dto.getHtmlContent()));
         tmpl.setPageSize(dto.getPageSize() != null ? dto.getPageSize() : tmpl.getPageSize());
+        tmpl.setSharepointLocation(dto.getSharepointLocation());
         tmpl.setUpdatedAt(OffsetDateTime.now());
         return toDto(repo.save(tmpl));
     }
@@ -205,6 +207,16 @@ public class DocumentTemplateService {
             });
     }
 
+    /** Emplacement SharePoint configuré pour la maquette active de ce nom/pays — indépendant de
+     * la source de rendu (DB ou fichier statique) utilisée par renderByName(). Vide si aucune
+     * maquette active, ou si son sharepoint_location n'a pas encore été renseigné. */
+    @Transactional(readOnly = true)
+    public Optional<String> getSharepointLocation(String name, Long paysId) {
+        return repo.findFirstByPaysIdAndNameAndIsActiveTrue(paysId, name)
+                .map(DocumentTemplate::getSharepointLocation)
+                .filter(loc -> loc != null && !loc.isBlank());
+    }
+
     // ── Variable catalog ──────────────────────────────────────────────────────
 
     public List<DocumentVariableCatalog.VariableDef> getVariableCatalog() {
@@ -241,6 +253,7 @@ public class DocumentTemplateService {
             .htmlContent(t.getHtmlContent())
             .variables(vars)
             .pageSize(t.getPageSize())
+            .sharepointLocation(t.getSharepointLocation())
             .isActive(t.getIsActive())
             .createdAt(t.getCreatedAt())
             .updatedAt(t.getUpdatedAt())

@@ -16,4 +16,8 @@ public class GeneratedDocumentResponse {
     private OffsetDateTime generatedAt;
     private Long           generatedBy;
     private String         downloadUrl;
+    /** Lien SharePoint si le document a pu y être déposé (null si maquette sans emplacement
+     * configuré, SharePoint non configuré, ou échec de l'upload — jamais bloquant, cf.
+     * GraphSharePointService). */
+    private String         sharepointUrl;
 }

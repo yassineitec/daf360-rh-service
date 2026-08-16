@@ -30,5 +30,15 @@ public class AppProperties {
      */
     private String internalApiKey  = "";
 
+    // ── Microsoft Graph / SharePoint (document storage) ────────────────────────
+    // Blank tenant/client id/secret = integration disabled: GraphSharePointService
+    // skips the upload silently (local disk save, which happens first and unconditionally,
+    // is unaffected either way). Never hardcode real values here — env vars only.
+    private String msGraphTenantId         = "";
+    private String msGraphClientId         = "";
+    private String msGraphClientSecret     = "";
+    private String sharepointSiteHostname  = "pinigroup.sharepoint.com";
+    private String sharepointSitePath      = "/sites/pini-tunisia";
+
     public String getPdfServiceUrl() { return pdfServiceUrl; }
 }
