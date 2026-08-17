@@ -36,6 +36,14 @@ public class Role {
     @Column(name = "`showAll`")
     private Boolean showAll;
 
+    /**
+     * How this role's country visibility is resolved (V74). Kept consistent with showAll by
+     * RoleService: ALL ⇔ showAll = true, since the older portal/UI code still reads showAll.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "pays_scope_mode", length = 10)
+    private PaysScopeMode paysScopeMode;
+
     @Column(name = "deleted")
     private Boolean deleted;
 

@@ -33,6 +33,7 @@ public enum ErrorCode {
     HOLIDAY_NOT_FOUND               (HttpStatus.NOT_FOUND,                "Jour férié introuvable"),
     ROLE_NOT_FOUND                  (HttpStatus.NOT_FOUND,                "Rôle introuvable"),
     PERMISSION_NOT_ALLOWED          (HttpStatus.BAD_REQUEST,              "Permission non autorisée par le contrat de la base"),
+    PAYS_SCOPE_INVALID              (HttpStatus.BAD_REQUEST,              "Périmètre pays invalide — pays inconnu"),
     CANDIDATE_NOT_FOUND             (HttpStatus.NOT_FOUND,                "Candidat introuvable"),
     CANDIDATE_EMAIL_DUPLICATE       (HttpStatus.CONFLICT,                 "Un candidat avec cet email existe déjà"),
     CANDIDATE_STATUS_INVALID        (HttpStatus.UNPROCESSABLE_CONTENT,    "Action impossible : statut du candidat incompatible"),

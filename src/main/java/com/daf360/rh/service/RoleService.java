@@ -1,6 +1,7 @@
 package com.daf360.rh.service;
 
 import com.daf360.rh.common.PermissionCatalog;
+import com.daf360.rh.domain.PaysScopeMode;
 import com.daf360.rh.domain.Role;
 import com.daf360.rh.dto.admin.CreateRoleRequest;
 import com.daf360.rh.dto.admin.PermissionCodeResponse;
@@ -11,6 +12,7 @@ import com.daf360.rh.dto.admin.UpdatePermissionsDto;
 import com.daf360.rh.dto.admin.UpdateRoleRequest;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.repository.RolePaysScopeRepository;
 import com.daf360.rh.repository.RolePermissionRepository;
 import com.daf360.rh.repository.RoleRepository;
 import lombok.RequiredArgsConstructor;
@@ -55,6 +57,7 @@ public class RoleService {
 
     private final RoleRepository           roleRepo;
     private final RolePermissionRepository permRepo;
+    private final RolePaysScopeRepository  paysScopeRepo;
     private final AuditService             auditService;
     private final JdbcTemplate             jdbc;
 
@@ -73,6 +76,14 @@ public class RoleService {
                     String perm  = rs.getString("permission");
                     permsByRole.computeIfAbsent(roleId, k -> new ArrayList<>()).add(perm);
                 });
+
+        // Country scope, also batched (same N+1 reasoning as the permissions above)
+        Map<Long, List<Long>> scopeByRole = new HashMap<>();
+        jdbc.query(
+                "SELECT role_id, pays_id FROM RolePaysScope ORDER BY role_id, pays_id",
+                (RowCallbackHandler) rs ->
+                        scopeByRole.computeIfAbsent(rs.getLong("role_id"), k -> new ArrayList<>())
+                                   .add(rs.getLong("pays_id")));
 
         // Load all user counts in one query
         Map<Long, Integer> userCounts = new HashMap<>();
@@ -96,6 +107,8 @@ public class RoleService {
             List<String> perms = permsByRole.getOrDefault(r.getId(), List.of());
             dto.setPermissions(perms);
             dto.setPermissionCount(perms.size());
+            dto.setPaysScopeMode(effectiveMode(r).name());
+            dto.setPaysScope(scopeByRole.getOrDefault(r.getId(), List.of()));
             if (r.getParentRoleId() != null) {
                 dto.setParentRoleName(roleNames.get(r.getParentRoleId()));
             }
@@ -113,6 +126,8 @@ public class RoleService {
             dto.setParentRoleId(r.getParentRoleId());
             dto.setShowAll(r.getShowAll());
             dto.setPermissions(permRepo.findPermissionsByRoleId(r.getId()));
+            dto.setPaysScopeMode(effectiveMode(r).name());
+            dto.setPaysScope(paysScopeRepo.findPaysIdsByRoleId(r.getId()));
             return dto;
         }).orElseThrow(() -> new AppException(ErrorCode.ROLE_NOT_FOUND, "Rôle introuvable: id=" + id));
     }
@@ -178,10 +193,17 @@ public class RoleService {
             throw new AppException(ErrorCode.ALREADY_EXISTS, "Un rôle avec ce nom existe déjà");
         }
 
+        // showAll and paysScopeMode are two views of the same decision; whichever the caller
+        // sent, both are stored consistently so the older readers of showAll stay correct.
+        PaysScopeMode mode = dto.getPaysScopeMode() != null
+                ? PaysScopeMode.from(dto.getPaysScopeMode())
+                : (Boolean.TRUE.equals(dto.getShowAll()) ? PaysScopeMode.ALL : PaysScopeMode.OWN);
+
         Role role = Role.builder()
                 .frenchName(dto.getFrenchName())
                 .parentRoleId(dto.getParentRoleId())
-                .showAll(dto.getShowAll() != null ? dto.getShowAll() : false)
+                .showAll(mode == PaysScopeMode.ALL)
+                .paysScopeMode(mode)
                 .createdAt(OffsetDateTime.now())
                 .deleted(false)
                 .build();
@@ -198,6 +220,8 @@ public class RoleService {
             dto.getPermissions().forEach(p ->
                     permRepo.insertPermission(saved.getId(), p));
         }
+
+        writePaysScope(saved.getId(), dto.getPaysScope(), mode);
 
         auditService.log(actorId(auth), "CREATE_ROLE", "Role", saved.getId(), null, saved.getFrenchName());
         return getRole(saved.getId());
@@ -223,15 +247,115 @@ public class RoleService {
             role.setParentRoleId(dto.getParentRoleId() == 0L ? null : dto.getParentRoleId());
         }
 
-        if (dto.getShowAll() != null) {
+        // showAll and paysScopeMode must never disagree. Either field may arrive alone (the
+        // existing UI only knows showAll), so whichever is present drives the other.
+        if (dto.getPaysScopeMode() != null) {
+            PaysScopeMode mode = PaysScopeMode.from(dto.getPaysScopeMode());
+            role.setPaysScopeMode(mode);
+            role.setShowAll(mode == PaysScopeMode.ALL);
+        } else if (dto.getShowAll() != null) {
             role.setShowAll(dto.getShowAll());
+            // Leaving LIST intact on showAll=false would silently keep a country list active;
+            // dropping to OWN would silently discard a deliberate LIST. Preserve LIST only if
+            // that is what the role already was.
+            if (Boolean.TRUE.equals(dto.getShowAll())) {
+                role.setPaysScopeMode(PaysScopeMode.ALL);
+            } else if (effectiveMode(role) == PaysScopeMode.ALL) {
+                role.setPaysScopeMode(PaysScopeMode.OWN);
+            }
         }
 
         role.setUpdatedAt(OffsetDateTime.now());
         roleRepo.save(role);
 
+        // null means "field absent from the PATCH" — leave the list alone. An empty list is a
+        // deliberate clear, so it must go through.
+        if (dto.getPaysScope() != null) {
+            List<Long> before = paysScopeRepo.findPaysIdsByRoleId(id);
+            writePaysScope(id, dto.getPaysScope(), effectiveMode(role));
+            auditScopeChange(auth, id, before, paysScopeRepo.findPaysIdsByRoleId(id));
+        }
+
         auditService.log(actorId(auth), "UPDATE_ROLE", "Role", id, null, role.getFrenchName());
         return getRole(id);
+    }
+
+    // ── Country (pays) scope ──────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public List<Long> getPaysScope(Long roleId) {
+        if (!roleRepo.existsById(roleId)) {
+            throw new AppException(ErrorCode.ROLE_NOT_FOUND, "Rôle introuvable: id=" + roleId);
+        }
+        return paysScopeRepo.findPaysIdsByRoleId(roleId);
+    }
+
+    /** Full replacement of a role's country list. An empty/null list clears it. */
+    public RoleResponseDto replacePaysScope(Long roleId, List<Long> paysIds, Authentication auth) {
+        Role role = roleRepo.findById(roleId)
+                .orElseThrow(() -> new AppException(ErrorCode.ROLE_NOT_FOUND, "Rôle introuvable: id=" + roleId));
+        List<Long> before = paysScopeRepo.findPaysIdsByRoleId(roleId);
+        writePaysScope(roleId, paysIds, effectiveMode(role));
+        auditScopeChange(auth, roleId, before, paysScopeRepo.findPaysIdsByRoleId(roleId));
+        return getRole(roleId);
+    }
+
+    /**
+     * The role's mode, tolerating rows written before V74's backfill (null) and any legacy
+     * showAll that was set without a mode.
+     */
+    private PaysScopeMode effectiveMode(Role role) {
+        if (role.getPaysScopeMode() != null) return role.getPaysScopeMode();
+        return Boolean.TRUE.equals(role.getShowAll()) ? PaysScopeMode.ALL : PaysScopeMode.OWN;
+    }
+
+    /**
+     * Delete-then-insert, like updatePermissions. Unlike permissions there is no
+     * cross-module concern here — RolePaysScope belongs to RH alone — so the whole role's
+     * list is replaced rather than a filtered subset.
+     *
+     * Every id is validated against [pays] first: an unknown pays_id would be invisible
+     * dead data that silently narrows the scope, and there is no FK to catch it (see V74).
+     *
+     * Rejects a non-empty list in OWN mode rather than accepting it silently. That mistake —
+     * listing {TN, EG} on a role shared by Tunisian and Egyptian holders, expecting each to
+     * stay in their own country — is precisely the one that would leak data if the list were
+     * ever honoured, so it fails loudly at the point of entry instead.
+     */
+    private void writePaysScope(Long roleId, List<Long> paysIds, PaysScopeMode mode) {
+        List<Long> requested = paysIds == null ? List.of()
+                : paysIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+
+        if (!requested.isEmpty() && mode != PaysScopeMode.LIST) {
+            throw new AppException(ErrorCode.PAYS_SCOPE_INVALID,
+                    "Une liste de pays n'a de sens qu'en mode LIST (mode actuel: " + mode
+                    + "). En mode OWN chaque utilisateur voit uniquement son propre pays ; "
+                    + "en mode ALL il voit tous les pays.");
+        }
+
+        if (!requested.isEmpty()) {
+            String placeholders = requested.stream().map(p -> "?").collect(Collectors.joining(","));
+            List<Long> known = jdbc.queryForList(
+                    "SELECT id FROM [dbo].[pays] WHERE id IN (" + placeholders + ")",
+                    Long.class, requested.toArray());
+            List<Long> unknown = requested.stream().filter(p -> !known.contains(p)).toList();
+            if (!unknown.isEmpty()) {
+                throw new AppException(ErrorCode.PAYS_SCOPE_INVALID,
+                        "Pays inconnu(s): " + unknown);
+            }
+        }
+
+        paysScopeRepo.deleteByRoleId(roleId);
+        for (Long paysId : requested) {
+            paysScopeRepo.insertPaysId(roleId, paysId);
+        }
+    }
+
+    private void auditScopeChange(Authentication auth, Long roleId,
+                                  List<Long> before, List<Long> after) {
+        auditService.log(actorId(auth), "UPDATE_ROLE_PAYS_SCOPE", "RolePaysScope", roleId,
+                before.stream().map(String::valueOf).collect(Collectors.joining(",")),
+                after.stream().map(String::valueOf).collect(Collectors.joining(",")));
     }
 
     public void deleteRole(Long id, Authentication auth) {
@@ -248,6 +372,9 @@ public class RoleService {
         }
 
         permRepo.deleteByRoleId(id);
+        // RolePaysScope has no FK to Roles (see V74), so nothing cascades — clear it here or
+        // the rows outlive the role and get inherited by whatever reuses the id.
+        paysScopeRepo.deleteByRoleId(id);
 
         role.setDeleted(true);
         role.setDeletedAt(OffsetDateTime.now());
