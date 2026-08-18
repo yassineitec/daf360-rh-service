@@ -86,6 +86,8 @@ public class CandidateService {
     private final DisciplineRepository            disciplineRepo;
     private final HrDepartmentRepository          departmentRepo;
     private final ConfigurableListValueRepository listValueRepo;
+    /** Equipment ledger (V76) — seeded here too, see hireCandidate. */
+    private final ItAssetAssignmentService        assetAssignmentService;
 
     // ── SQL constants ─────────────────────────────────────────────────────────
 
@@ -289,6 +291,24 @@ public class CandidateService {
         candidate.setStatus(CandidateStatus.HIRED);
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidateRepo.save(candidate);
+
+        /*
+         * Open the IT equipment ledger for the new employee (V76).
+         *
+         * Required HERE and not only in ItProvisioningService / OnboardingService: this is the
+         * OTHER hire path. IT normally completes provisioning before any profile exists, so the
+         * hook there finds nothing to attach to, and this flow never touches the onboarding
+         * wizard. Without this call the equipment list stayed in `it_assets` and the profile's
+         * "Matériel IT" tab looked empty until someone pressed "Synchroniser".
+         *
+         * Idempotent on (provisioning, asset type), so a profile that later goes through the
+         * wizard gains no duplicates. Non-fatal: the hire itself must not fail over a projection.
+         */
+        try {
+            assetAssignmentService.seedFromProvisioning(prov.getId(), actorUserId);
+        } catch (Exception ex) {
+            log.warn("IT asset ledger seeding failed for candidateId={}: {}", id, ex.getMessage());
+        }
 
         auditService.log(actorUserId.toString(), "HIRE_CANDIDATE", "CANDIDATE", id,
                 "status=" + candidate.getStatus(), "status=HIRED; contractType=" + contractTypeCode);

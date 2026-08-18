@@ -56,6 +56,11 @@ public enum ErrorCode {
     BUSINESS_RULE_VIOLATION         (HttpStatus.UNPROCESSABLE_CONTENT,    "Règle métier non respectée"),
     INVALID_TIMEZONE                (HttpStatus.BAD_REQUEST,              "Fuseau horaire invalide — utilisez un identifiant IANA (ex. Africa/Tunis)"),
     INVALID_NOTICE_PERIOD           (HttpStatus.BAD_REQUEST,              "Préavis invalide — un nombre de jours calendaires positif ou nul"),
+    IT_ASSET_TYPE_NOT_FOUND         (HttpStatus.NOT_FOUND,                "Type de matériel introuvable"),
+    IT_ASSET_ASSIGNMENT_NOT_FOUND   (HttpStatus.NOT_FOUND,                "Affectation de matériel introuvable"),
+    IT_ASSET_SERIAL_IN_USE          (HttpStatus.CONFLICT,                 "Ce numéro de série est déjà affecté et non rendu"),
+    IT_ASSET_ALREADY_RETURNED       (HttpStatus.CONFLICT,                 "Ce matériel a déjà été rendu"),
+    IT_ASSET_INVALID_STATE          (HttpStatus.BAD_REQUEST,              "État de matériel invalide"),
     FORBIDDEN                       (HttpStatus.FORBIDDEN,                "Accès refusé"),
     INTERNAL_ERROR                  (HttpStatus.INTERNAL_SERVER_ERROR,    "Erreur interne — veuillez réessayer");
 

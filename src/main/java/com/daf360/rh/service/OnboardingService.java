@@ -77,6 +77,7 @@ public class OnboardingService {
      */
     private final com.daf360.rh.lifecycle.EmployeeLifecycleService lifecycleService;
     private final EmployeeDocumentService                          documentService;
+    private final ItAssetAssignmentService                         assetAssignmentService;
 
     // ─── Valid statuses for the onboarding pending list ──────────────────────
     private static final Set<CandidateStatus> PENDING_STATUSES =
@@ -362,6 +363,19 @@ public class OnboardingService {
         // STEP 2c — Attach the signed contract PDF, staged against the candidate while the
         // profile did not yet exist.
         linkContractDocument(saved, dto, hrOfficerId);
+
+        // STEP 2d — Open the IT equipment ledger for this employee (V76).
+        //
+        // The other end of the same hook in ItProvisioningService.completeProvisioning: that
+        // one is a no-op when IT finishes BEFORE the profile exists, which is the usual
+        // order. Here the profile has just been created, so this is where those rows land.
+        // Idempotent on (provisioning, asset type) — running both is safe.
+        try {
+            assetAssignmentService.seedFromProvisioning(prov.getId(), hrOfficerId);
+        } catch (Exception ex) {
+            log.warn("IT asset ledger seeding failed for candidateId={}: {}",
+                    candidateId, ex.getMessage());
+        }
 
         // STEP 3 — Delete onboarding draft
         jdbc.update("DELETE FROM [dbo].[onboarding_drafts] WHERE candidate_id = ?", candidateId);
