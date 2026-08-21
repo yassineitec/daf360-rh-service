@@ -50,6 +50,15 @@ public class CandidateInterview {
     @Column(name = "sequence_number", nullable = false)
     private Integer sequenceNumber;
 
+    @Column(name = "graph_event_id", length = 255)
+    private String graphEventId;
+
+    @Column(name = "graph_organizer_email", length = 255)
+    private String graphOrganizerEmail;
+
+    @Column(name = "graph_join_url", length = 1000)
+    private String graphJoinUrl;
+
     @Column(name = "created_by", nullable = false)
     private Long createdBy;
 

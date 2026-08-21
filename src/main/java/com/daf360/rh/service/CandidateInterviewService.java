@@ -18,6 +18,7 @@ import com.daf360.rh.repository.CandidateInterviewRepository;
 import com.daf360.rh.repository.CandidateRepository;
 import com.daf360.rh.repository.InterviewTypeRepository;
 import com.daf360.rh.security.TenantService;
+import com.daf360.rh.service.calendar.GraphCalendarService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -47,6 +48,7 @@ public class CandidateInterviewService {
     private final CandidateRepository          candidateRepo;
     private final TenantService                tenantService;
     private final JdbcTemplate                 jdbcTemplate;
+    private final GraphCalendarService          graphCalendarService;
 
     @PreAuthorize("hasPermission(null, 'RH_MANAGE_INTERVIEWS')")
     public List<UserPickerDto> listInterviewUsers(Long paysId) {
@@ -109,7 +111,11 @@ public class CandidateInterviewService {
                 .build();
 
         CandidateInterview saved = interviewRepo.save(interview);
-        if (!panel.isEmpty()) savePanel(saved.getId(), panel);
+        // Mutated after save() — JPA dirty-checking flushes these at commit, no second save() needed.
+        if (!panel.isEmpty()) {
+            savePanel(saved.getId(), panel);
+            syncCalendarEvent(saved, panel, candidate);
+        }
         return toDto(saved, type.getName(), panel, userNames(panel));
     }
 
@@ -168,6 +174,20 @@ public class CandidateInterviewService {
 
         CandidateInterview saved = interviewRepo.save(interview);
         if (req.interviewerUserIds() != null) savePanel(saved.getId(), panel);
+
+        // Mutated after save() — JPA dirty-checking flushes these at commit, no second save() needed.
+        if (saved.getStatus() == InterviewStatus.CANCELLED) {
+            cancelCalendarEvent(saved);
+        } else if (saved.getStatus() == InterviewStatus.PLANNED) {
+            if (!panel.isEmpty()) {
+                syncCalendarEvent(saved, panel, candidate);
+            } else {
+                // Panel cleared while still PLANNED: nothing left to organize under —
+                // treat exactly like a cancellation so the Graph event doesn't go orphaned.
+                cancelCalendarEvent(saved);
+            }
+        }
+
         String typeName = typeRepo.findById(saved.getInterviewTypeId())
                 .map(InterviewType::getName).orElse(null);
         return toDto(saved, typeName, panel, userNames(panel));
@@ -364,6 +384,118 @@ public class CandidateInterviewService {
                 ci.getStatus().name(),
                 ci.getResult() != null ? ci.getResult().name() : null,
                 ci.getSequenceNumber(),
-                ci.getCreatedAt());
+                ci.getCreatedAt(),
+                ci.getGraphJoinUrl());
+    }
+
+    // ── calendar sync (Outlook/Teams) ────────────────────────────────────────
+
+    private static final int CALENDAR_EVENT_DURATION_MINUTES = 60;
+
+    /** userId → email (COALESCE(email, username), same convention used elsewhere in
+     * this codebase) for a batch of users, in one query — sibling of userNames(). */
+    private Map<Long, String> userEmails(Collection<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) return Map.of();
+        String placeholders = userIds.stream().map(id -> "?").collect(Collectors.joining(","));
+        List<UserEmail> rows = jdbcTemplate.query(
+                "SELECT id, COALESCE(email, username) AS email FROM Users WHERE id IN (" + placeholders + ")",
+                (rs, rn) -> new UserEmail(rs.getLong("id"), rs.getString("email")),
+                userIds.toArray());
+        Map<Long, String> emails = new LinkedHashMap<>();
+        rows.forEach(u -> emails.put(u.id(), u.email()));
+        return emails;
+    }
+
+    private record UserEmail(Long id, String email) {}
+
+    /** Best-effort: creates, patches, or (if the lead interviewer changed) recreates
+     * the Graph calendar event for this interview. Never throws — a bug here must
+     * never break interview creation/editing (GraphCalendarService itself also never
+     * throws, but the surrounding email-resolution logic here could). */
+    private void syncCalendarEvent(CandidateInterview interview, List<Long> panel, Candidate candidate) {
+        try {
+            Long leadUserId = panel.get(0);
+            Map<Long, String> emails = userEmails(panel);
+            String organizerEmail = emails.get(leadUserId);
+            if (organizerEmail == null) {
+                log.debug("Could not resolve the lead interviewer's email for interview {} — skipping calendar sync",
+                        interview.getId());
+                return;
+            }
+
+            // LinkedHashSet: avoids sending Graph a duplicate attendee if the candidate's
+            // email happens to collide with a panel member's, or two panel members
+            // resolve to the same fallback email — same dedup approach as normalizePanel().
+            Set<String> attendeeEmails = new LinkedHashSet<>();
+            for (int i = 1; i < panel.size(); i++) {
+                String e = emails.get(panel.get(i));
+                if (e != null) attendeeEmails.add(e);
+            }
+            if (candidate.getEmailPersonal() != null) attendeeEmails.add(candidate.getEmailPersonal());
+            List<String> attendeeEmailList = new ArrayList<>(attendeeEmails);
+
+            String subject = "Entretien - " + candidate.getFirstName() + " " + candidate.getLastName();
+            OffsetDateTime start = interview.getScheduledAt();
+            OffsetDateTime end = start.plusMinutes(CALENDAR_EVENT_DURATION_MINUTES);
+
+            boolean organizerChanged = interview.getGraphEventId() != null
+                    && interview.getGraphOrganizerEmail() != null
+                    && !interview.getGraphOrganizerEmail().equals(organizerEmail);
+
+            boolean needsCreate = interview.getGraphEventId() == null || organizerChanged;
+
+            if (!needsCreate) {
+                // Same organizer, event already exists — try to patch it in place.
+                // EVENT_NOT_FOUND means it was genuinely deleted out from under us
+                // (e.g. manually in Outlook) — safe to self-heal by falling through to
+                // create a fresh one below. FAILED (network/auth/throttling/timeout —
+                // an ambiguous, likely-transient failure) must NOT trigger a recreate:
+                // the original PATCH may well have landed despite a timed-out response,
+                // or the existing event may still be perfectly live — recreating here
+                // would risk a duplicate invite while orphaning the original. Leave
+                // graphEventId untouched; the next edit simply retries the patch.
+                GraphCalendarService.UpdateOutcome outcome = graphCalendarService.updateEvent(
+                        organizerEmail, interview.getGraphEventId(),
+                        subject, start, end, attendeeEmailList, interview.getLocation());
+                if (outcome == GraphCalendarService.UpdateOutcome.SUCCESS) {
+                    return;
+                } else if (outcome == GraphCalendarService.UpdateOutcome.EVENT_NOT_FOUND) {
+                    needsCreate = true;
+                } else {
+                    return;
+                }
+            }
+
+            if (needsCreate) {
+                if (organizerChanged) {
+                    graphCalendarService.cancelEvent(interview.getGraphOrganizerEmail(), interview.getGraphEventId(),
+                            "Cet entretien a été réorganisé avec un nouvel intervieweur principal.");
+                }
+                graphCalendarService.createEvent(organizerEmail, subject, start, end, attendeeEmailList, interview.getLocation())
+                        .ifPresentOrElse(created -> {
+                            interview.setGraphEventId(created.eventId());
+                            interview.setGraphOrganizerEmail(organizerEmail);
+                            interview.setGraphJoinUrl(created.joinUrl());
+                        }, () -> { /* failed or not configured — fields remain unchanged */ });
+            }
+        } catch (Exception e) {
+            log.warn("Calendar sync failed for interview {}: {}",
+                    interview.getId(), e.getMessage());
+        }
+    }
+
+    /** Best-effort: cancels the Graph calendar event tied to this interview, if any. */
+    private void cancelCalendarEvent(CandidateInterview interview) {
+        try {
+            if (interview.getGraphEventId() == null || interview.getGraphOrganizerEmail() == null) return;
+            graphCalendarService.cancelEvent(interview.getGraphOrganizerEmail(), interview.getGraphEventId(),
+                    "Cet entretien a été annulé.");
+            interview.setGraphEventId(null);
+            interview.setGraphOrganizerEmail(null);
+            interview.setGraphJoinUrl(null);
+        } catch (Exception e) {
+            log.warn("Calendar cancellation failed for interview {}: {}",
+                    interview.getId(), e.getMessage());
+        }
     }
 }
