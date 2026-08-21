@@ -8,6 +8,8 @@ import com.daf360.rh.dto.profile.*;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.mapper.EmployeeProfileMapper;
 import com.daf360.rh.repository.*;
+import com.daf360.rh.service.sharepoint.EmployeeFolderResolver;
+import com.daf360.rh.service.sharepoint.GraphSharePointService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +49,10 @@ public class EmployeeProfileService {
     private final ObjectMapper              objectMapper;
     private final AppProperties             appProperties;
     private final com.daf360.rh.security.TenantService tenantService;
+
+    // ── SharePoint (profile photo mirroring, cf. spec 2026-08-18) ─────────────
+    private final GraphSharePointService graphSharePointService;
+    private final EmployeeFolderResolver employeeFolderResolver;
 
     // ── Dimension repos injected for FK lookups ───────────────────────────────
     private final GradeRepository        gradeRepo;
@@ -495,6 +501,8 @@ public class EmployeeProfileService {
         }
 
         try {
+            byte[] bytes = file.getBytes();
+
             // Build storage path
             String ext = contentType.contains("png") ? ".png"
                        : contentType.contains("webp") ? ".webp" : ".jpg";
@@ -503,12 +511,17 @@ public class EmployeeProfileService {
             java.nio.file.Files.createDirectories(dir);
             String filename = java.util.UUID.randomUUID() + ext;
             java.nio.file.Path target = dir.resolve(filename);
-            java.nio.file.Files.copy(file.getInputStream(), target,
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            java.nio.file.Files.write(target, bytes);
 
             // Store the API path as photo_url (frontend will prefix with hrApiUrl)
             profile.setPhotoUrl("/api/hr/profiles/" + profileId + "/photo");
             profile.setUpdatedAt(java.time.OffsetDateTime.now());
+
+            // Best-effort mirror to SharePoint — mirrorPhotoToSharePoint() never throws
+            // (see its own try/catch), so it can never block the save below, even if
+            // SharePoint is completely unreachable.
+            mirrorPhotoToSharePoint(profile, ext, bytes);
+
             profileRepository.save(profile);
 
             auditService.log(actorId(auth), "UPLOAD_PHOTO", "EmployeeProfile", profileId,
@@ -602,30 +615,89 @@ public class EmployeeProfileService {
      *       now on {@code Exception}.</li>
      * </ul>
      */
-    @Transactional(readOnly = true)
+    // NOT_SUPPORTED, not readOnly: this method can self-heal via a Graph HTTP round-trip
+    // (fetchAndCachePhotoFromSharePoint) plus a disk write, and it fires on every avatar
+    // render — holding a pooled DB connection open for that whole span (as readOnly would)
+    // risks starving the pool under concurrent cache misses, e.g. right after a deploy or
+    // a cleared cache. NOT_SUPPORTED suspends any active transaction for the method's
+    // duration; profileRepository.findById(...) and jdbcTemplate.queryForObject(...) each
+    // still check out and release their own short-lived connection per call.
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public byte[] servePhoto(Long profileId) {
         try {
             java.nio.file.Path dir = java.nio.file.Paths.get(
                     appProperties.getStoragePath(), "profiles", profileId.toString());
-            if (!java.nio.file.Files.isDirectory(dir)) return null;
 
-            java.nio.file.Path latest;
-            try (java.util.stream.Stream<java.nio.file.Path> entries = java.nio.file.Files.list(dir)) {
-                latest = entries
-                        .filter(java.nio.file.Files::isRegularFile)
-                        .max(java.util.Comparator.comparingLong(p -> {
-                            try { return java.nio.file.Files.getLastModifiedTime(p).toMillis(); }
-                            catch (java.io.IOException e) { return 0L; }
-                        }))
-                        .orElse(null);
-            }
-            return latest != null ? java.nio.file.Files.readAllBytes(latest) : null;
+            byte[] cached = readMostRecentLocalFile(dir);
+            if (cached != null) return cached;
+
+            // Cache miss (no local file at all) — self-heal from SharePoint if
+            // configured for this employee, then cache the result for next time.
+            return fetchAndCachePhotoFromSharePoint(profileId, dir);
 
         } catch (Exception e) {
             // Exception, not IOException: see the class-level note above.
             log.warn("Cannot serve photo for profile {}: {}: {}",
                     profileId, e.getClass().getSimpleName(), e.getMessage());
             return null;
+        }
+    }
+
+    private byte[] readMostRecentLocalFile(java.nio.file.Path dir) throws java.io.IOException {
+        if (!java.nio.file.Files.isDirectory(dir)) return null;
+
+        java.nio.file.Path latest;
+        try (java.util.stream.Stream<java.nio.file.Path> entries = java.nio.file.Files.list(dir)) {
+            latest = entries
+                    .filter(java.nio.file.Files::isRegularFile)
+                    .max(java.util.Comparator.comparingLong(p -> {
+                        try { return java.nio.file.Files.getLastModifiedTime(p).toMillis(); }
+                        catch (java.io.IOException e) { return 0L; }
+                    }))
+                    .orElse(null);
+        }
+        return latest != null ? java.nio.file.Files.readAllBytes(latest) : null;
+    }
+
+    /** Auto-réparation du cache local : ne s'exécute que quand aucun fichier local
+     * n'existe (nouveau serveur, cache vidé, etc.) — jamais sur le chemin rapide
+     * habituel (readMostRecentLocalFile ci-dessus retourne alors directement).
+     * Reconstruit le même chemin déterministe que celui utilisé à l'upload
+     * (mirrorPhotoToSharePoint) ; l'extension n'étant pas persistée séparément, les
+     * trois extensions supportées sont essayées dans l'ordre. Toute exception ici
+     * remonte au catch-all de servePhoto() ci-dessus — pas besoin d'un try/catch
+     * séparé, contrairement à mirrorPhotoToSharePoint qui est appelé depuis
+     * uploadPhoto (dont le catch ne couvre que IOException). */
+    private byte[] fetchAndCachePhotoFromSharePoint(Long profileId, java.nio.file.Path dir) {
+        EmployeeProfile profile = profileRepository.findById(profileId).orElse(null);
+        if (profile == null) return null;
+
+        EmployeeSharepointFolder folder =
+                resolveEmployeeSharepointFolder(profile.getPaysId(), profile.getUserId());
+        if (folder == null) return null;
+
+        String basePath = folder.locationTemplate().replace("{employeeFolder}", folder.employeeFolder());
+        for (String candidate : java.util.List.of("Photo.jpg", "Photo.png", "Photo.webp")) {
+            java.util.Optional<byte[]> content =
+                    graphSharePointService.downloadFile(basePath + "/" + candidate);
+            if (content.isPresent()) {
+                cacheLocally(dir, candidate, content.get());
+                return content.get();
+            }
+        }
+        return null;
+    }
+
+    private void cacheLocally(java.nio.file.Path dir, String sharePointFileName, byte[] content) {
+        try {
+            java.nio.file.Files.createDirectories(dir);
+            String ext = sharePointFileName.substring(sharePointFileName.lastIndexOf('.'));
+            java.nio.file.Path target = dir.resolve(java.util.UUID.randomUUID() + ext);
+            java.nio.file.Files.write(target, content);
+        } catch (java.io.IOException e) {
+            // Best-effort caching only — the caller already has the bytes to serve
+            // regardless of whether this local write succeeds.
+            log.warn("Could not cache SharePoint photo locally at {}: {}", dir, e.getMessage());
         }
     }
 
@@ -641,6 +713,72 @@ public class EmployeeProfileService {
         if (departmentId  != null) departmentRepo.findById(departmentId).ifPresent(profile::setDepartment);
         if (bankId        != null) bankRepo.findById(bankId).ifPresent(profile::setBank);
     }
+
+    // ── SharePoint mirroring (profile photo) ───────────────────────────────────
+
+    /** Best-effort: upload profile photo bytes to SharePoint under the employee's
+     * folder, using a FIXED filename per employee ("Photo.jpg"/.png/.webp) so a
+     * re-upload cleanly overwrites the previous SharePoint copy instead of
+     * accumulating versions the way local disk currently does. Never throws — any
+     * failure (unconfigured, no per-pays location, ambiguous employee name,
+     * network/auth) just leaves photoSharepointUrl unset; the local save has
+     * already succeeded regardless of what happens in here. */
+    private void mirrorPhotoToSharePoint(EmployeeProfile profile, String ext, byte[] bytes) {
+        try {
+            EmployeeSharepointFolder folder =
+                    resolveEmployeeSharepointFolder(profile.getPaysId(), profile.getUserId());
+            if (folder == null) return;
+
+            String fixedFileName = "Photo" + ext;
+            String basePath = folder.locationTemplate().replace("{employeeFolder}", folder.employeeFolder());
+            // Clean up any stale copy left by a PREVIOUS upload in a different format
+            // (e.g. first upload was .jpg, this one is .png) — otherwise both files
+            // coexist forever, defeating the fixed-filename design goal and confusing
+            // Task 5's servePhoto self-heal (fixed jpg->png->webp probe order).
+            for (String otherExt : java.util.List.of(".jpg", ".png", ".webp")) {
+                if (!otherExt.equals(ext)) {
+                    graphSharePointService.deleteFileIfExists(basePath + "/Photo" + otherExt);
+                }
+            }
+
+            String sharepointUrl = graphSharePointService
+                    .uploadDocument(folder.locationTemplate(), folder.employeeFolder(), fixedFileName, bytes)
+                    .orElse(null);
+            profile.setPhotoSharepointUrl(sharepointUrl);
+        } catch (Exception e) {
+            log.warn("Échec du mirroring SharePoint de la photo pour profileId={}: {}",
+                    profile.getId(), e.getMessage());
+        }
+    }
+
+    /** pays.photo_sharepoint_location for this profile's pays, the employee's
+     * resolved+normalized folder name, and the ambiguity guard — every step needed
+     * before either mirroring an upload or self-healing a serve cache-miss (this
+     * second use is added by a later task in this same file, not part of this task).
+     * Returns null if SharePoint mirroring should be skipped for this profile, for
+     * any reason (no location configured for this pays, no usable employee name, or
+     * an ambiguous name). */
+    private EmployeeSharepointFolder resolveEmployeeSharepointFolder(Long paysId, Long userId) {
+        String locationTemplate = jdbcTemplate.queryForObject(
+                "SELECT photo_sharepoint_location FROM [dbo].[pays] WHERE id = ?",
+                String.class, paysId);
+        if (locationTemplate == null || locationTemplate.isBlank()) return null;
+
+        String fullName = jdbcTemplate.queryForObject(
+                "SELECT fullName FROM [dbo].[Users] WHERE id = ?", String.class, userId);
+        String employeeFolder = employeeFolderResolver.normalize(fullName);
+        if (employeeFolder == null) return null;
+
+        if (employeeFolderResolver.isAmbiguous(employeeFolder, paysId)) {
+            log.warn("Plusieurs employés partagent le nom de dossier SharePoint '{}' — opération " +
+                    "photo ignorée par sécurité", employeeFolder);
+            return null;
+        }
+
+        return new EmployeeSharepointFolder(locationTemplate, employeeFolder);
+    }
+
+    private record EmployeeSharepointFolder(String locationTemplate, String employeeFolder) {}
 
     private EmployeeProfile findOrThrow(Long id) {
         return profileRepository.findById(id).orElseThrow(() ->

@@ -17,14 +17,22 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Client Microsoft Graph minimal — auth (client credentials) + résolution de site + recherche/
- * création de dossier + upload de fichier. Portée volontairement étroite : pas de suppression,
- * pas de lecture de fichiers existants, pas de gestion multi-site — juste ce qu'il faut pour
- * PdfDocumentService.saveGeneratedDocument().
+ * Client Microsoft Graph minimal — auth (client credentials) + résolution de site +
+ * recherche/création de dossier + upload/téléchargement/suppression de fichier.
+ * Portée volontairement étroite : pas de gestion multi-site ; la suppression se
+ * limite à un best-effort par chemin complet (pas de suppression récursive de
+ * dossier, pas de corbeille/restauration). Deux consommateurs :
+ * PdfDocumentService.saveGeneratedDocument() (upload uniquement) et
+ * EmployeeProfileService (photo de profil — upload, téléchargement pour le cache
+ * local auto-réparateur, et suppression des extensions obsolètes lors d'un
+ * re-upload dans un autre format, cf. spec 2026-08-18).
  *
- * Conçu pour ne JAMAIS faire échouer la génération de document : toute erreur (config absente,
- * auth invalide, réseau, permissions) est loguée et avalée — l'appelant reçoit simplement
- * Optional.empty() et continue avec la copie locale déjà enregistrée (cf. PdfDocumentService).
+ * Conçu pour ne JAMAIS faire échouer l'appelant : toute erreur (config absente,
+ * auth invalide, réseau, permissions, fichier introuvable) est loguée et avalée —
+ * l'appelant reçoit simplement Optional.empty() (ou, pour la suppression, ne
+ * reçoit rien du tout) et retombe sur son propre comportement de repli (copie
+ * locale déjà enregistrée pour l'upload ; 404 pour le téléchargement ; fichier
+ * obsolète laissé en place pour la suppression).
  */
 @Slf4j
 @Service
@@ -34,7 +42,12 @@ public class GraphSharePointService {
     private static final String GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
     private final AppProperties appProperties;
-    private final RestClient restClient = RestClient.create();
+    private final RestClient restClient = RestClient.builder()
+            .requestFactory(new org.springframework.http.client.JdkClientHttpRequestFactory(
+                    java.net.http.HttpClient.newBuilder()
+                            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+                            .build()))
+            .build();
 
     private volatile String  cachedToken;
     private volatile Instant tokenExpiresAt = Instant.EPOCH;
@@ -67,6 +80,62 @@ public class GraphSharePointService {
             log.warn("Échec de l'upload SharePoint pour {} (copie locale déjà enregistrée, on continue): {}",
                     fileName, e.getMessage());
             return Optional.empty();
+        }
+    }
+
+    /**
+     * Télécharge le contenu d'un fichier existant sur SharePoint (chemin complet,
+     * dossier(s) + nom de fichier). Utilisé par la mise en cache locale
+     * auto-réparatrice de la photo de profil (EmployeeProfileService.servePhoto)
+     * quand le cache local est vide. Ne lance jamais d'exception — Optional.empty()
+     * si le fichier n'existe pas, si SharePoint n'est pas configuré, ou en cas
+     * d'échec réseau/auth/permissions.
+     */
+    public Optional<byte[]> downloadFile(String path) {
+        if (!isConfigured()) {
+            log.debug("SharePoint non configuré (tenant/client id vide) — téléchargement ignoré pour {}", path);
+            return Optional.empty();
+        }
+        try {
+            String token  = getAccessToken();
+            String siteId = getSiteId(token);
+            String url = GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + path + ":/content";
+            byte[] content = restClient.get()
+                    .uri(url)
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(byte[].class);
+            return Optional.ofNullable(content);
+        } catch (HttpClientErrorException.NotFound notFound) {
+            return Optional.empty();
+        } catch (Exception e) {
+            log.warn("Échec du téléchargement SharePoint pour {}: {}", path, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Supprime un fichier existant sur SharePoint (chemin complet), si présent.
+     * Best-effort et silencieux : utilisé pour nettoyer les anciennes extensions
+     * d'une photo de profil avant d'en déposer une nouvelle (cf. mirrorPhotoToSharePoint
+     * dans EmployeeProfileService) — un fichier absent, ou toute erreur réseau/auth,
+     * est traité comme un no-op, jamais une exception.
+     */
+    public void deleteFileIfExists(String path) {
+        if (!isConfigured()) return;
+        try {
+            String token  = getAccessToken();
+            String siteId = getSiteId(token);
+            String url = GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + path;
+            restClient.delete()
+                    .uri(url)
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (HttpClientErrorException.NotFound notFound) {
+            // already absent — nothing to do
+        } catch (Exception e) {
+            log.warn("Échec de la suppression SharePoint pour {}: {}", path, e.getMessage());
         }
     }
 

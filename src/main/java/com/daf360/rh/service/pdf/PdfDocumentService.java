@@ -39,6 +39,7 @@ public class PdfDocumentService {
     private final AppProperties          appProperties;
     private final DocumentTemplateService documentTemplateService;
     private final GraphSharePointService  graphSharePointService;
+    private final com.daf360.rh.service.sharepoint.EmployeeFolderResolver employeeFolderResolver;
 
     // -------------------------------------------------------------------------
     // SQL constants
@@ -689,7 +690,7 @@ public class PdfDocumentService {
      * Enregistre le PDF sur disque (chemin faisant foi, jamais impacte par ce qui suit) puis,
      * si une maquette SharePoint est configuree pour ce document, tente en plus un depot sur
      * SharePoint via GraphSharePointService — best-effort, jamais bloquant : un echec (ou une
-     * ambiguite de nom, cf. hasAmbiguousEmployeeFolder) laisse simplement sharepointUrl a null,
+     * ambiguite de nom, cf. EmployeeFolderResolver.isAmbiguous) laisse simplement sharepointUrl a null,
      * la copie locale reste la source de verite.
      *
      * Le nom de dossier employe est employeeName (= Users.fullName) tel quel, PAS reconstruit a
@@ -723,13 +724,9 @@ public class PdfDocumentService {
         }
 
         String sharepointUrl = null;
-        if (sharepointLocation != null && !sharepointLocation.isBlank()
-                && employeeName != null && !employeeName.isBlank()) {
-            // Un fullName peut porter des espaces multiples ("Abir  ESSAYEM"-style saisies) —
-            // on nettoie ce qu'on ECRIT nous-memes, ca n'affecte pas la recherche d'un dossier
-            // existant (aucun de nos employes actuels n'a besoin de matcher un tel double-espace).
-            String employeeFolder = employeeName.trim().replaceAll("\\s+", " ");
-            if (hasAmbiguousEmployeeFolder(employeeFolder, paysId)) {
+        String employeeFolder = employeeFolderResolver.normalize(employeeName);
+        if (sharepointLocation != null && !sharepointLocation.isBlank() && employeeFolder != null) {
+            if (employeeFolderResolver.isAmbiguous(employeeFolder, paysId)) {
                 log.warn("Plusieurs employes partagent le nom de dossier SharePoint '{}' — depot SharePoint " +
                         "ignore par securite pour {} (copie locale conservee)", employeeFolder, fileName);
             } else {
@@ -763,20 +760,6 @@ public class PdfDocumentService {
                 .downloadUrl(downloadUrl)
                 .sharepointUrl(sharepointUrl)
                 .build();
-    }
-
-    /** Garde-fou : si plusieurs employes du meme pays partagent exactement le meme fullName
-     * (comparaison insensible a la casse), le nom de dossier SharePoint "Prenom NOM" est ambigu —
-     * on refuse d'y deposer quoi que ce soit plutot que de risquer de glisser le document d'un
-     * employe dans le dossier d'un autre. Scope par pays_id : chaque pays a son propre site
-     * SharePoint, une homonymie entre deux pays differents ne pose donc pas ce risque. */
-    private boolean hasAmbiguousEmployeeFolder(String employeeFolder, Long paysId) {
-        Integer count = jdbc.queryForObject(
-                "SELECT COUNT(DISTINCT ep.id) FROM [dbo].[employee_profiles] ep " +
-                "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
-                "WHERE ep.pays_id = ? AND UPPER(LTRIM(RTRIM(u.fullName))) = UPPER(?)",
-                Integer.class, paysId, employeeFolder.trim());
-        return count != null && count > 1;
     }
 
     private String generateDocumentRef(String prefix, Long paysId) {
