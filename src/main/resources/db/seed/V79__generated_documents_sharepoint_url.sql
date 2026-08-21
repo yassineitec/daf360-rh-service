@@ -1,5 +1,5 @@
 -- =============================================================================
--- V75__generated_documents_sharepoint_url.sql
+-- V79__generated_documents_sharepoint_url.sql
 -- Trace, pour chaque document généré, le lien SharePoint obtenu si l'upload a
 -- réussi (cf. GraphSharePointService / PdfDocumentService.saveGeneratedDocument).
 --

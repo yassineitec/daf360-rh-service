@@ -1,5 +1,5 @@
 -- =============================================================================
--- V77__employee_profile_photo_sharepoint.sql
+-- V81__employee_profile_photo_sharepoint.sql
 -- Colonnes nécessaires pour mirorer la photo de profil employé vers SharePoint
 -- (cf. docs/superpowers/specs/2026-08-18-profile-photo-sharepoint-design.md).
 --

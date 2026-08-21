@@ -1,7 +1,7 @@
 -- =============================================================================
--- V78__egypt_sharepoint_locations.sql
--- Wire Egypt into the SharePoint integration built for Tunisia (V74/V76 for
--- document generation, V77 for profile photos) — same {employeeFolder}
+-- V82__egypt_sharepoint_locations.sql
+-- Wire Egypt into the SharePoint integration built for Tunisia (V78/V80 for
+-- document generation, V81 for profile photos) — same {employeeFolder}
 -- placeholder convention, same folder-resolution code (Users.fullName-based),
 -- no application code changes needed, only the per-pays destination strings.
 --

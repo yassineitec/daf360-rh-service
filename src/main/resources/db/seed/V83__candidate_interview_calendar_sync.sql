@@ -1,5 +1,5 @@
 -- =============================================================================
--- V79__candidate_interview_calendar_sync.sql
+-- V83__candidate_interview_calendar_sync.sql
 -- Ajoute le suivi de synchronisation Outlook/Teams pour les entretiens candidat
 -- (cf. docs/superpowers/specs/2026-08-19-interview-calendar-sync-design.md).
 --

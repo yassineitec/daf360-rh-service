@@ -1,5 +1,5 @@
 -- =============================================================================
--- V74__document_templates_sharepoint_location.sql
+-- V78__document_templates_sharepoint_location.sql
 -- Emplacement SharePoint éditable par maquette — préparation pour l'intégration
 -- SharePoint (pas encore câblée : aucun appel Graph API n'est fait aujourd'hui,
 -- ce champ est purement stocké/affiché dans l'écran d'admin des maquettes en

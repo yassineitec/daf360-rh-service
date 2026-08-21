@@ -1,6 +1,6 @@
 -- =============================================================================
--- V76__fix_document_templates_sharepoint_location_prefix.sql
--- Corrige le sharepoint_location seedé par V74 : il pointait vers
+-- V80__fix_document_templates_sharepoint_location_prefix.sql
+-- Corrige le sharepoint_location seedé par V78 : il pointait vers
 -- "01_HR/01_Contracts-Employment/{employeeFolder}/HR Requests", MAIS l'arborescence
 -- réelle SharePoint vit sous un premier niveau "Tunisia/" (confirmé en listant
 -- réellement le contenu du site via Graph API 2026-08-16 : "01_HR" n'existe qu'à
@@ -9,7 +9,7 @@
 -- Sans ce correctif, tout document généré pour un employé tunisien aurait été
 -- déposé (ou aurait tenté de créer un nouvel arbre) au mauvais endroit.
 --
--- Ciblée sur la valeur exacte posée par V74 uniquement, pour ne jamais écraser une
+-- Ciblée sur la valeur exacte posée par V78 uniquement, pour ne jamais écraser une
 -- valeur qu'un admin aurait déjà éditée manuellement entre-temps.
 -- =============================================================================
 
