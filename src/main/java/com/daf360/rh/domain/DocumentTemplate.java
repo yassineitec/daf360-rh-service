@@ -41,6 +41,13 @@ public class DocumentTemplate {
     @Builder.Default
     private String pageSize = "A4";
 
+    /** Emplacement SharePoint cible pour les documents générés à partir de cette maquette
+     * — éditable dans l'écran d'admin, PAS ENCORE utilisé par la génération réelle (aucune
+     * intégration SharePoint câblée à ce jour, en attente des identifiants). Peut contenir
+     * l'espace réservé littéral {employeeFolder}. */
+    @Column(name = "sharepoint_location", length = 500)
+    private String sharepointLocation;
+
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;

@@ -83,6 +83,14 @@ app:
   # Shared secret for /api/hr/internal/** (log-service presence scheduler). MUST match
   # log-service's rh.internal-api-key. Blank = internal endpoints return 403.
   internal-api-key: ${INTERNAL_API_KEY:daf360-internal-change-me}
+  # Microsoft Graph / SharePoint document storage — blank = disabled (GraphSharePointService
+  # skips upload silently, local disk save is unaffected). Set these 3 as real env vars,
+  # never as hardcoded defaults here.
+  ms-graph-tenant-id: ${MS_GRAPH_TENANT_ID:}
+  ms-graph-client-id: ${MS_GRAPH_CLIENT_ID:}
+  ms-graph-client-secret: ${MS_GRAPH_CLIENT_SECRET:}
+  sharepoint-site-hostname: ${SHAREPOINT_SITE_HOSTNAME:pinigroup.sharepoint.com}
+  sharepoint-site-path: ${SHAREPOINT_SITE_PATH:/sites/pini-tunisia}
 
 mail:
   enabled: ${MAIL_ENABLED:false}

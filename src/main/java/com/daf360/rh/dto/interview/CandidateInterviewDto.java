@@ -21,5 +21,6 @@ public record CandidateInterviewDto(
         String status,
         String result,
         Integer sequenceNumber,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        String graphJoinUrl
 ) {}

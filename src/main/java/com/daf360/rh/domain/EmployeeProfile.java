@@ -78,6 +78,9 @@ public class EmployeeProfile {
     @Column(name = "photo_url", length = 500)
     private String photoUrl;
 
+    @Column(name = "photo_sharepoint_url", length = 1000)
+    private String photoSharepointUrl;
+
     @Column(name = "personal_email", length = 255)
     private String personalEmail;
 

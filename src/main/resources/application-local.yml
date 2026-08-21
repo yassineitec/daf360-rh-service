@@ -29,9 +29,13 @@ spring:
     username: "${MAIL_USERNAME:}"
     password: "${MAIL_PASSWORD:}"
 
+mail:
+  enabled:  true
+  from:     HR.DAF@arx.ing
+
 app:
   jwt-secret: ${JWT_SECRET:daf360-change-me-in-production-32chars}
-  jwt-public-key-path: ${JWT_PUBLIC_KEY_PATH:c:/Users/MSI/Desktop/daf360-dev/daf360-portal/keys/public.pem}
+  jwt-public-key-path: ${JWT_PUBLIC_KEY_PATH:C:/Users/ITEC2/OneDrive/Documents/projects/daf360-portal/keys/public.pem}
 
 logging:
   level:

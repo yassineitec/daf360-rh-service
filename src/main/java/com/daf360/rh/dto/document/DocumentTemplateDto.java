@@ -17,6 +17,7 @@ public class DocumentTemplateDto {
     private String          htmlContent;
     private List<String>    variables;
     private String          pageSize;
+    private String          sharepointLocation;
     private Boolean         isActive;
     private OffsetDateTime  createdAt;
     private OffsetDateTime  updatedAt;

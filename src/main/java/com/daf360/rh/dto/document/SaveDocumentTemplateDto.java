@@ -22,4 +22,7 @@ public class SaveDocumentTemplateDto {
     private String htmlContent;
 
     private String pageSize = "A4";
+
+    /** Facultatif : pas encore utilisé par la génération, cf. DocumentTemplate.java. */
+    private String sharepointLocation;
 }
