@@ -79,6 +79,7 @@ public class ItProvisioningService {
     private final JdbcTemplate             jdbc;
     private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
     private final PdfDocumentService       pdfDocumentService;
+    private final ItAssetAssignmentService assetAssignmentService;
     private final com.daf360.rh.security.TenantService tenantService;
 
     // ── Queries ───────────────────────────────────────────────────────────────
@@ -350,6 +351,22 @@ public class ItProvisioningService {
                     prov.getCandidateId(), prov.getId(), "IT_COMPLETE", itManagerId);
         } catch (Exception ex) {
             log.warn("Décharge PDF generation failed for provisioning {}: {}", prov.getId(), ex.getMessage());
+        }
+
+        /*
+         * Copy what was actually handed over into the equipment ledger (V76), which is what
+         * the profile's "Matériel IT" tab reads. Idempotent on (provisioning, asset type),
+         * and a no-op while the employee profile does not exist yet — onboarding creates it
+         * after this point for some flows, and the tab's "Synchroniser" action catches up.
+         *
+         * Never allowed to fail the completion: the provisioning is the record of truth for
+         * the hire, the ledger is a projection of it.
+         */
+        try {
+            assetAssignmentService.seedFromProvisioning(prov.getId(), itManagerId);
+        } catch (Exception ex) {
+            log.warn("IT asset ledger seeding failed for provisioning {}: {}",
+                    prov.getId(), ex.getMessage());
         }
 
         Candidate candidate = candidateRepo.findById(prov.getCandidateId())

@@ -101,6 +101,13 @@ public final class PermissionCatalog {
 
     // ── Module IT ────────────────────────────────────────────────────────────
     public static final String IT_PROVISIONING         = "IT_PROVISIONING";
+    /**
+     * Equipment ledger (V76) — assign / correct / close a line on a profile's "Matériel IT"
+     * tab. Separate from IT_PROVISIONING because the ledger keeps moving long after the
+     * hire: IT hands the hardware over, RH keeps the record straight. READ is not its own
+     * code — the tab reuses the profile-edit authorities (see ItAssetAssignmentController).
+     */
+    public static final String RH_MANAGE_IT_ASSETS     = "RH_MANAGE_IT_ASSETS";
 
     // ── Administration ────────────────────────────────────────────────────────
     public static final String ADMIN_ROLES             = "ADMIN_ROLES";
@@ -143,7 +150,7 @@ public final class PermissionCatalog {
         new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS, RH_MANAGE_OFFBOARDING, RH_VALIDATE_OFFBOARDING, RH_COMPLETE_OFFBOARDING_TASK, RH_CONDUCT_EXIT_INTERVIEW, RH_OFFBOARDING_STAGE_HANDOVER, RH_OFFBOARDING_STAGE_IT, RH_OFFBOARDING_STAGE_PAYROLL, RH_SUSPEND_PROFILE)),
         new PermGroup("Entretiens",          List.of(RH_ADMIN_INTERVIEW_TYPES, RH_MANAGE_INTERVIEWS)),
         new PermGroup("Temps de travail",    List.of(ADMIN_REGIMES, ADMIN_BREAKS)),
-        new PermGroup("Module IT",           List.of(IT_PROVISIONING)),
+        new PermGroup("Module IT",           List.of(IT_PROVISIONING, RH_MANAGE_IT_ASSETS)),
         new PermGroup("Administration",      List.of(ADMIN_LISTS, ADMIN_NOTIFICATIONS, ADMIN_ROLES)),
         new PermGroup("Module Payroll",      List.of(
             PAYROLL_RUN_SIMULATION, PAYROLL_VIEW_INDIVIDUAL,

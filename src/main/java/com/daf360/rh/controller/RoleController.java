@@ -112,6 +112,33 @@ public class RoleController {
         roleService.removePermission(id, code, auth);
     }
 
+    // ── Country (pays) scope ──────────────────────────────────────────────────
+
+    /**
+     * GET /api/hr/admin/roles/{id}/pays-scope — country ids this role may see.
+     * An empty list means "not configured": users of the role fall back to their own
+     * pays_id. Meaningless when the role has showAll = true (it then sees everything).
+     */
+    @GetMapping("/{id}/pays-scope")
+    @PreAuthorize("hasAnyAuthority('GET_ROLES', 'HR_ADMIN_ROLES')")
+    public ResponseEntity<List<Long>> paysScope(@PathVariable Long id) {
+        return ResponseEntity.ok(roleService.getPaysScope(id));
+    }
+
+    /**
+     * PUT /api/hr/admin/roles/{id}/pays-scope — full replacement of the country scope.
+     * Body is a bare array of pays ids; an empty array clears the scope.
+     * Takes effect for a user only after their next login (it rides in the JWT claims).
+     */
+    @PutMapping("/{id}/pays-scope")
+    @PreAuthorize("hasAnyAuthority('ADMIN_ROLES', 'HR_ADMIN_ROLES')")
+    public ResponseEntity<RoleResponseDto> replacePaysScope(
+            @PathVariable Long id,
+            @RequestBody List<Long> paysIds,
+            Authentication auth) {
+        return ResponseEntity.ok(roleService.replacePaysScope(id, paysIds, auth));
+    }
+
     // ── User management ───────────────────────────────────────────────────────
 
     /** GET /api/hr/admin/roles/{id}/users — list users assigned to this role */

@@ -156,6 +156,8 @@ public class OffboardingWorkflowService {
     private final com.daf360.rh.service.pdf.PdfDocumentService pdfDocumentService;
     private final ItProvisioningRepository              itProvisioningRepo;
     private final ItAssetRepository                     itAssetRepo;
+    /** Equipment ledger (V76): a confirmed return here closes the matching ledger row. */
+    private final ItAssetAssignmentService              assetAssignmentService;
     private final AuditService                          auditService;
     private final MailService                           mailService;
     private final JdbcTemplate                         jdbc;
@@ -2078,6 +2080,20 @@ public class OffboardingWorkflowService {
             "ASSET_RETURN_CONFIRMED", "OffboardingAssetReturn", assetId,
             null, "workflowInstanceId=" + asset.getWorkflowInstanceId());
 
+        /*
+         * Close the equipment ledger row for the same object (V76), so the employee's
+         * "Matériel IT" tab shows the item as returned instead of still held.
+         *
+         * Matched on the serial only — `asset_description` is a display string, and closing
+         * the wrong laptop is worse than leaving one open. The ledger service swallows its
+         * own failures: confirming the return must not depend on the projection.
+         */
+        Long leaverProfileId = findInstanceOrThrow(asset.getWorkflowInstanceId()).getEmployeeProfileId();
+        assetAssignmentService.closeFromOffboardingReturn(
+            leaverProfileId, asset.getId(), asset.getSerialNumber(),
+            asset.getActualReturnDate(), asset.getConditionOnReturn(),
+            Boolean.TRUE.equals(asset.getIsWrittenOff()), confirmedBy);
+
         completeAssetTaskIfAllReturned(asset.getWorkflowInstanceId(), confirmedBy);
 
         return toAssetDto(asset);
@@ -2364,44 +2380,67 @@ public class OffboardingWorkflowService {
         }
     }
 
+    /** One item to chase on the way out: what to call it, and which object it is. */
+    private record AssetSeed(String description, String serialNumber) {}
+
     /**
-     * Seeds offboarding_asset_returns from the employee's IT provisioning record.
-     * All assets in the provisioning record are included (provided or not) to ensure
-     * every registered item is tracked for return.
+     * What the leaver is holding, best source first.
+     *
+     * The equipment LEDGER (`it_asset_assignments`, V76) is asked first: it is the only source
+     * that knows about a laptop swapped mid-contract, a second monitor added later, or an item
+     * already given back — `it_assets` describes hire day and nothing after it.
+     *
+     * The provisioning record stays as a fallback for employees whose ledger was never filled
+     * (hired before V76 and never synced from their profile's Matériel IT tab). There, every
+     * line is taken, provided or not, which is the behaviour this used to have on its own.
      */
+    private List<AssetSeed> collectAssetsToReturn(Long profileId) {
+        List<AssetSeed> held = assetAssignmentService.getHistory(profileId).stream()
+            .filter(a -> Boolean.TRUE.equals(a.getIsCurrent()))
+            .map(a -> new AssetSeed(describeLedgerAsset(a), blankToNull(a.getSerialNumber())))
+            .collect(Collectors.toList());
+        if (!held.isEmpty()) {
+            log.info("collectAssetsToReturn: {} item(s) still held per the ledger for profileId={}",
+                held.size(), profileId);
+            return held;
+        }
+
+        Long candidateId = profileService.getCandidateId(profileId);
+        if (candidateId == null) {
+            log.warn("collectAssetsToReturn: no candidateId for profileId={}", profileId);
+            return List.of();
+        }
+        Optional<ItProvisioning> provOpt = itProvisioningRepo.findByCandidateId(candidateId);
+        if (provOpt.isEmpty()) {
+            log.info("collectAssetsToReturn: no IT provisioning record for candidateId={}", candidateId);
+            return List.of();
+        }
+        List<ItAsset> assets = itAssetRepo.findByProvisioningId(provOpt.get().getId());
+        log.info("collectAssetsToReturn: ledger empty, falling back to {} provisioning asset(s) for profileId={}",
+            assets.size(), profileId);
+        return assets.stream()
+            .map(a -> new AssetSeed(describeItAsset(a), blankToNull(a.getSerialNumber())))
+            .collect(Collectors.toList());
+    }
+
+    /** Seeds offboarding_asset_returns with everything the leaver still holds. */
     private void seedItAssetReturns(OffboardingWorkflowInstance instance, Long profileId) {
         try {
-            Long candidateId = profileService.getCandidateId(profileId);
-            if (candidateId == null) {
-                log.warn("seedItAssetReturns: no candidateId for profileId={}", profileId);
-                return;
-            }
-
-            Optional<ItProvisioning> provOpt = itProvisioningRepo.findByCandidateId(candidateId);
-            if (provOpt.isEmpty()) {
-                log.info("seedItAssetReturns: no IT provisioning record for candidateId={}", candidateId);
-                return;
-            }
-
-            ItProvisioning prov = provOpt.get();
-            List<ItAsset> assets = itAssetRepo.findByProvisioningId(prov.getId());
-            log.info("seedItAssetReturns: found {} asset(s) for provisioningId={}", assets.size(), prov.getId());
-
-            if (assets.isEmpty()) return;
+            List<AssetSeed> seeds = collectAssetsToReturn(profileId);
+            if (seeds.isEmpty()) return;
 
             LocalDate expectedReturn = instance.getLastWorkingDay() != null
                 ? instance.getLastWorkingDay()
                 : calculateDueDate(instance.getTriggerDate(), 3);
 
-            List<OffboardingAssetReturn> returns = assets.stream()
-                .map(a -> OffboardingAssetReturn.builder()
+            List<OffboardingAssetReturn> returns = seeds.stream()
+                .map(s -> OffboardingAssetReturn.builder()
                     .workflowInstanceId(instance.getId())
-                    .assetDescription(describeItAsset(a))
+                    .assetDescription(s.description())
                     // Its own column since V61 rather than appended to the description:
                     // the design shows them as two lines, and a formatted string is a bad
                     // de-duplication key (see reseedItAssets).
-                    .serialNumber(a.getSerialNumber() != null && !a.getSerialNumber().isBlank()
-                        ? a.getSerialNumber().trim() : null)
+                    .serialNumber(s.serialNumber())
                     .assetType("IT")
                     .expectedReturnDate(expectedReturn)
                     .isWrittenOff(false)
@@ -2446,29 +2485,23 @@ public class OffboardingWorkflowService {
             .map(OffboardingAssetReturn::getAssetDescription)
             .collect(Collectors.toSet());
 
-        Long candidateId = profileService.getCandidateId(profileId);
-        if (candidateId == null) return listAssetReturns(instanceId);
+        // Same source as the initial seed — ledger first, provisioning as fallback — so
+        // re-syncing cannot pull in a different set of items than starting the file did.
+        List<AssetSeed> seeds = collectAssetsToReturn(profileId);
+        if (seeds.isEmpty()) return listAssetReturns(instanceId);
 
-        Optional<ItProvisioning> provOpt = itProvisioningRepo.findByCandidateId(candidateId);
-        if (provOpt.isEmpty()) return listAssetReturns(instanceId);
-
-        List<ItAsset> assets = itAssetRepo.findByProvisioningId(provOpt.get().getId());
         LocalDate expectedReturn = instance.getLastWorkingDay() != null
             ? instance.getLastWorkingDay()
             : calculateDueDate(instance.getTriggerDate(), 3);
 
-        List<OffboardingAssetReturn> toAdd = assets.stream()
-            .filter(a -> {
-                String serial = a.getSerialNumber() != null ? a.getSerialNumber().trim() : "";
-                return serial.isBlank()
-                    ? !existingDescriptions.contains(describeItAsset(a))
-                    : !existingSerials.contains(serial);
-            })
-            .map(a -> OffboardingAssetReturn.builder()
+        List<OffboardingAssetReturn> toAdd = seeds.stream()
+            .filter(s -> s.serialNumber() == null
+                ? !existingDescriptions.contains(s.description())
+                : !existingSerials.contains(s.serialNumber()))
+            .map(s -> OffboardingAssetReturn.builder()
                 .workflowInstanceId(instanceId)
-                .assetDescription(describeItAsset(a))
-                .serialNumber(a.getSerialNumber() != null && !a.getSerialNumber().isBlank()
-                    ? a.getSerialNumber().trim() : null)
+                .assetDescription(s.description())
+                .serialNumber(s.serialNumber())
                 .assetType("IT")
                 .expectedReturnDate(expectedReturn)
                 .isWrittenOff(false)
@@ -2494,6 +2527,17 @@ public class OffboardingWorkflowService {
         String label = a.getAssetType() != null ? a.getAssetType().getLabelFr() : "Équipement IT";
         String brandModel = a.getBrandModel() != null ? a.getBrandModel().trim() : "";
         return brandModel.isEmpty() ? label : brandModel + " (" + label + ")";
+    }
+
+    /** Same format for a ledger row, so switching source does not create duplicate lines. */
+    private String describeLedgerAsset(com.daf360.rh.dto.asset.ItAssetAssignmentDto a) {
+        String label = a.getAssetTypeLabelFr() != null ? a.getAssetTypeLabelFr() : "Équipement IT";
+        String brandModel = a.getBrandModel() != null ? a.getBrandModel().trim() : "";
+        return brandModel.isEmpty() ? label : brandModel + " (" + label + ")";
+    }
+
+    private static String blankToNull(String s) {
+        return (s == null || s.isBlank()) ? null : s.trim();
     }
 
     /**
