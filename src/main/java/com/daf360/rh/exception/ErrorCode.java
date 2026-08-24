@@ -61,6 +61,18 @@ public enum ErrorCode {
     IT_ASSET_SERIAL_IN_USE          (HttpStatus.CONFLICT,                 "Ce numéro de série est déjà affecté et non rendu"),
     IT_ASSET_ALREADY_RETURNED       (HttpStatus.CONFLICT,                 "Ce matériel a déjà été rendu"),
     IT_ASSET_INVALID_STATE          (HttpStatus.BAD_REQUEST,              "État de matériel invalide"),
+    MISSION_NOT_FOUND               (HttpStatus.NOT_FOUND,                "Mission introuvable"),
+    MISSION_INVALID_TRANSITION      (HttpStatus.UNPROCESSABLE_CONTENT,     "Transition de statut invalide pour cette mission"),
+    MISSION_INVALID_PERIOD          (HttpStatus.BAD_REQUEST,              "Période de mission invalide"),
+    MISSION_OVERLAP                 (HttpStatus.CONFLICT,                 "Cette personne est déjà en mission sur cette période"),
+    MISSION_RESPONSABLE_REQUIRED    (HttpStatus.BAD_REQUEST,              "Responsable de mission obligatoire"),
+    MISSION_DESTINATION_REQUIRED    (HttpStatus.BAD_REQUEST,              "Pays de destination obligatoire pour une mission internationale"),
+    MISSION_REASON_REQUIRED         (HttpStatus.BAD_REQUEST,              "Motif obligatoire"),
+    MISSION_INVALID_CODE            (HttpStatus.BAD_REQUEST,              "Valeur inconnue dans la fiche de frais"),
+    MISSION_EXPENSES_MISSING        (HttpStatus.UNPROCESSABLE_CONTENT,     "Les frais de la mission doivent être renseignés avant validation"),
+    MISSION_EXPENSES_LOCKED         (HttpStatus.CONFLICT,                 "Les frais ne sont plus modifiables à ce stade"),
+    MISSION_CHANGE_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND,                "Demande de modification introuvable"),
+    MISSION_CHANGE_REQUEST_PENDING  (HttpStatus.CONFLICT,                 "Une demande est déjà en attente sur cette mission"),
     FORBIDDEN                       (HttpStatus.FORBIDDEN,                "Accès refusé"),
     INTERNAL_ERROR                  (HttpStatus.INTERNAL_SERVER_ERROR,    "Erreur interne — veuillez réessayer");
 

@@ -34,8 +34,19 @@ mail:
   from:     HR.DAF@arx.ing
 
 app:
-  jwt-secret: ${JWT_SECRET:daf360-change-me-in-production-32chars}
-  jwt-public-key-path: ${JWT_PUBLIC_KEY_PATH:C:/Users/ITEC2/OneDrive/Documents/projects/daf360-portal/keys/public.pem}
+  # Both of these must agree with the portal's own local profile, because the portal is
+  # what SIGNS the token this service validates:
+  #  - jwt-secret is the HS256 key of the `daf360_rh` cookie. It was still the generic
+  #    production placeholder while the portal's local profile signs with
+  #    "daf360-local-dev-jwt-secret-key-min-32-chars", so every HMAC token was rejected.
+  #  - jwt-public-key-path verifies the RS256 `daf360_access` cookie. It pointed at another
+  #    developer's home directory, so the file was missing here, JwtService logged
+  #    "RS256 token received but JWT_PUBLIC_KEY_PATH not configured" and fell back to HS256
+  #    on an RS256 token.
+  # With both validation paths broken, EVERY authenticated /api/hr call answered 401 —
+  # which the shell's authInterceptor turns into a logout.
+  jwt-secret: ${JWT_SECRET:daf360-local-dev-jwt-secret-key-min-32-chars}
+  jwt-public-key-path: ${JWT_PUBLIC_KEY_PATH:C:/Users/MSI/Desktop/daf360-dev/daf360-portal/keys/public.pem}
 
 logging:
   level:

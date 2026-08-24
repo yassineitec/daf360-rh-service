@@ -95,6 +95,16 @@ public final class PermissionCatalog {
     public static final String RH_OFFBOARDING_STAGE_IT         = "RH_OFFBOARDING_STAGE_IT";
     public static final String RH_OFFBOARDING_STAGE_PAYROLL    = "RH_OFFBOARDING_STAGE_PAYROLL";
 
+    // ── Missions (ordres de mission & billeterie) ─────────────────────────────
+    /**
+     * A manager plans missions for their OWN team — the role-descendant check lives in
+     * MissionService, this code only says "may plan missions at all". Being an un-prefixed
+     * RH code, it is also what makes the RH module appear in the shell navbar.
+     */
+    public static final String RH_CREATE_MISSION            = "RH_CREATE_MISSION";
+    /** RH: the billeterie queue, the expense sheet, the RH validation, the employees' asks. */
+    public static final String RH_MANAGE_MISSION_BILLETERIE = "RH_MANAGE_MISSION_BILLETERIE";
+
     // ── Temps de travail (régimes & pauses) ───────────────────────────────────
     public static final String ADMIN_REGIMES           = "ADMIN_REGIMES";
     public static final String ADMIN_BREAKS            = "ADMIN_BREAKS";
@@ -149,6 +159,10 @@ public final class PermissionCatalog {
         new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND, RH_HIRE_CANDIDATE, APPROVE_HIRING_COST)),
         new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS, RH_MANAGE_OFFBOARDING, RH_VALIDATE_OFFBOARDING, RH_COMPLETE_OFFBOARDING_TASK, RH_CONDUCT_EXIT_INTERVIEW, RH_OFFBOARDING_STAGE_HANDOVER, RH_OFFBOARDING_STAGE_IT, RH_OFFBOARDING_STAGE_PAYROLL, RH_SUSPEND_PROFILE)),
         new PermGroup("Entretiens",          List.of(RH_ADMIN_INTERVIEW_TYPES, RH_MANAGE_INTERVIEWS)),
+        // FACT_APPROVE_MISSION_COST is the third code of this process but it is NOT listed
+        // here: FACT_* codes belong to the facturation catalog (FactPermissionCatalog), and
+        // duplicating it would make it show up twice in role administration.
+        new PermGroup("Missions",            List.of(RH_CREATE_MISSION, RH_MANAGE_MISSION_BILLETERIE)),
         new PermGroup("Temps de travail",    List.of(ADMIN_REGIMES, ADMIN_BREAKS)),
         new PermGroup("Module IT",           List.of(IT_PROVISIONING, RH_MANAGE_IT_ASSETS)),
         new PermGroup("Administration",      List.of(ADMIN_LISTS, ADMIN_NOTIFICATIONS, ADMIN_ROLES)),

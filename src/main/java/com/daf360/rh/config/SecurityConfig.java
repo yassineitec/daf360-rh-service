@@ -97,10 +97,18 @@ public class SecurityConfig {
         // allowCredentials=true. Exact origins continue to match as-is.
         cfg.setAllowedOriginPatterns(origins);
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
-        // Explicit header list required when allowCredentials=true in Spring Security 7
+        // Explicit header list required when allowCredentials=true in Spring Security 7.
+        //
+        // X-Retry is NOT optional. The shell's authInterceptor answers a 401 by refreshing
+        // the session and replaying the request with `X-Retry: 1`; that header makes the
+        // replay a non-simple request, so the browser sends a preflight first. Leaving it
+        // out of this list rejected that preflight, the replay failed as a network error,
+        // and the interceptor's catch called logout() — so ANY single 401 from this service
+        // bounced the user back to the login page, even when the refresh had just
+        // succeeded. Same reason it belongs in log-service's identical list.
         cfg.setAllowedHeaders(List.of(
             "Authorization", "Content-Type", "Accept",
-            "X-Requested-With", "Cache-Control", "Origin"
+            "X-Requested-With", "Cache-Control", "Origin", "X-Retry"
         ));
         cfg.setExposedHeaders(List.of("Authorization"));
         cfg.setAllowCredentials(true);
