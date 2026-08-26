@@ -169,7 +169,10 @@ public class EmployeeProfileController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hireDateFrom,
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hireDateTo,
-            @PageableDefault(size = 12, sort = "fullName") Pageable pageable,
+            // No `sort` here: the query is hand-written JDBC and owns its ORDER BY
+            // (newest hire first). A Pageable sort would be silently ignored, so
+            // advertising one only invites a caller to trust it.
+            @PageableDefault(size = 12) Pageable pageable,
             Authentication auth) {
 
         ProfileFilterDto filter = new ProfileFilterDto();

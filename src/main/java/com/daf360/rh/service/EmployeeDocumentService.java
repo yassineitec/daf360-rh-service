@@ -1,6 +1,7 @@
 package com.daf360.rh.service;
 
 import com.daf360.rh.domain.EmployeeDocument;
+import com.daf360.rh.domain.EmployeeProfile;
 import com.daf360.rh.dto.document.DocumentMetadataRequest;
 import com.daf360.rh.dto.document.DocumentUploadResponseDto;
 import com.daf360.rh.exception.AppException;
@@ -8,6 +9,10 @@ import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.mapper.EmployeeDocumentMapper;
 import com.daf360.rh.repository.EmployeeDocumentRepository;
 import com.daf360.rh.repository.EmployeeProfileRepository;
+import com.daf360.rh.service.sharepoint.DocumentFolderMapping;
+import com.daf360.rh.service.sharepoint.EmployeeFolderResolver;
+import com.daf360.rh.service.sharepoint.GraphSharePointService;
+import com.daf360.rh.service.sharepoint.SharePointPaths;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -66,6 +71,8 @@ public class EmployeeDocumentService {
     private final EmployeeDocumentMapper     mapper;
     private final AuditService               auditService;
     private final JdbcTemplate               jdbc;
+    private final GraphSharePointService     graphSharePointService;
+    private final EmployeeFolderResolver     employeeFolderResolver;
 
     @Value("${app.storage-path:./uploads/hr}")
     private String storagePath;
@@ -75,10 +82,10 @@ public class EmployeeDocumentService {
     public DocumentUploadResponseDto upload(Long profileId, MultipartFile file,
                                             String documentType, LocalDate expirationDate,
                                             String notes, Authentication auth) throws IOException {
-        // Profile must exist
-        if (!profileRepository.existsById(profileId)) {
-            throw new AppException(ErrorCode.EMPLOYEE_NOT_FOUND, "Profil introuvable: id=" + profileId);
-        }
+        // Loaded, not just existence-checked: the SharePoint mirror below needs the pays
+        // (which country's tree) and the user id (whose folder).
+        EmployeeProfile profile = profileRepository.findById(profileId).orElseThrow(() ->
+                new AppException(ErrorCode.EMPLOYEE_NOT_FOUND, "Profil introuvable: id=" + profileId));
 
         String type = normaliseType(documentType);
 
@@ -99,12 +106,18 @@ public class EmployeeDocumentService {
                 ? originalName.substring(originalName.lastIndexOf('.'))
                 : contentTypeToExt(contentType);
 
+        // Read once, use twice: the multipart stream can only be consumed once, and the
+        // SharePoint mirror below needs the same bytes the local file gets. (This replaced
+        // file.transferTo(dest), same change the profile-photo mirror had to make.) The
+        // 10 MB cap above is what makes holding them in memory acceptable.
+        byte[] bytes = file.getBytes();
+
         // Store to: <storagePath>/<profileId>/<uuid><ext>
         Path dir = Paths.get(storagePath, String.valueOf(profileId));
         Files.createDirectories(dir);
         String filename = UUID.randomUUID() + ext;
         Path dest = dir.resolve(filename);
-        file.transferTo(dest);
+        Files.write(dest, bytes);
 
         EmployeeDocument doc = EmployeeDocument.builder()
                 .employeeProfileId(profileId)
@@ -125,6 +138,12 @@ public class EmployeeDocumentService {
                 .build();
 
         EmployeeDocument saved = documentRepository.save(doc);
+
+        // Best-effort mirror. Deliberately after save(): the row and the local file are the
+        // record, SharePoint is a copy, and mirrorToSharePoint() never throws — an upload
+        // must not fail because Graph is down or unconfigured.
+        mirrorToSharePoint(saved, profile, bytes);
+
         auditService.log(actorId(auth), "UPLOAD_DOCUMENT", "EmployeeDocument", saved.getId(),
                 null, type);
         return toDto(saved);
@@ -208,7 +227,29 @@ public class EmployeeDocumentService {
                 .storageProvider("LOCAL")
                 .isDeleted(false)
                 .build();
-        documentRepository.save(doc);
+        EmployeeDocument saved = documentRepository.save(doc);
+
+        // Mirror this one too — it is how the SIGNED CONTRACT arrives (the onboarding wizard
+        // uploads it before the profile exists), which is exactly the document HR most wants
+        // in SharePoint. Bytes come off disk here rather than from a multipart stream; a
+        // missing or unreadable file just skips the mirror, same as any other failure.
+        try {
+            profileRepository.findById(profileId).ifPresent(profile ->
+                    mirrorToSharePoint(saved, profile, readAllBytesOrNull(fileUrl)));
+        } catch (Exception e) {
+            log.warn("Echec du mirroring SharePoint du document stage {}: {}",
+                    saved.getId(), e.getMessage());
+        }
+    }
+
+    /** Bytes of a stored file, or null when it cannot be read (the mirror then skips). */
+    private byte[] readAllBytesOrNull(String fileUrl) {
+        try {
+            return Files.readAllBytes(Paths.get(fileUrl));
+        } catch (Exception e) {
+            log.debug("Document stage {} illisible pour le mirroring: {}", fileUrl, e.getMessage());
+            return null;
+        }
     }
 
     // ── List ──────────────────────────────────────────────────────────────────
@@ -271,8 +312,15 @@ public class EmployeeDocumentService {
             throw new AppException(ErrorCode.NOT_FOUND, "Fichier introuvable");
         }
         if (!Files.isReadable(target)) {
-            throw new AppException(ErrorCode.NOT_FOUND,
-                    "Fichier absent du stockage: " + target.getFileName());
+            // Cache miss, not necessarily a lost document: pull the SharePoint copy back and
+            // re-cache it. Only reached when the local file is genuinely gone (fresh
+            // container, cleared disk), never on the normal path.
+            Path restored = fetchFromSharePoint(doc, target);
+            if (restored == null) {
+                throw new AppException(ErrorCode.NOT_FOUND,
+                        "Fichier absent du stockage: " + target.getFileName());
+            }
+            target = restored;
         }
 
         try {
@@ -288,6 +336,115 @@ public class EmployeeDocumentService {
 
     /** Bytes plus what the browser needs to display them. */
     public record DownloadPayload(Resource resource, String fileName, String contentType) {}
+
+    // ── SharePoint mirroring ──────────────────────────────────────────────────
+
+    /**
+     * Copies an uploaded document into the employee's SharePoint folder, under the subfolder
+     * {@link DocumentFolderMapping} picks for its type.
+     *
+     * <p>Never throws. Every reason to skip — SharePoint unconfigured, country with no
+     * location, ambiguous employee name, network/auth/permission failure — leaves the row
+     * exactly as it was saved: {@code storage_provider = LOCAL}, served from disk. That is
+     * the same philosophy the photo mirror and the generated-PDF upload already follow, and
+     * it is why enabling the {@code MS_GRAPH_*} variables cannot break document upload.
+     *
+     * <p>The remote file name is {@code <id>_<original name>}: deterministic, so
+     * {@link #fetchFromSharePoint} can rebuild the exact path years later without storing
+     * it, and unique, so two uploads of {@code contrat.pdf} do not overwrite each other the
+     * way a plain original name would (Graph's PUT replaces by default).
+     */
+    private void mirrorToSharePoint(EmployeeDocument doc, EmployeeProfile profile, byte[] bytes) {
+        if (bytes == null || bytes.length == 0) return;
+        try {
+            DocLocation loc = locate(doc, profile);
+            if (loc == null) return;
+            graphSharePointService
+                    .uploadDocument(loc.locationTemplate(), loc.employeeFolder(), loc.fileName(), bytes)
+                    .ifPresent(url -> log.info("Document {} ({}) copie sur SharePoint: {}",
+                            doc.getId(), doc.getDocumentType(), url));
+        } catch (Exception e) {
+            log.warn("Echec du mirroring SharePoint du document {} (copie locale conservee): {}",
+                    doc.getId(), e.getMessage());
+        }
+    }
+
+    /**
+     * Where this document belongs on SharePoint, or null when it belongs nowhere (country
+     * not wired up, ambiguous employee name).
+     *
+     * <p>{@code locationTemplate} keeps its {@code {employeeFolder}} placeholder, because
+     * that is the contract {@code GraphSharePointService.uploadDocument} expects; {@link
+     * #fullPath()} is the substituted form the download side needs.
+     *
+     * <p>Recomputed from the same three inputs at upload and at download — employee folder,
+     * type subfolder, document id — rather than persisted. That keeps this feature free of a
+     * schema change (rh-service has no Flyway, so every added column is a manual step that
+     * can be missed on one server and silently disable the feature there), and lets a
+     * corrected {@link DocumentFolderMapping} apply to new uploads with no data migration.
+     */
+    private record DocLocation(String locationTemplate, String employeeFolder, String fileName) {
+        String fullPath() {
+            return SharePointPaths.join(
+                    locationTemplate.replace(SharePointPaths.EMPLOYEE_FOLDER_TOKEN, employeeFolder),
+                    fileName);
+        }
+    }
+
+    private DocLocation locate(EmployeeDocument doc, EmployeeProfile profile) {
+        EmployeeFolderResolver.EmployeeFolder folder =
+                employeeFolderResolver.resolve(profile.getPaysId(), profile.getUserId());
+        if (folder == null) return null;
+
+        String safeName = SharePointPaths.safeFileName(doc.getFileName(), "document-" + doc.getId());
+        return new DocLocation(
+                SharePointPaths.join(folder.locationTemplate(),
+                        DocumentFolderMapping.subfolderFor(doc.getDocumentType())),
+                folder.employeeFolder(),
+                doc.getId() + "_" + safeName);
+    }
+
+    /**
+     * Last resort when the local file is gone: pull the SharePoint copy back and re-cache it
+     * on disk, so the next download is local again.
+     *
+     * <p>This is what makes the local directory a cache rather than the only copy. It matters
+     * concretely: with no volume mounted for {@code STORAGE_PATH}, every container recreate
+     * wipes it, and before this the documents were simply lost.
+     *
+     * @return the re-cached file, or null if SharePoint has nothing either
+     */
+    private Path fetchFromSharePoint(EmployeeDocument doc, Path expected) {
+        EmployeeProfile profile = profileRepository.findById(doc.getEmployeeProfileId()).orElse(null);
+        if (profile == null) return null;
+
+        DocLocation loc = locate(doc, profile);
+        if (loc == null) return null;
+
+        byte[] content = graphSharePointService.downloadFile(loc.fullPath()).orElse(null);
+        if (content == null) return null;
+
+        try {
+            Files.createDirectories(expected.getParent());
+            Files.write(expected, content);
+            log.info("Document {} restaure depuis SharePoint vers {}", doc.getId(), expected);
+            return expected;
+        } catch (IOException e) {
+            // The bytes are in hand; failing to cache them is not a reason to fail the
+            // download, so write them to a temp file and serve that instead.
+            log.warn("Impossible de remettre en cache le document {} sur {}: {}",
+                    doc.getId(), expected, e.getMessage());
+            try {
+                Path tmp = Files.createTempFile("daf360-doc-" + doc.getId() + "-", null);
+                Files.write(tmp, content);
+                return tmp;
+            } catch (IOException fatal) {
+                log.error("Document {} illisible malgre la copie SharePoint: {}",
+                        doc.getId(), fatal.getMessage());
+                return null;
+            }
+        }
+    }
 
     // ── Verify ────────────────────────────────────────────────────────────────
 

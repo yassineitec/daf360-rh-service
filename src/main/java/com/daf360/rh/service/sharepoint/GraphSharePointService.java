@@ -72,6 +72,11 @@ public class GraphSharePointService {
             String folderPath = locationTemplate.replace("{employeeFolder}", employeeFolderName);
             String token  = getAccessToken();
             String siteId = getSiteId(token);
+            // Match folders that already exist but are spelled differently (spacing, case)
+            // before deciding to create anything — otherwise we file into a duplicate of
+            // HR's folder instead of into HR's folder. Costs nothing on the common path:
+            // resolveLeniently() returns immediately when the literal path is there.
+            folderPath = resolveLeniently(token, siteId, folderPath);
             ensureFolderExists(token, siteId, folderPath);
             String webUrl = uploadFile(token, siteId, folderPath, fileName, content);
             log.info("Document {} déposé sur SharePoint: {}", fileName, webUrl);
@@ -99,19 +104,36 @@ public class GraphSharePointService {
         try {
             String token  = getAccessToken();
             String siteId = getSiteId(token);
-            String url = GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + path + ":/content";
-            byte[] content = restClient.get()
-                    .uri(url)
-                    .header("Authorization", "Bearer " + token)
-                    .retrieve()
-                    .body(byte[].class);
-            return Optional.ofNullable(content);
-        } catch (HttpClientErrorException.NotFound notFound) {
-            return Optional.empty();
+            try {
+                return Optional.ofNullable(fetch(token, siteId, path));
+            } catch (HttpClientErrorException.NotFound firstMiss) {
+                // The literal path is not there. It may still exist under a differently
+                // spelled folder ("Abir  ESSAYEM" vs "Abir ESSAYEM"), so resolve the folder
+                // part against what is really in the tree and try once more. Only then is
+                // the file genuinely absent.
+                int slash = path.lastIndexOf('/');
+                if (slash <= 0) return Optional.empty();
+                String resolved = resolveLeniently(token, siteId, path.substring(0, slash));
+                String retryPath = resolved + path.substring(slash);
+                if (retryPath.equals(path)) return Optional.empty();
+                try {
+                    return Optional.ofNullable(fetch(token, siteId, retryPath));
+                } catch (HttpClientErrorException.NotFound stillMissing) {
+                    return Optional.empty();
+                }
+            }
         } catch (Exception e) {
             log.warn("Échec du téléchargement SharePoint pour {}: {}", path, e.getMessage());
             return Optional.empty();
         }
+    }
+
+    private byte[] fetch(String token, String siteId, String path) {
+        return restClient.get()
+                .uri(GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + path + ":/content")
+                .header("Authorization", "Bearer " + token)
+                .retrieve()
+                .body(byte[].class);
     }
 
     /**
@@ -240,6 +262,116 @@ public class GraphSharePointService {
         }
     }
 
+    /**
+     * Rewrites {@code folderPath} so every segment that ALREADY exists in SharePoint uses
+     * the name SharePoint actually has, comparing case- and whitespace-insensitively
+     * ({@link SharePointPaths#sameSegment}). Segments with no match are left as asked, for
+     * {@link #ensureFolderExists} to create.
+     *
+     * <p>Why this exists: {@code Users.fullName} and the real tree disagree on spacing —
+     * the live folder is {@code "Abir  ESSAYEM"} (two spaces) while the resolved employee
+     * folder name is {@code "Abir ESSAYEM"} (one). A literal lookup missed it, so mkdir -p
+     * created a second folder next to HR's, and the two then diverged invisibly.
+     *
+     * <p>Returns the input unchanged if the whole path already resolves literally (the
+     * common case, one request) or if anything goes wrong — this is a best-effort
+     * improvement on the path, never a reason to fail an upload.
+     */
+    private String resolveLeniently(String token, String siteId, String folderPath) {
+        try {
+            if (folderExists(token, siteId, folderPath)) {
+                return folderPath; // fast path: exactly as configured, nothing to correct
+            }
+            StringBuilder resolved = new StringBuilder();
+            for (String wanted : folderPath.split("/")) {
+                if (wanted.isBlank()) continue;
+                String parent = resolved.toString();
+                String actual = childrenOf(token, siteId, parent).stream()
+                        .filter(name -> SharePointPaths.sameSegment(name, wanted))
+                        .findFirst()
+                        .orElse(wanted);
+                if (!actual.equals(wanted)) {
+                    log.info("Segment SharePoint '{}' resolu en '{}' (dossier existant, " +
+                             "orthographe differente) sous '{}'", wanted, actual, parent);
+                }
+                if (resolved.length() > 0) resolved.append('/');
+                resolved.append(actual);
+            }
+            return resolved.toString();
+        } catch (Exception e) {
+            log.debug("Resolution indulgente impossible pour {} ({}), chemin litteral conserve",
+                    folderPath, e.getMessage());
+            return folderPath;
+        }
+    }
+
+    /**
+     * Names of the immediate children of a folder ({@code ""} = drive root), following
+     * {@code @odata.nextLink} so a folder with more children than one page — the Tunisian
+     * employee list is already ~100 — is never silently truncated into a "no match" that
+     * would create a duplicate folder.
+     */
+    private java.util.List<String> childrenOf(String token, String siteId, String parentPath) {
+        return listChildren(token, siteId, parentPath).stream().map(ChildItem::name).toList();
+    }
+
+    /**
+     * Files in a folder, newest first, folders excluded. Empty when the folder is missing,
+     * SharePoint is unconfigured, or anything fails — callers treat "no files" and "could
+     * not look" the same way.
+     *
+     * <p>Exists because a file put there BY HAND has a name we cannot guess: the profile
+     * photo self-heal used to probe only the three names its own mirror writes
+     * ({@code Photo.jpg/.png/.webp}), so an HR-uploaded portrait was invisible and the
+     * avatar 404'd with the file sitting right there.
+     */
+    public java.util.List<RemoteFile> listFiles(String folderPath) {
+        if (!isConfigured()) return java.util.List.of();
+        try {
+            String token  = getAccessToken();
+            String siteId = getSiteId(token);
+            String resolved = resolveLeniently(token, siteId, folderPath);
+            return listChildren(token, siteId, resolved).stream()
+                    .filter(item -> item.folder() == null && item.name() != null)
+                    .sorted(java.util.Comparator.comparing(
+                            ChildItem::lastModifiedDateTime,
+                            java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder())))
+                    .map(item -> new RemoteFile(item.name(), item.lastModifiedDateTime()))
+                    .toList();
+        } catch (Exception e) {
+            log.warn("Échec du listage SharePoint de {}: {}", folderPath, e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    /** One file in a SharePoint folder. {@code lastModified} is the raw ISO-8601 Graph value. */
+    public record RemoteFile(String name, String lastModified) {}
+
+    private java.util.List<ChildItem> listChildren(String token, String siteId, String parentPath) {
+        String select = "?$select=name,folder,lastModifiedDateTime&$top=200";
+        String url = parentPath.isEmpty()
+                ? GRAPH_BASE + "/sites/" + siteId + "/drive/root/children" + select
+                : GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + parentPath
+                  + ":/children" + select;
+        java.util.List<ChildItem> items = new java.util.ArrayList<>();
+        while (url != null) {
+            ChildrenResponse page;
+            try {
+                page = restClient.get()
+                        .uri(url)
+                        .header("Authorization", "Bearer " + token)
+                        .retrieve()
+                        .body(ChildrenResponse.class);
+            } catch (HttpClientErrorException.NotFound missing) {
+                return items; // parent itself absent — nothing to list or match against
+            }
+            if (page == null || page.value() == null) break;
+            items.addAll(page.value());
+            url = page.nextLink();
+        }
+        return items;
+    }
+
     private boolean folderExists(String token, String siteId, String path) {
         String getUrl = GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + path;
         try {
@@ -280,4 +412,13 @@ public class GraphSharePointService {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record DriveItemResponse(String id, String name, String webUrl) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record ChildrenResponse(
+            java.util.List<ChildItem> value,
+            @JsonProperty("@odata.nextLink") String nextLink) {}
+
+    /** {@code folder} is Graph's folder facet — present on folders, absent on files. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record ChildItem(String name, Map<String, Object> folder, String lastModifiedDateTime) {}
 }

@@ -351,11 +351,18 @@ public class EmployeeProfileService {
             "d.label_fr AS department, g.label_fr AS grade, " +
             "disc.label_fr AS discipline, nog.label_fr AS nog_level " +
             baseFrom + baseWhere +
-            // Tiebreakers make OFFSET/FETCH deterministic: fullName is not unique
+            // Newest hire first: the list answers "who joined recently". A user with
+            // no profile — or a profile with no hire_date — has nothing to date, and
+            // SQL Server sorts NULL *first*, which would park every profile-less row
+            // at the top of page 1; the CASE sinks them to the bottom instead.
+            //
+            // Tiebreakers make OFFSET/FETCH deterministic: hire_date is not unique
+            // (a whole intake shares one date), fullName is not unique either
             // (duplicate names exist), and a user could join >1 profile row — without
             // u.id + ep.id the paged order shuffles, so the same row can return a
             // different profile/gender (or null) between identical requests.
-            "ORDER BY u.fullName, u.id, ep.id " +
+            "ORDER BY CASE WHEN ep.hire_date IS NULL THEN 1 ELSE 0 END, " +
+            "ep.hire_date DESC, u.fullName, u.id, ep.id " +
             "OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";
 
         List<EmployeeListItemDto> rows = jdbcTemplate.query(
@@ -677,6 +684,9 @@ public class EmployeeProfileService {
         if (folder == null) return null;
 
         String basePath = folder.locationTemplate().replace("{employeeFolder}", folder.employeeFolder());
+
+        // 1. Our own mirror, under the fixed name it writes. Cheap and exact: at most three
+        //    requests, and the first one hits for anyone whose photo we uploaded.
         for (String candidate : java.util.List.of("Photo.jpg", "Photo.png", "Photo.webp")) {
             java.util.Optional<byte[]> content =
                     graphSharePointService.downloadFile(basePath + "/" + candidate);
@@ -685,7 +695,50 @@ public class EmployeeProfileService {
                 return content.get();
             }
         }
+
+        // 2. A portrait HR placed there by hand, whose name we cannot guess — "IMG_2381.jpg",
+        //    "abdellatif.jpg", anything. Probing only the three names above meant such a photo
+        //    was invisible and the avatar 404'd with the file sitting right there (profile 32,
+        //    Abdellatif SASSI). So list the folder and pick the best candidate.
+        for (GraphSharePointService.RemoteFile file : graphSharePointService.listFiles(basePath)) {
+            if (!isLikelyPortrait(file.name())) continue;
+            java.util.Optional<byte[]> content =
+                    graphSharePointService.downloadFile(basePath + "/" + file.name());
+            if (content.isPresent()) {
+                log.info("Photo du profil {} recuperee depuis SharePoint sous le nom '{}'",
+                        profileId, file.name());
+                cacheLocally(dir, file.name(), content.get());
+                return content.get();
+            }
+        }
         return null;
+    }
+
+    /** Image extensions the photo endpoint can serve, matching the upload's own whitelist. */
+    private static final java.util.List<String> PHOTO_EXTENSIONS =
+            java.util.List.of(".jpg", ".jpeg", ".png", ".webp");
+
+    /**
+     * Identity-document names. "Identity Documents" holds ID cards, passports and residence
+     * permits alongside the portrait, and those are scans of the SAME person — so nothing but
+     * the name distinguishes them. Showing a CIN scan as someone's avatar would be both wrong
+     * and a small privacy leak, so a name that looks like one is skipped rather than guessed
+     * at; the profile falls back to initials, which is the honest outcome.
+     */
+    private static final java.util.List<String> NON_PORTRAIT_HINTS = java.util.List.of(
+            "cin", "carte", "passport", "passeport", "permit", "permis", "sejour", "séjour",
+            "visa", "recto", "verso", "id_card", "id-card", "idcard", "diplome", "diplôme",
+            "contrat", "contract", "rib", "cnss", "scan");
+
+    /** Whether a SharePoint file name plausibly names a portrait we can use as an avatar. */
+    private boolean isLikelyPortrait(String fileName) {
+        if (fileName == null) return false;
+        String lower = fileName.toLowerCase(java.util.Locale.ROOT);
+        if (PHOTO_EXTENSIONS.stream().noneMatch(lower::endsWith)) return false;
+        // An explicit "photo"/"portrait" in the name wins outright — it is the one case where
+        // HR has told us what the file is, even if it also mentions something excluded below.
+        if (lower.contains("photo") || lower.contains("portrait")) return true;
+        return NON_PORTRAIT_HINTS.stream().noneMatch(lower::contains);
     }
 
     private void cacheLocally(java.nio.file.Path dir, String sharePointFileName, byte[] content) {
@@ -751,31 +804,26 @@ public class EmployeeProfileService {
         }
     }
 
-    /** pays.photo_sharepoint_location for this profile's pays, the employee's
-     * resolved+normalized folder name, and the ambiguity guard — every step needed
-     * before either mirroring an upload or self-healing a serve cache-miss (this
-     * second use is added by a later task in this same file, not part of this task).
-     * Returns null if SharePoint mirroring should be skipped for this profile, for
-     * any reason (no location configured for this pays, no usable employee name, or
-     * an ambiguous name). */
+    /**
+     * Where this employee's photo belongs, or null when the mirror must be skipped (no
+     * location for their country, no usable name, ambiguous name).
+     *
+     * <p>Now a thin delegate: the rules moved to {@link EmployeeFolderResolver#resolve} so
+     * the photo mirror and the document mirror share one implementation of "which countries
+     * are wired up" and "which employees are too ambiguous to file". The photo's own leaf
+     * folder is whatever {@code pays.photo_sharepoint_location} ends with, which is what
+     * {@code locationTemplate} still carries here.
+     */
     private EmployeeSharepointFolder resolveEmployeeSharepointFolder(Long paysId, Long userId) {
         String locationTemplate = jdbcTemplate.queryForObject(
                 "SELECT photo_sharepoint_location FROM [dbo].[pays] WHERE id = ?",
                 String.class, paysId);
         if (locationTemplate == null || locationTemplate.isBlank()) return null;
 
-        String fullName = jdbcTemplate.queryForObject(
-                "SELECT fullName FROM [dbo].[Users] WHERE id = ?", String.class, userId);
-        String employeeFolder = employeeFolderResolver.normalize(fullName);
-        if (employeeFolder == null) return null;
+        EmployeeFolderResolver.EmployeeFolder folder = employeeFolderResolver.resolve(paysId, userId);
+        if (folder == null) return null;
 
-        if (employeeFolderResolver.isAmbiguous(employeeFolder, paysId)) {
-            log.warn("Plusieurs employés partagent le nom de dossier SharePoint '{}' — opération " +
-                    "photo ignorée par sécurité", employeeFolder);
-            return null;
-        }
-
-        return new EmployeeSharepointFolder(locationTemplate, employeeFolder);
+        return new EmployeeSharepointFolder(locationTemplate, folder.employeeFolder());
     }
 
     private record EmployeeSharepointFolder(String locationTemplate, String employeeFolder) {}

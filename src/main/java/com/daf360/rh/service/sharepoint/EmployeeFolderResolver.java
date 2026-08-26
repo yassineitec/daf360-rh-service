@@ -1,6 +1,7 @@
 package com.daf360.rh.service.sharepoint;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -13,11 +14,66 @@ import org.springframework.stereotype.Component;
  * convention de nommage, meme garde-fou, une seule requete a maintenir plutot que
  * deux copies qui pourraient diverger avec le temps.
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class EmployeeFolderResolver {
 
     private final JdbcTemplate jdbc;
+
+    /**
+     * Everything needed to build a SharePoint path for one employee: the per-country
+     * employee-folder root (already with its {@code {employeeFolder}} placeholder) and the
+     * resolved folder name to substitute into it.
+     */
+    public record EmployeeFolder(String locationTemplate, String employeeFolder) {
+
+        /** The employee's own folder, placeholder substituted. */
+        public String basePath() {
+            return locationTemplate.replace(SharePointPaths.EMPLOYEE_FOLDER_TOKEN, employeeFolder);
+        }
+
+        /** {@link #basePath()} plus one subfolder. */
+        public String subPath(String subfolder) {
+            return SharePointPaths.join(basePath(), subfolder);
+        }
+    }
+
+    /**
+     * Resolves where this employee's files belong, or null when SharePoint must be skipped
+     * for them — no location configured for their country, no usable name, or a name shared
+     * with a colleague in the same country.
+     *
+     * <p>The country's root comes from {@code pays.photo_sharepoint_location}. That column is
+     * named for its first consumer but holds the whole path down to the employee folder, so
+     * {@link SharePointPaths#employeeFolderBase} recovers the shared part and each caller
+     * appends its own leaf. See that method for why this beats adding a second column.
+     *
+     * <p>Was private in {@code EmployeeProfileService}; moved here so the photo mirror and the
+     * document mirror cannot drift apart on the two rules that matter — which countries are
+     * wired up, and which employees are too ambiguous to file.
+     */
+    public EmployeeFolder resolve(Long paysId, Long userId) {
+        if (paysId == null || userId == null) return null;
+
+        String configured = jdbc.queryForObject(
+                "SELECT photo_sharepoint_location FROM [dbo].[pays] WHERE id = ?",
+                String.class, paysId);
+        String base = SharePointPaths.employeeFolderBase(configured);
+        if (base == null) return null;
+
+        String fullName = jdbc.queryForObject(
+                "SELECT fullName FROM [dbo].[Users] WHERE id = ?", String.class, userId);
+        String employeeFolder = normalize(fullName);
+        if (employeeFolder == null) return null;
+
+        if (isAmbiguous(employeeFolder, paysId)) {
+            log.warn("Plusieurs employes partagent le nom de dossier SharePoint '{}' (pays {}) — " +
+                     "operation ignoree par securite", employeeFolder, paysId);
+            return null;
+        }
+        return new EmployeeFolder(base, employeeFolder);
+    }
 
     /** Nettoie un fullName brut ("Abir  ESSAYEM"-style espaces multiples) en nom de
      * dossier utilisable — n'affecte pas la recherche d'un dossier existant, seulement

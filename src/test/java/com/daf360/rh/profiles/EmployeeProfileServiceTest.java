@@ -55,7 +55,6 @@ class EmployeeProfileServiceTest {
     private static final Long USER_ID    = 7L;
     private static final Long PAYS_ID    = 3L;
     private static final String LOCATION_SQL_MARKER = "photo_sharepoint_location";
-    private static final String FULLNAME_SQL_MARKER = "fullName FROM [dbo].[Users]";
 
     private EmployeeProfile profile;
 
@@ -93,10 +92,10 @@ class EmployeeProfileServiceTest {
         String template = "Tunisia/01_HR/01_Contracts-Employment/{employeeFolder}/Identity Documents";
         when(jdbcTemplate.queryForObject(contains(LOCATION_SQL_MARKER), eq(String.class), eq(PAYS_ID)))
                 .thenReturn(template);
-        when(jdbcTemplate.queryForObject(contains(FULLNAME_SQL_MARKER), eq(String.class), eq(USER_ID)))
-                .thenReturn("Jean Dupont");
-        when(employeeFolderResolver.normalize("Jean Dupont")).thenReturn("Jean Dupont");
-        when(employeeFolderResolver.isAmbiguous("Jean Dupont", PAYS_ID)).thenReturn(false);
+        // The name lookup and the homonym guard moved into EmployeeFolderResolver.resolve(),
+        // shared with the document mirror — so one stub now stands in for the pair.
+        when(employeeFolderResolver.resolve(PAYS_ID, USER_ID))
+                .thenReturn(new EmployeeFolderResolver.EmployeeFolder(template, "Jean Dupont"));
         when(graphSharePointService.uploadDocument(eq(template), eq("Jean Dupont"), eq("Photo.jpg"), any()))
                 .thenReturn(Optional.of("https://pinigroup.sharepoint.com/.../Photo.jpg"));
 
@@ -112,10 +111,10 @@ class EmployeeProfileServiceTest {
         String basePath = "Tunisia/01_HR/01_Contracts-Employment/Jean Dupont/Identity Documents";
         when(jdbcTemplate.queryForObject(contains(LOCATION_SQL_MARKER), eq(String.class), eq(PAYS_ID)))
                 .thenReturn(template);
-        when(jdbcTemplate.queryForObject(contains(FULLNAME_SQL_MARKER), eq(String.class), eq(USER_ID)))
-                .thenReturn("Jean Dupont");
-        when(employeeFolderResolver.normalize("Jean Dupont")).thenReturn("Jean Dupont");
-        when(employeeFolderResolver.isAmbiguous("Jean Dupont", PAYS_ID)).thenReturn(false);
+        // The name lookup and the homonym guard moved into EmployeeFolderResolver.resolve(),
+        // shared with the document mirror — so one stub now stands in for the pair.
+        when(employeeFolderResolver.resolve(PAYS_ID, USER_ID))
+                .thenReturn(new EmployeeFolderResolver.EmployeeFolder(template, "Jean Dupont"));
         when(graphSharePointService.uploadDocument(eq(template), eq("Jean Dupont"), anyString(), any()))
                 .thenReturn(Optional.of("https://pinigroup.sharepoint.com/.../Photo"));
 
@@ -149,10 +148,9 @@ class EmployeeProfileServiceTest {
         String template = "Tunisia/01_HR/01_Contracts-Employment/{employeeFolder}/Identity Documents";
         when(jdbcTemplate.queryForObject(contains(LOCATION_SQL_MARKER), eq(String.class), eq(PAYS_ID)))
                 .thenReturn(template);
-        when(jdbcTemplate.queryForObject(contains(FULLNAME_SQL_MARKER), eq(String.class), eq(USER_ID)))
-                .thenReturn("Jean Dupont");
-        when(employeeFolderResolver.normalize("Jean Dupont")).thenReturn("Jean Dupont");
-        when(employeeFolderResolver.isAmbiguous("Jean Dupont", PAYS_ID)).thenReturn(true);
+        // Homonyms make the folder ambiguous, and resolve() answers that by refusing to
+        // name a folder at all rather than risking two people's files in one place.
+        when(employeeFolderResolver.resolve(PAYS_ID, USER_ID)).thenReturn(null);
 
         service.uploadPhoto(PROFILE_ID, jpegFile(), null);
 
@@ -189,10 +187,10 @@ class EmployeeProfileServiceTest {
         String template = "Tunisia/01_HR/01_Contracts-Employment/{employeeFolder}/Identity Documents";
         when(jdbcTemplate.queryForObject(contains(LOCATION_SQL_MARKER), eq(String.class), eq(PAYS_ID)))
                 .thenReturn(template);
-        when(jdbcTemplate.queryForObject(contains(FULLNAME_SQL_MARKER), eq(String.class), eq(USER_ID)))
-                .thenReturn("Jean Dupont");
-        when(employeeFolderResolver.normalize("Jean Dupont")).thenReturn("Jean Dupont");
-        when(employeeFolderResolver.isAmbiguous("Jean Dupont", PAYS_ID)).thenReturn(false);
+        // The name lookup and the homonym guard moved into EmployeeFolderResolver.resolve(),
+        // shared with the document mirror — so one stub now stands in for the pair.
+        when(employeeFolderResolver.resolve(PAYS_ID, USER_ID))
+                .thenReturn(new EmployeeFolderResolver.EmployeeFolder(template, "Jean Dupont"));
         String basePath = "Tunisia/01_HR/01_Contracts-Employment/Jean Dupont/Identity Documents";
         when(graphSharePointService.downloadFile(basePath + "/Photo.jpg"))
                 .thenReturn(Optional.of(new byte[]{5, 5, 5}));
@@ -221,10 +219,10 @@ class EmployeeProfileServiceTest {
         String template = "Tunisia/01_HR/01_Contracts-Employment/{employeeFolder}/Identity Documents";
         when(jdbcTemplate.queryForObject(contains(LOCATION_SQL_MARKER), eq(String.class), eq(PAYS_ID)))
                 .thenReturn(template);
-        when(jdbcTemplate.queryForObject(contains(FULLNAME_SQL_MARKER), eq(String.class), eq(USER_ID)))
-                .thenReturn("Jean Dupont");
-        when(employeeFolderResolver.normalize("Jean Dupont")).thenReturn("Jean Dupont");
-        when(employeeFolderResolver.isAmbiguous("Jean Dupont", PAYS_ID)).thenReturn(false);
+        // The name lookup and the homonym guard moved into EmployeeFolderResolver.resolve(),
+        // shared with the document mirror — so one stub now stands in for the pair.
+        when(employeeFolderResolver.resolve(PAYS_ID, USER_ID))
+                .thenReturn(new EmployeeFolderResolver.EmployeeFolder(template, "Jean Dupont"));
         String basePath = "Tunisia/01_HR/01_Contracts-Employment/Jean Dupont/Identity Documents";
         when(graphSharePointService.downloadFile(basePath + "/Photo.jpg"))
                 .thenReturn(Optional.of(new byte[]{5, 5, 5}));
@@ -235,6 +233,75 @@ class EmployeeProfileServiceTest {
         try (var files = java.nio.file.Files.list(dir)) {
             assertThat(files.count()).isEqualTo(1); // self-healed: now cached locally for next time
         }
+    }
+
+    // ── Photos HR placed by hand, under names we cannot guess ─────────────────
+
+    /**
+     * The profile-32 case: the portrait is in SharePoint but not under one of the three
+     * names our own mirror writes, so probing those alone 404'd with the file right there.
+     */
+    @Test
+    void servePhoto_fallsBackToWhateverImageIsInTheFolder_whenNoFixedNameMatches() {
+        String basePath = givenSharePointFolderConfigured();
+        when(graphSharePointService.downloadFile(anyString())).thenReturn(Optional.empty());
+        when(graphSharePointService.listFiles(basePath)).thenReturn(java.util.List.of(
+                new GraphSharePointService.RemoteFile("IMG_2381.jpg", "2026-08-01T10:00:00Z")));
+        when(graphSharePointService.downloadFile(basePath + "/IMG_2381.jpg"))
+                .thenReturn(Optional.of(new byte[]{6, 6, 6}));
+
+        assertThat(service.servePhoto(PROFILE_ID)).isEqualTo(new byte[]{6, 6, 6});
+    }
+
+    /**
+     * "Identity Documents" also holds ID/passport scans of the same person. Serving one as
+     * an avatar would be wrong and a small privacy leak, so an identity-looking name is
+     * skipped and the profile falls back to initials.
+     */
+    @Test
+    void servePhoto_refusesIdentityScans_ratherThanShowingThemAsAnAvatar() {
+        String basePath = givenSharePointFolderConfigured();
+        when(graphSharePointService.downloadFile(anyString())).thenReturn(Optional.empty());
+        when(graphSharePointService.listFiles(basePath)).thenReturn(java.util.List.of(
+                new GraphSharePointService.RemoteFile("CIN recto.jpg", "2026-08-02T10:00:00Z"),
+                new GraphSharePointService.RemoteFile("passeport.png", "2026-08-01T10:00:00Z")));
+
+        assertThat(service.servePhoto(PROFILE_ID)).isNull();
+        verify(graphSharePointService, never()).downloadFile(basePath + "/CIN recto.jpg");
+    }
+
+    /** An explicit "photo" in the name wins even when the name also mentions a document. */
+    @Test
+    void servePhoto_prefersAnExplicitlyNamedPhotoOverTheExclusionList() {
+        String basePath = givenSharePointFolderConfigured();
+        when(graphSharePointService.downloadFile(anyString())).thenReturn(Optional.empty());
+        when(graphSharePointService.listFiles(basePath)).thenReturn(java.util.List.of(
+                new GraphSharePointService.RemoteFile("photo carte.jpg", "2026-08-01T10:00:00Z")));
+        when(graphSharePointService.downloadFile(basePath + "/photo carte.jpg"))
+                .thenReturn(Optional.of(new byte[]{8, 8}));
+
+        assertThat(service.servePhoto(PROFILE_ID)).isEqualTo(new byte[]{8, 8});
+    }
+
+    /** Non-images in the folder (a PDF contract) are never offered to an <img> tag. */
+    @Test
+    void servePhoto_ignoresNonImageFiles() {
+        String basePath = givenSharePointFolderConfigured();
+        when(graphSharePointService.downloadFile(anyString())).thenReturn(Optional.empty());
+        when(graphSharePointService.listFiles(basePath)).thenReturn(java.util.List.of(
+                new GraphSharePointService.RemoteFile("attestation.pdf", "2026-08-01T10:00:00Z")));
+
+        assertThat(service.servePhoto(PROFILE_ID)).isNull();
+    }
+
+    /** Shared setup for the fallback tests: TN location + resolvable folder. */
+    private String givenSharePointFolderConfigured() {
+        String template = "Tunisia/01_HR/01_Contracts-Employment/{employeeFolder}/Identity Documents";
+        when(jdbcTemplate.queryForObject(contains(LOCATION_SQL_MARKER), eq(String.class), eq(PAYS_ID)))
+                .thenReturn(template);
+        when(employeeFolderResolver.resolve(PAYS_ID, USER_ID))
+                .thenReturn(new EmployeeFolderResolver.EmployeeFolder(template, "Jean Dupont"));
+        return "Tunisia/01_HR/01_Contracts-Employment/Jean Dupont/Identity Documents";
     }
 
     @Test
