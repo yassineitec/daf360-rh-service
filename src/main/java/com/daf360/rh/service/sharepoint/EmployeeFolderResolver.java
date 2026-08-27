@@ -75,6 +75,25 @@ public class EmployeeFolderResolver {
         return new EmployeeFolder(base, employeeFolder);
     }
 
+    /**
+     * The raw {@code Users.fullName}, or null if absent.
+     *
+     * <p>Exists so {@code SharePointResolver} can run the same three steps this class does —
+     * read the name, {@link #normalize} it, check {@link #isAmbiguous} — while reporting WHICH
+     * step failed, instead of collapsing "no name" and "ambiguous name" into the single null
+     * that {@link #resolve} returns. Two different messages in the admin panel, two different
+     * fixes; and still one query and one naming rule, not a fourth copy of them.
+     */
+    public String fullNameOf(Long userId) {
+        if (userId == null) return null;
+        try {
+            return jdbc.queryForObject(
+                    "SELECT fullName FROM [dbo].[Users] WHERE id = ?", String.class, userId);
+        } catch (org.springframework.dao.EmptyResultDataAccessException noSuchUser) {
+            return null;
+        }
+    }
+
     /** Nettoie un fullName brut ("Abir  ESSAYEM"-style espaces multiples) en nom de
      * dossier utilisable — n'affecte pas la recherche d'un dossier existant, seulement
      * ce qu'on ecrit nous-memes. Retourne null si fullName est null/vide. */

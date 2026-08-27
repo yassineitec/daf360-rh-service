@@ -75,11 +75,16 @@ public class EmployeeProfile {
     @Column(name = "passport_number", length = 100)
     private String passportNumber;
 
+    /** {@code /api/hr/profiles/{id}/photo?v={epoch}}. The version token matters: the endpoint
+     *  advertises a seven-day cache, so without it a replaced photo stays invisible for a week. */
     @Column(name = "photo_url", length = 500)
     private String photoUrl;
 
-    @Column(name = "photo_sharepoint_url", length = 1000)
-    private String photoSharepointUrl;
+    // photoSharepointUrl was here (V85 dropped the column): written on in-app upload, read by
+    // nothing. servePhoto always recomputed the path, so photos resolved fine with it NULL for
+    // every one of the 101 profiles on the test tenant. The location now comes from
+    // SharePointResolver, and the folder segment from employee_sharepoint_folders, which is
+    // honestly labelled a cache.
 
     @Column(name = "personal_email", length = 255)
     private String personalEmail;

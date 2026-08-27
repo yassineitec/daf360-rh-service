@@ -68,17 +68,39 @@ public class GraphSharePointService {
             log.debug("Aucun sharepoint_location configuré pour cette maquette — upload ignoré pour {}", fileName);
             return Optional.empty();
         }
+        return uploadToFolder(
+                locationTemplate.replace(SharePointPaths.EMPLOYEE_FOLDER_TOKEN, employeeFolderName),
+                fileName, content);
+    }
+
+    /**
+     * Same upload, for a caller that already holds the final folder path.
+     *
+     * <p>Added because {@code SharePointResolver} hands back a resolved path rather than a
+     * template plus a name: making its callers re-synthesise a template just to have this
+     * method substitute the token straight back out would be a round trip through a format
+     * neither side wants. {@link #uploadDocument} now delegates here, so the folder matching
+     * and mkdir -p behaviour below is shared rather than duplicated.
+     */
+    public Optional<String> uploadToFolder(String folderPath, String fileName, byte[] content) {
+        if (!isConfigured()) {
+            log.debug("SharePoint non configuré (tenant/client id vide) — upload ignoré pour {}", fileName);
+            return Optional.empty();
+        }
+        if (folderPath == null || folderPath.isBlank()) {
+            log.debug("Aucun dossier cible — upload ignoré pour {}", fileName);
+            return Optional.empty();
+        }
         try {
-            String folderPath = locationTemplate.replace("{employeeFolder}", employeeFolderName);
             String token  = getAccessToken();
             String siteId = getSiteId(token);
-            // Match folders that already exist but are spelled differently (spacing, case)
-            // before deciding to create anything — otherwise we file into a duplicate of
-            // HR's folder instead of into HR's folder. Costs nothing on the common path:
+            // Match folders that already exist but are spelled differently (spacing, case,
+            // accents) before deciding to create anything — otherwise we file into a duplicate
+            // of HR's folder instead of into HR's folder. Costs nothing on the common path:
             // resolveLeniently() returns immediately when the literal path is there.
-            folderPath = resolveLeniently(token, siteId, folderPath);
-            ensureFolderExists(token, siteId, folderPath);
-            String webUrl = uploadFile(token, siteId, folderPath, fileName, content);
+            String resolved = resolveLeniently(token, siteId, folderPath);
+            ensureFolderExists(token, siteId, resolved);
+            String webUrl = uploadFile(token, siteId, resolved, fileName, content);
             log.info("Document {} déposé sur SharePoint: {}", fileName, webUrl);
             return Optional.ofNullable(webUrl);
         } catch (Exception e) {
@@ -161,7 +183,15 @@ public class GraphSharePointService {
         }
     }
 
-    private boolean isConfigured() {
+    /**
+     * Whether Graph credentials are present at all.
+     *
+     * <p>Public so {@code SharePointResolver} can report UNAVAILABLE ("the integration is off
+     * on this deployment, fix an env variable") instead of FOLDER_MISSING ("go hunt for a
+     * folder in SharePoint"). Those two sent an operator in completely different directions,
+     * and every lookup here answers Optional.empty() for both.
+     */
+    public boolean isConfigured() {
         return notBlank(appProperties.getMsGraphTenantId())
                 && notBlank(appProperties.getMsGraphClientId())
                 && notBlank(appProperties.getMsGraphClientSecret());
@@ -286,10 +316,20 @@ public class GraphSharePointService {
             for (String wanted : folderPath.split("/")) {
                 if (wanted.isBlank()) continue;
                 String parent = resolved.toString();
-                String actual = childrenOf(token, siteId, parent).stream()
+                // ALL matches, not the first one. Matching folds case, spacing and accents
+                // (SharePointPaths.fold), so two real folders can now match the same wanted
+                // segment — "Kods CHERIF" and "Kods CHÉRIF" side by side would. Picking
+                // either would be a coin toss over whose documents get served, so an
+                // ambiguous level keeps the literal name and lets the caller fail cleanly.
+                java.util.List<String> matches = childrenOf(token, siteId, parent).stream()
                         .filter(name -> SharePointPaths.sameSegment(name, wanted))
-                        .findFirst()
-                        .orElse(wanted);
+                        .toList();
+                if (matches.size() > 1) {
+                    log.warn("Segment SharePoint '{}' ambigu sous '{}' — {} dossiers y " +
+                             "correspondent ({}), aucun choisi", wanted, parent, matches.size(),
+                            String.join(", ", matches));
+                }
+                String actual = matches.size() == 1 ? matches.get(0) : wanted;
                 if (!actual.equals(wanted)) {
                     log.info("Segment SharePoint '{}' resolu en '{}' (dossier existant, " +
                              "orthographe differente) sous '{}'", wanted, actual, parent);
@@ -313,6 +353,60 @@ public class GraphSharePointService {
      */
     private java.util.List<String> childrenOf(String token, String siteId, String parentPath) {
         return listChildren(token, siteId, parentPath).stream().map(ChildItem::name).toList();
+    }
+
+    /**
+     * Whether a folder exists, after lenient resolution of its spelling. Used by
+     * {@code SharePointResolver} to tell FOLDER_MISSING apart from "folder is there but
+     * empty" — two outcomes that look identical through {@link #listFiles} and need very
+     * different messages in the admin panel.
+     *
+     * <p>False when SharePoint is unconfigured or the lookup fails, same as everything else
+     * here: a caller can never distinguish "absent" from "could not look", and must not need
+     * to.
+     */
+    public boolean folderExists(String folderPath) {
+        if (!isConfigured() || folderPath == null || folderPath.isBlank()) return false;
+        try {
+            String token  = getAccessToken();
+            String siteId = getSiteId(token);
+            return folderExists(token, siteId, resolveLeniently(token, siteId, folderPath));
+        } catch (Exception e) {
+            log.warn("Echec du test d'existence SharePoint pour {}: {}", folderPath, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Immediate SUBFOLDER names of a folder ({@code ""} = drive root), sorted descending so
+     * year folders come back newest first. Empty when the folder is missing, SharePoint is
+     * unconfigured, or anything fails — same posture as {@link #listFiles}.
+     *
+     * <p>Two callers, both of which need to see the tree rather than guess at it: the
+     * year level of a year-scoped kind ({@code .../01_Pay-Slip/{year}}), and the admin
+     * folder browser, which exists so a path can be picked in the app instead of hand-typed
+     * from a SharePoint tab.
+     *
+     * <p>Descending order is a naming assumption that happens to hold for {@code yyyy}
+     * folders and is harmless elsewhere; callers that care about a real chronology should
+     * parse the names rather than trust this.
+     */
+    public java.util.List<String> listFolders(String folderPath) {
+        if (!isConfigured()) return java.util.List.of();
+        try {
+            String token  = getAccessToken();
+            String siteId = getSiteId(token);
+            String resolved = folderPath == null || folderPath.isBlank()
+                    ? "" : resolveLeniently(token, siteId, folderPath);
+            return listChildren(token, siteId, resolved).stream()
+                    .filter(item -> item.folder() != null && item.name() != null)
+                    .map(ChildItem::name)
+                    .sorted(java.util.Comparator.reverseOrder())
+                    .toList();
+        } catch (Exception e) {
+            log.warn("Echec du listage des dossiers SharePoint de {}: {}", folderPath, e.getMessage());
+            return java.util.List.of();
+        }
     }
 
     /**

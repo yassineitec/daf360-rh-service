@@ -566,11 +566,14 @@ public class PdfDocumentService {
 
     @Transactional(readOnly = true)
     public List<GeneratedDocumentResponse> listByProfile(Long employeeProfileId) {
+        // employee_requests keys on employee_profile_id, so the profile is compared directly.
+        // The previous version hopped through employee_requests.user_id — a column that table
+        // does not have (see EmployeeRequest) — so every call died on "Invalid column name
+        // 'user_id'" and the profile's documents tab was a permanent 500.
         String sql =
                 "SELECT gd.* FROM generated_documents gd " +
                 "WHERE gd.employee_request_id IN (" +
-                "  SELECT id FROM employee_requests " +
-                "  WHERE user_id = (SELECT user_id FROM employee_profiles WHERE id = ?)" +
+                "  SELECT id FROM employee_requests WHERE employee_profile_id = ?" +
                 ") ORDER BY gd.generated_at DESC";
         return jdbc.query(sql, (rs, rowNum) -> mapDoc(rs), employeeProfileId);
     }

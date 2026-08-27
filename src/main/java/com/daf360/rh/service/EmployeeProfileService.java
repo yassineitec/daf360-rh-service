@@ -1,14 +1,12 @@
 package com.daf360.rh.service;
 
 import com.daf360.rh.common.GenderNormalizer;
-import com.daf360.rh.config.AppProperties;
 import com.daf360.rh.domain.EmployeeProfile;
 import com.daf360.rh.domain.enums.LifecycleStatus;
 import com.daf360.rh.dto.profile.*;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.mapper.EmployeeProfileMapper;
 import com.daf360.rh.repository.*;
-import com.daf360.rh.service.sharepoint.EmployeeFolderResolver;
 import com.daf360.rh.service.sharepoint.GraphSharePointService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -47,12 +45,16 @@ public class EmployeeProfileService {
     private final AuditService              auditService;
     private final JdbcTemplate              jdbcTemplate;
     private final ObjectMapper              objectMapper;
-    private final AppProperties             appProperties;
     private final com.daf360.rh.security.TenantService tenantService;
 
     // ── SharePoint (profile photo mirroring, cf. spec 2026-08-18) ─────────────
+    // The photo's location now comes from SharePointResolver (V84 config + discovery cache)
+    // rather than being derived here from pays.photo_sharepoint_location. That removed this
+    // class's private copy of the folder rules, which had drifted into being the third
+    // implementation of "where does this employee's documents live".
     private final GraphSharePointService graphSharePointService;
-    private final EmployeeFolderResolver employeeFolderResolver;
+    private final com.daf360.rh.service.sharepoint.SharePointResolver sharePointResolver;
+    private final com.daf360.rh.service.photo.ProfilePhotoCache photoCache;
 
     // ── Dimension repos injected for FK lookups ───────────────────────────────
     private final GradeRepository        gradeRepo;
@@ -510,18 +512,18 @@ public class EmployeeProfileService {
         try {
             byte[] bytes = file.getBytes();
 
-            // Build storage path
             String ext = contentType.contains("png") ? ".png"
                        : contentType.contains("webp") ? ".webp" : ".jpg";
-            java.nio.file.Path dir = java.nio.file.Paths.get(
-                    appProperties.getStoragePath(), "profiles", profileId.toString());
-            java.nio.file.Files.createDirectories(dir);
-            String filename = java.util.UUID.randomUUID() + ext;
-            java.nio.file.Path target = dir.resolve(filename);
-            java.nio.file.Files.write(target, bytes);
 
-            // Store the API path as photo_url (frontend will prefix with hrApiUrl)
-            profile.setPhotoUrl("/api/hr/profiles/" + profileId + "/photo");
+            // Through the cache, so the upload is shrunk on the way in exactly like a photo
+            // pulled from SharePoint. It also replaces any previous file rather than adding
+            // to a pile of them, which is what the old direct write did.
+            photoCache.write(profileId, "upload" + ext, null, bytes);
+
+            // Versioned, so browsers holding the previous image for the seven days this
+            // endpoint advertises actually see the new one. The query string is inert
+            // server-side; its whole job is to change the URL.
+            profile.setPhotoUrl(photoUrlFor(profileId));
             profile.setUpdatedAt(java.time.OffsetDateTime.now());
 
             // Best-effort mirror to SharePoint — mirrorPhotoToSharePoint() never throws
@@ -632,15 +634,21 @@ public class EmployeeProfileService {
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public byte[] servePhoto(Long profileId) {
         try {
-            java.nio.file.Path dir = java.nio.file.Paths.get(
-                    appProperties.getStoragePath(), "profiles", profileId.toString());
+            java.util.Optional<byte[]> cached = photoCache.read(profileId);
+            if (cached.isPresent()) {
+                // The cached copy used to be trusted forever, which meant a photo replaced in
+                // SharePoint never appeared — the cache had silently become the source of
+                // truth. Revalidation is rate-limited by the cache's own marker, so this costs
+                // one Graph call a day per employee, not one per avatar.
+                if (photoCache.needsRevalidation(profileId)) {
+                    byte[] refreshed = revalidatePhoto(profileId);
+                    if (refreshed != null) return refreshed;
+                }
+                return cached.get();
+            }
 
-            byte[] cached = readMostRecentLocalFile(dir);
-            if (cached != null) return cached;
-
-            // Cache miss (no local file at all) — self-heal from SharePoint if
-            // configured for this employee, then cache the result for next time.
-            return fetchAndCachePhotoFromSharePoint(profileId, dir);
+            // Nothing cached — resolve and fetch from SharePoint, then cache for next time.
+            return fetchAndCachePhotoFromSharePoint(profileId);
 
         } catch (Exception e) {
             // Exception, not IOException: see the class-level note above.
@@ -650,20 +658,99 @@ public class EmployeeProfileService {
         }
     }
 
-    private byte[] readMostRecentLocalFile(java.nio.file.Path dir) throws java.io.IOException {
-        if (!java.nio.file.Files.isDirectory(dir)) return null;
+    /**
+     * Asks SharePoint whether the cached photo is still current, and replaces it if not.
+     *
+     * <p>Always marks the check as done, whatever the outcome — an employee whose folder has
+     * become unreachable must not re-attempt on every render.
+     *
+     * @return the new bytes when the photo changed, null when it did not (or could not be
+     *         checked), so the caller keeps serving what it already has
+     */
+    private byte[] revalidatePhoto(Long profileId) {
+        photoCache.markChecked(profileId);
+        try {
+            var location = sharePointResolver.resolve(profileId,
+                    com.daf360.rh.service.sharepoint.DocKind.PHOTO);
+            if (!location.isFound()) return null;
 
-        java.nio.file.Path latest;
-        try (java.util.stream.Stream<java.nio.file.Path> entries = java.nio.file.Files.list(dir)) {
-            latest = entries
-                    .filter(java.nio.file.Files::isRegularFile)
-                    .max(java.util.Comparator.comparingLong(p -> {
-                        try { return java.nio.file.Files.getLastModifiedTime(p).toMillis(); }
-                        catch (java.io.IOException e) { return 0L; }
-                    }))
-                    .orElse(null);
+            GraphSharePointService.RemoteFile remote = bestPortrait(location.basePath());
+            if (remote == null || !photoCache.remoteIsNewer(profileId, remote.lastModified())) {
+                return null;
+            }
+            byte[] content = graphSharePointService
+                    .downloadFile(location.basePath() + "/" + remote.name()).orElse(null);
+            if (content == null || content.length == 0) return null;
+
+            log.info("Photo du profil {} rafraichie depuis SharePoint ('{}', modifiee le {})",
+                    profileId, remote.name(), remote.lastModified());
+            byte[] stored = photoCache.write(profileId, remote.name(), remote.lastModified(), content);
+            // The response is cached by browsers for a week, so a new photo behind an
+            // unchanged URL would stay invisible for that week. Bumping the token in
+            // photo_url is what actually makes the change visible to someone who already
+            // loaded the old one.
+            stampPhotoUrl(profileId);
+            return stored;
+
+        } catch (Exception e) {
+            log.debug("Revalidation de la photo {} impossible: {}", profileId, e.getMessage());
+            return null;
         }
-        return latest != null ? java.nio.file.Files.readAllBytes(latest) : null;
+    }
+
+    /**
+     * The best portrait candidate in a folder, or null.
+     *
+     * <p>Prefers our own mirror's fixed name, then falls back to whatever HR put there —
+     * {@code "Abdellatif_SASSI.jpg"}, {@code "IMG_2381.jpg"}, anything — while still refusing
+     * names that look like an identity-document scan.
+     */
+    private GraphSharePointService.RemoteFile bestPortrait(String basePath) {
+        java.util.List<GraphSharePointService.RemoteFile> files =
+                graphSharePointService.listFiles(basePath);
+        GraphSharePointService.RemoteFile best = files.stream()
+                .filter(f -> isLikelyPortrait(f.name()))
+                .min(java.util.Comparator.comparingInt(
+                        f -> f.name().toLowerCase(java.util.Locale.ROOT).startsWith("photo.") ? 0 : 1))
+                .orElse(null);
+
+        // Name what was actually there when nothing qualified. Without this the caller can
+        // only log the FOLDER, so "empty folder", "rejected extension" and "Graph listing
+        // failed" are one indistinguishable message — listFiles returns an empty list for all
+        // three. The rejected names are the whole diagnosis, so they belong in the log.
+        if (best == null) {
+            log.info("Aucun portrait retenu dans {} — {} fichier(s) vu(s): {}",
+                    basePath, files.size(),
+                    files.isEmpty()
+                            ? "aucun (dossier vide, ou listage Graph en echec)"
+                            : files.stream().map(GraphSharePointService.RemoteFile::name)
+                                    .collect(java.util.stream.Collectors.joining(", ")));
+        }
+        return best;
+    }
+
+    /**
+     * Rewrites {@code photo_url} with a fresh version token.
+     *
+     * <p>Without this the URL is the constant {@code /api/hr/profiles/{id}/photo}, so the
+     * seven-day response cache on it can never be invalidated: a corrected photo stayed
+     * invisible for a week. A plain jdbc update rather than a repository save because
+     * {@code servePhoto} deliberately runs outside a transaction.
+     */
+    private void stampPhotoUrl(Long profileId) {
+        try {
+            jdbcTemplate.update(
+                    "UPDATE [dbo].[employee_profiles] SET photo_url = ? WHERE id = ?",
+                    photoUrlFor(profileId), profileId);
+        } catch (Exception e) {
+            log.debug("photo_url non horodate pour le profil {}: {}", profileId, e.getMessage());
+        }
+    }
+
+    /** The versioned photo URL. The query string is ignored by the endpoint and exists purely
+     *  to give browsers a new URL when the image behind it changes. */
+    private String photoUrlFor(Long profileId) {
+        return "/api/hr/profiles/" + profileId + "/photo?v=" + java.time.Instant.now().getEpochSecond();
     }
 
     /** Auto-réparation du cache local : ne s'exécute que quand aucun fichier local
@@ -675,43 +762,39 @@ public class EmployeeProfileService {
      * remonte au catch-all de servePhoto() ci-dessus — pas besoin d'un try/catch
      * séparé, contrairement à mirrorPhotoToSharePoint qui est appelé depuis
      * uploadPhoto (dont le catch ne couvre que IOException). */
-    private byte[] fetchAndCachePhotoFromSharePoint(Long profileId, java.nio.file.Path dir) {
-        EmployeeProfile profile = profileRepository.findById(profileId).orElse(null);
-        if (profile == null) return null;
+    private byte[] fetchAndCachePhotoFromSharePoint(Long profileId) {
+        // Marked checked up front: every return below is a decision that stands until the
+        // revalidation window elapses, including the null ones. Without this, an employee with
+        // no photo re-ran the whole probe on every avatar render — roughly five Graph calls,
+        // times a hundred such employees on a directory page.
+        photoCache.markChecked(profileId);
 
-        EmployeeSharepointFolder folder =
-                resolveEmployeeSharepointFolder(profile.getPaysId(), profile.getUserId());
-        if (folder == null) return null;
+        var location = sharePointResolver.resolve(profileId,
+                com.daf360.rh.service.sharepoint.DocKind.PHOTO);
+        if (!location.isFound()) {
+            // The resolver has already logged why, once, with the resolved path. That single
+            // line is what this method used to be missing: six branches returned bare null,
+            // so a blank avatar was indistinguishable from an unconfigured country.
+            return null;
+        }
+        String basePath = location.basePath();
 
-        String basePath = folder.locationTemplate().replace("{employeeFolder}", folder.employeeFolder());
-
-        // 1. Our own mirror, under the fixed name it writes. Cheap and exact: at most three
-        //    requests, and the first one hits for anyone whose photo we uploaded.
-        for (String candidate : java.util.List.of("Photo.jpg", "Photo.png", "Photo.webp")) {
-            java.util.Optional<byte[]> content =
-                    graphSharePointService.downloadFile(basePath + "/" + candidate);
-            if (content.isPresent()) {
-                cacheLocally(dir, candidate, content.get());
-                return content.get();
-            }
+        // One listing instead of the previous three blind probes plus a listing. The fixed
+        // names our own mirror writes ("Photo.jpg") are preferred inside bestPortrait, so the
+        // common case still wins, at one request rather than four.
+        GraphSharePointService.RemoteFile remote = bestPortrait(basePath);
+        if (remote == null) {
+            log.info("Aucun portrait exploitable pour le profil {} dans {}", profileId, basePath);
+            return null;
         }
 
-        // 2. A portrait HR placed there by hand, whose name we cannot guess — "IMG_2381.jpg",
-        //    "abdellatif.jpg", anything. Probing only the three names above meant such a photo
-        //    was invisible and the avatar 404'd with the file sitting right there (profile 32,
-        //    Abdellatif SASSI). So list the folder and pick the best candidate.
-        for (GraphSharePointService.RemoteFile file : graphSharePointService.listFiles(basePath)) {
-            if (!isLikelyPortrait(file.name())) continue;
-            java.util.Optional<byte[]> content =
-                    graphSharePointService.downloadFile(basePath + "/" + file.name());
-            if (content.isPresent()) {
-                log.info("Photo du profil {} recuperee depuis SharePoint sous le nom '{}'",
-                        profileId, file.name());
-                cacheLocally(dir, file.name(), content.get());
-                return content.get();
-            }
-        }
-        return null;
+        byte[] content = graphSharePointService.downloadFile(basePath + "/" + remote.name())
+                .orElse(null);
+        if (content == null || content.length == 0) return null;
+
+        log.info("Photo du profil {} recuperee depuis SharePoint sous le nom '{}'",
+                profileId, remote.name());
+        return photoCache.write(profileId, remote.name(), remote.lastModified(), content);
     }
 
     /** Image extensions the photo endpoint can serve, matching the upload's own whitelist. */
@@ -741,18 +824,6 @@ public class EmployeeProfileService {
         return NON_PORTRAIT_HINTS.stream().noneMatch(lower::contains);
     }
 
-    private void cacheLocally(java.nio.file.Path dir, String sharePointFileName, byte[] content) {
-        try {
-            java.nio.file.Files.createDirectories(dir);
-            String ext = sharePointFileName.substring(sharePointFileName.lastIndexOf('.'));
-            java.nio.file.Path target = dir.resolve(java.util.UUID.randomUUID() + ext);
-            java.nio.file.Files.write(target, content);
-        } catch (java.io.IOException e) {
-            // Best-effort caching only — the caller already has the bytes to serve
-            // regardless of whether this local write succeeds.
-            log.warn("Could not cache SharePoint photo locally at {}: {}", dir, e.getMessage());
-        }
-    }
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
@@ -778,55 +849,32 @@ public class EmployeeProfileService {
      * already succeeded regardless of what happens in here. */
     private void mirrorPhotoToSharePoint(EmployeeProfile profile, String ext, byte[] bytes) {
         try {
-            EmployeeSharepointFolder folder =
-                    resolveEmployeeSharepointFolder(profile.getPaysId(), profile.getUserId());
-            if (folder == null) return;
+            var location = sharePointResolver.resolve(profile.getId(),
+                    com.daf360.rh.service.sharepoint.DocKind.PHOTO);
+            if (!location.isFound()) return;
 
-            String fixedFileName = "Photo" + ext;
-            String basePath = folder.locationTemplate().replace("{employeeFolder}", folder.employeeFolder());
+            String basePath = location.basePath();
             // Clean up any stale copy left by a PREVIOUS upload in a different format
             // (e.g. first upload was .jpg, this one is .png) — otherwise both files
-            // coexist forever, defeating the fixed-filename design goal and confusing
-            // Task 5's servePhoto self-heal (fixed jpg->png->webp probe order).
+            // coexist forever, defeating the fixed-filename design goal and leaving two
+            // candidates for the portrait picker to choose between.
             for (String otherExt : java.util.List.of(".jpg", ".png", ".webp")) {
                 if (!otherExt.equals(ext)) {
                     graphSharePointService.deleteFileIfExists(basePath + "/Photo" + otherExt);
                 }
             }
-
-            String sharepointUrl = graphSharePointService
-                    .uploadDocument(folder.locationTemplate(), folder.employeeFolder(), fixedFileName, bytes)
-                    .orElse(null);
-            profile.setPhotoSharepointUrl(sharepointUrl);
+            graphSharePointService.uploadToFolder(basePath, "Photo" + ext, bytes);
         } catch (Exception e) {
             log.warn("Échec du mirroring SharePoint de la photo pour profileId={}: {}",
                     profile.getId(), e.getMessage());
         }
     }
 
-    /**
-     * Where this employee's photo belongs, or null when the mirror must be skipped (no
-     * location for their country, no usable name, ambiguous name).
-     *
-     * <p>Now a thin delegate: the rules moved to {@link EmployeeFolderResolver#resolve} so
-     * the photo mirror and the document mirror share one implementation of "which countries
-     * are wired up" and "which employees are too ambiguous to file". The photo's own leaf
-     * folder is whatever {@code pays.photo_sharepoint_location} ends with, which is what
-     * {@code locationTemplate} still carries here.
-     */
-    private EmployeeSharepointFolder resolveEmployeeSharepointFolder(Long paysId, Long userId) {
-        String locationTemplate = jdbcTemplate.queryForObject(
-                "SELECT photo_sharepoint_location FROM [dbo].[pays] WHERE id = ?",
-                String.class, paysId);
-        if (locationTemplate == null || locationTemplate.isBlank()) return null;
-
-        EmployeeFolderResolver.EmployeeFolder folder = employeeFolderResolver.resolve(paysId, userId);
-        if (folder == null) return null;
-
-        return new EmployeeSharepointFolder(locationTemplate, folder.employeeFolder());
-    }
-
-    private record EmployeeSharepointFolder(String locationTemplate, String employeeFolder) {}
+    // resolveEmployeeSharepointFolder / EmployeeSharepointFolder used to live here: a third
+    // private copy of "where do this employee's files go", which re-queried
+    // pays.photo_sharepoint_location that EmployeeFolderResolver.resolve had just queried.
+    // Both are now SharePointResolver.resolve(profileId, DocKind.PHOTO), which additionally
+    // reports WHY it failed instead of returning a bare null.
 
     private EmployeeProfile findOrThrow(Long id) {
         return profileRepository.findById(id).orElseThrow(() ->

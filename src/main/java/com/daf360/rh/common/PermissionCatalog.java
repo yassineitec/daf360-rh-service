@@ -125,6 +125,15 @@ public final class PermissionCatalog {
     public static final String ADMIN_EVENTS            = "ADMIN_EVENTS";
     public static final String ADMIN_NOTIFICATIONS     = "ADMIN_NOTIFICATIONS";
 
+    /**
+     * Configure SharePoint document paths, and browse the site's folder tree to pick them.
+     *
+     * <p>Its own code rather than reusing HR_ADMIN_ROLES: whoever holds this can enumerate
+     * every employee folder on the HR site through the folder browser, which is a different
+     * capability from editing roles even though the same people happen to hold both today.
+     */
+    public static final String ADMIN_SHAREPOINT        = "ADMIN_SHAREPOINT";
+
     // ── Module Payroll (must stay in sync with daf360-payroll-service PermissionCatalog) ─
     public static final String PAYROLL_RUN_SIMULATION              = "PAYROLL_RUN_SIMULATION";
     public static final String PAYROLL_VIEW_INDIVIDUAL             = "PAYROLL_VIEW_INDIVIDUAL";
@@ -165,7 +174,7 @@ public final class PermissionCatalog {
         new PermGroup("Missions",            List.of(RH_CREATE_MISSION, RH_MANAGE_MISSION_BILLETERIE)),
         new PermGroup("Temps de travail",    List.of(ADMIN_REGIMES, ADMIN_BREAKS)),
         new PermGroup("Module IT",           List.of(IT_PROVISIONING, RH_MANAGE_IT_ASSETS)),
-        new PermGroup("Administration",      List.of(ADMIN_LISTS, ADMIN_NOTIFICATIONS, ADMIN_ROLES)),
+        new PermGroup("Administration",      List.of(ADMIN_LISTS, ADMIN_NOTIFICATIONS, ADMIN_ROLES, ADMIN_SHAREPOINT)),
         new PermGroup("Module Payroll",      List.of(
             PAYROLL_RUN_SIMULATION, PAYROLL_VIEW_INDIVIDUAL,
             PAYROLL_APPROVE_PARAMSET, PAYROLL_APPROVE_PARAMSET_FAST_TRACK,

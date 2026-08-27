@@ -142,4 +142,109 @@ class SharePointPathsTest {
         assertThat(DocumentFolderMapping.subfolderFor(" contract "))
                 .isEqualTo("Employment Contracts & Amendments");
     }
+
+    // ── fold: the accent case ─────────────────────────────────────────────────
+
+    /**
+     * The live tree holds "Kods CHÉRIF" accented, beside "Linda CHERIF" and "Yassine CHERIF"
+     * unaccented. Whichever spelling Users.fullName carries, one form would miss under a
+     * plain case-insensitive compare and her documents would be invisible with the folder
+     * sitting right there.
+     */
+    @Test
+    void sameSegment_matchesFoldersThatDifferOnlyByAccents() {
+        assertThat(SharePointPaths.sameSegment("Kods CHÉRIF", "Kods CHERIF")).isTrue();
+        assertThat(SharePointPaths.sameSegment("Kods CHERIF", "Kods CHÉRIF")).isTrue();
+        assertThat(SharePointPaths.sameSegment("José  MARTÍNEZ", "Jose MARTINEZ")).isTrue();
+    }
+
+    /**
+     * Folding is a canonical transform, not a similarity measure — and this is the assertion
+     * that keeps it one. "Bilel ZEDINI" is a real folder and "Bilel ZEDDINI" is one deletion
+     * away from it; so is any number of genuinely different surnames. Matching them would
+     * mean serving one employee another's payslips.
+     */
+    @Test
+    void fold_doesNotBecomeFuzzyMatching() {
+        assertThat(SharePointPaths.sameSegment("Bilel ZEDINI", "Bilel ZEDDINI")).isFalse();
+        assertThat(SharePointPaths.sameSegment("Bilel HAMMAMI", "Baha HAMMAMI")).isFalse();
+        assertThat(SharePointPaths.sameSegment("Mariem GRAJA", "Mariem GANOUN")).isFalse();
+    }
+
+    @Test
+    void fold_collapsesSpacingAndStripsMarksAndSurvivesNulls() {
+        assertThat(SharePointPaths.fold("  Abir   ESSAYEM ")).isEqualTo("Abir ESSAYEM");
+        assertThat(SharePointPaths.fold("CHÉRIF")).isEqualTo("CHERIF");
+        assertThat(SharePointPaths.fold(null)).isEmpty();
+        assertThat(SharePointPaths.fold("   ")).isEmpty();
+    }
+
+    // ── stripFrom: the year-folder base ───────────────────────────────────────
+
+    /**
+     * A year-scoped kind cannot be existence-checked at its full path: the folder for the
+     * current year may legitimately not exist yet. The folder that must exist is the one
+     * holding the year folders.
+     */
+    @Test
+    void stripFrom_returnsTheFolderHoldingTheYearFolders() {
+        String payslip = "Tunisia/01_HR/03_Payroll-Admin/Bilel ZEDINI/01_Pay-Slip/{year}";
+        assertThat(SharePointPaths.stripFrom(payslip, SharePointPaths.YEAR_TOKEN))
+                .isEqualTo("Tunisia/01_HR/03_Payroll-Admin/Bilel ZEDINI/01_Pay-Slip");
+    }
+
+    /** A flat kind carries no year token, so its base path is the path itself. */
+    @Test
+    void stripFrom_leavesAPathWithoutTheTokenUntouched() {
+        assertThat(SharePointPaths.stripFrom(TN_PHOTO, SharePointPaths.YEAR_TOKEN))
+                .isEqualTo(TN_PHOTO);
+        assertThat(SharePointPaths.stripFrom(null, SharePointPaths.YEAR_TOKEN)).isNull();
+    }
+
+    // ── isSafeRelativePath: the folder browser's only guard ───────────────────
+
+    /**
+     * The browser interpolates a client-supplied path into a Graph URL with reach over the
+     * whole HR site, so this is the assertion that keeps that endpoint from being a directory
+     * traversal into somebody else's documents.
+     */
+    @Test
+    void isSafeRelativePath_acceptsOrdinaryPathsAndTheRoot() {
+        assertThat(SharePointPaths.isSafeRelativePath("")).isTrue();       // drive root
+        assertThat(SharePointPaths.isSafeRelativePath(null)).isTrue();
+        assertThat(SharePointPaths.isSafeRelativePath("Tunisia")).isTrue();
+        assertThat(SharePointPaths.isSafeRelativePath("Tunisia/01_HR/03_Payroll-Admin")).isTrue();
+        // Real folder names in the tree: accents, ampersands, interior spaces and even the
+        // double space in "Abir  ESSAYEM" are all legitimate and must pass.
+        assertThat(SharePointPaths.isSafeRelativePath(
+                "Tunisia/01_HR/01_Contracts-Employment/Kods CHÉRIF")).isTrue();
+        assertThat(SharePointPaths.isSafeRelativePath(
+                "Tunisia/01_HR/01_Contracts-Employment/Abir  ESSAYEM")).isTrue();
+        assertThat(SharePointPaths.isSafeRelativePath(
+                "Tunisia/x/Employment Contracts & Amendments")).isTrue();
+    }
+
+    @Test
+    void isSafeRelativePath_rejectsTraversal() {
+        assertThat(SharePointPaths.isSafeRelativePath("..")).isFalse();
+        assertThat(SharePointPaths.isSafeRelativePath("Tunisia/../Egypt")).isFalse();
+        assertThat(SharePointPaths.isSafeRelativePath("Tunisia/./01_HR")).isFalse();
+    }
+
+    @Test
+    void isSafeRelativePath_rejectsSeparatorTricks() {
+        assertThat(SharePointPaths.isSafeRelativePath("/Tunisia")).isFalse();
+        assertThat(SharePointPaths.isSafeRelativePath("Tunisia/")).isFalse();
+        assertThat(SharePointPaths.isSafeRelativePath("Tunisia//01_HR")).isFalse();
+        assertThat(SharePointPaths.isSafeRelativePath("Tunisia\\01_HR")).isFalse();
+        // A colon would end the Graph path segment early and re-target the request.
+        assertThat(SharePointPaths.isSafeRelativePath("Tunisia:/children")).isFalse();
+    }
+
+    @Test
+    void isSafeRelativePath_rejectsControlCharactersAndPaddedSegments() {
+        assertThat(SharePointPaths.isSafeRelativePath("Tunisia/ 01_HR")).isFalse();
+        assertThat(SharePointPaths.isSafeRelativePath("Tunisia/01_HR ")).isFalse();
+        assertThat(SharePointPaths.isSafeRelativePath("Tunisia/01\n_HR")).isFalse();
+    }
 }
