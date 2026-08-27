@@ -55,6 +55,7 @@ public class SharePointAdminController {
     private final SharePointLocationService locationService;
     private final SharePointAdminService adminService;
     private final GraphSharePointService graph;
+    private final com.daf360.rh.service.photo.ProfilePhotoWarmupService photoWarmup;
 
     // ── DTOs ──────────────────────────────────────────────────────────────────
 
@@ -211,6 +212,15 @@ public class SharePointAdminController {
         if (kind.isEmpty()) return ResponseEntity.badRequest().build();
 
         List<SharePointResolver.BatchRow> rows = resolver.resolveAll(kind.get(), force);
+
+        // Knowing WHERE the photo is does not put it on the page: the bytes are still fetched
+        // lazily on first view, two Graph calls deep, and photo_url stays NULL so the frontend
+        // never asks. Warming follows the resolve for PHOTO, in the BACKGROUND — a hundred
+        // sequential downloads outlive any reverse-proxy read timeout, and the admin needs the
+        // resolve verdict now, not in three minutes.
+        if (kind.get() == DocKind.PHOTO) {
+            photoWarmup.warmInBackground("resolution admin");
+        }
         Map<String, Long> byStatus = rows.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
                         r -> r.status().name(), java.util.stream.Collectors.counting()));

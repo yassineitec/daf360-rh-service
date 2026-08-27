@@ -277,8 +277,14 @@ public class EmployeeProfileController {
      * Serve the profile photo — PUBLIC (no auth required, img tags can't send JWT).
      */
     @GetMapping("/{id}/photo")
-    public ResponseEntity<byte[]> servePhoto(@PathVariable Long id) {
-        byte[] bytes = profileService.servePhoto(id);
+    public ResponseEntity<byte[]> servePhoto(
+            @PathVariable Long id,
+            @RequestParam(required = false) String size) {
+        // size=sm serves the 128px variant. The cache keeps 512px, which is 4x what the grid's
+        // 112px circle shows and 16x the annuaire's 32px one — twelve of those is most of what
+        // the profiles page downloads. Any other value (including none) means full size, so an
+        // old client or a typo degrades to the previous behaviour rather than to no avatar.
+        byte[] bytes = profileService.servePhoto(id, "sm".equalsIgnoreCase(size));
         if (bytes == null || bytes.length == 0) {
             // `photo_url` is set on plenty of profiles whose file is missing from storage,
             // so this 404 is hit constantly — once per avatar, per render. An uncached 404

@@ -633,8 +633,23 @@ public class EmployeeProfileService {
     // still check out and release their own short-lived connection per call.
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public byte[] servePhoto(Long profileId) {
+        return servePhoto(profileId, false);
+    }
+
+    /**
+     * As {@link #servePhoto(Long)}, optionally serving the small list variant.
+     *
+     * <p>{@code small} changes only which cached file is returned — never what is fetched or
+     * revalidated. Both variants are written by the same {@code photoCache.write}, so a list
+     * request warms the detail page's copy too and the two can never disagree about whose face
+     * is whose.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public byte[] servePhoto(Long profileId, boolean small) {
         try {
-            java.util.Optional<byte[]> cached = photoCache.read(profileId);
+            java.util.Optional<byte[]> cached = small
+                    ? photoCache.readSmall(profileId)
+                    : photoCache.read(profileId);
             if (cached.isPresent()) {
                 // The cached copy used to be trusted forever, which meant a photo replaced in
                 // SharePoint never appeared — the cache had silently become the source of
@@ -642,19 +657,77 @@ public class EmployeeProfileService {
                 // one Graph call a day per employee, not one per avatar.
                 if (photoCache.needsRevalidation(profileId)) {
                     byte[] refreshed = revalidatePhoto(profileId);
-                    if (refreshed != null) return refreshed;
+                    // Re-read rather than return `refreshed`: both fetch paths hand back the
+                    // FULL-SIZE bytes they just cached, so returning them directly would send
+                    // a 512px image to a 32px annuaire cell on exactly the requests that
+                    // happened to refresh. The variant is on disk by now.
+                    if (refreshed != null) {
+                        return small ? photoCache.readSmall(profileId).orElse(refreshed) : refreshed;
+                    }
                 }
                 return cached.get();
             }
 
             // Nothing cached — resolve and fetch from SharePoint, then cache for next time.
-            return fetchAndCachePhotoFromSharePoint(profileId);
+            byte[] fetched = fetchAndCachePhotoFromSharePoint(profileId);
+            if (fetched == null) return null;
+            return small ? photoCache.readSmall(profileId).orElse(fetched) : fetched;
 
         } catch (Exception e) {
             // Exception, not IOException: see the class-level note above.
             log.warn("Cannot serve photo for profile {}: {}: {}",
                     profileId, e.getClass().getSimpleName(), e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Caches one employee's photo now, off the request path, and stamps {@code photo_url}.
+     *
+     * <p>Two problems, one method. The first is latency: the profiles page used to pay two Graph
+     * round-trips per avatar inside the request, twelve at a time, so the cards rendered and the
+     * faces trickled in afterwards. The second is worse and silent — the frontend gates the
+     * avatar on {@code photo_url} being non-null ({@code EmployeeAvatarDto} documents it as a
+     * presence flag), and nothing wrote that column for a photo dropped into SharePoint by hand.
+     * 95 of 101 profiles had it NULL, so the endpoint that would have served their face was
+     * never called at all. Fetching without stamping would keep them invisible; stamping
+     * without fetching would make the page slow. Both, or neither.
+     *
+     * @return true when a photo is cached for this profile afterwards
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public boolean cachePhotoNow(Long profileId) {
+        if (photoCache.has(profileId)) {
+            stampPhotoUrlIfAbsent(profileId);
+            return true;
+        }
+        try {
+            byte[] bytes = fetchAndCachePhotoFromSharePoint(profileId);
+            if (bytes == null || bytes.length == 0) return false;
+            stampPhotoUrlIfAbsent(profileId);
+            return true;
+        } catch (Exception e) {
+            log.debug("Prechargement de la photo {} impossible: {}", profileId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Stamps {@code photo_url} only when it is NULL.
+     *
+     * <p>Not {@link #stampPhotoUrl}, which rewrites the version token: that token is what busts
+     * a browser's seven-day cache, and bumping it on every warmup pass would make every client
+     * re-download every avatar each time the pass runs. An absent value is a bug to fix; a
+     * present one is already correct.
+     */
+    private void stampPhotoUrlIfAbsent(Long profileId) {
+        try {
+            jdbcTemplate.update(
+                    "UPDATE [dbo].[employee_profiles] SET photo_url = ? " +
+                    "WHERE id = ? AND photo_url IS NULL",
+                    photoUrlFor(profileId), profileId);
+        } catch (Exception e) {
+            log.debug("photo_url non renseigne pour le profil {}: {}", profileId, e.getMessage());
         }
     }
 

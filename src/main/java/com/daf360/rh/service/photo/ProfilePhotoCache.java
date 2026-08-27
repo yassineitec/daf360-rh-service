@@ -54,6 +54,17 @@ public class ProfilePhotoCache {
      *  bytes of the originals HR uploads. */
     private static final int MAX_EDGE = 512;
 
+    /** Longest edge of the list variant. The grid card renders a 112px circle and the annuaire
+     *  a 32px one, so 512px is 4-16x more pixels than any list surface can show — and twelve
+     *  of them is the bulk of what the profiles page downloads. 128 covers both at 2x DPR. */
+    private static final int SMALL_EDGE = 128;
+
+    /** Subdirectory holding the list variant. A SUBDIRECTORY rather than a name prefix because
+     *  {@link #read} serves the newest photo in the profile directory: a thumbnail sitting
+     *  beside the master would win that comparison half the time and silently downgrade the
+     *  detail page. {@code Files.list} does not recurse, so the two cannot collide. */
+    private static final String SMALL_DIR = "sm";
+
     /** How often the cached copy is compared against SharePoint. A day: a photo corrected in
      *  SharePoint appears the same working day, and an unchanged one costs one call. */
     private static final Duration REVALIDATE_AFTER = Duration.ofHours(24);
@@ -78,6 +89,34 @@ public class ProfilePhotoCache {
         } catch (Exception e) {
             log.warn("Cache photo illisible pour le profil {}: {}", profileId, e.getMessage());
             return Optional.empty();
+        }
+    }
+
+    /**
+     * The list variant, falling back to the full-size copy when there is none.
+     *
+     * <p>The fallback is what makes this safe to deploy over an existing cache: entries written
+     * before {@link #SMALL_DIR} existed have no thumbnail, and the alternative to serving their
+     * master copy is a blank avatar until something happens to rewrite them. A warmup pass or
+     * the next revalidation fills the variant in.
+     */
+    public Optional<byte[]> readSmall(Long profileId) {
+        try {
+            Path file = newestPhoto(directory(profileId).resolve(SMALL_DIR));
+            if (file != null) return Optional.of(Files.readAllBytes(file));
+        } catch (Exception e) {
+            log.debug("Vignette illisible pour le profil {}: {}", profileId, e.getMessage());
+        }
+        return read(profileId);
+    }
+
+    /** Whether a photo is cached, without reading it. For the warmup pass, which asks this
+     *  once per employee and must not pull ~100 files off disk to answer it. */
+    public boolean has(Long profileId) {
+        try {
+            return newestPhoto(directory(profileId)) != null;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -162,6 +201,7 @@ public class ProfilePhotoCache {
             } catch (IOException mtimeUnsupported) {
                 log.debug("Horodatage non applique sur {}: {}", target, mtimeUnsupported.getMessage());
             }
+            writeSmall(dir, stored, remoteFileName, stamp);
             markChecked(profileId);
         } catch (IOException e) {
             // Best-effort: the caller already holds the bytes and can serve them regardless.
@@ -176,6 +216,9 @@ public class ProfilePhotoCache {
             Path dir = directory(profileId);
             if (!Files.isDirectory(dir)) return;
             deletePhotos(dir);
+            // The variant too, or readSmall keeps serving the old face from sm/ after the
+            // master is gone — a cleared cache that still shows the previous photo.
+            deletePhotos(dir.resolve(SMALL_DIR));
             Files.deleteIfExists(dir.resolve(CHECK_MARKER));
         } catch (IOException e) {
             log.warn("Cache photo non vide pour le profil {}: {}", profileId, e.getMessage());
@@ -203,6 +246,35 @@ public class ProfilePhotoCache {
                         catch (IOException e) { return 0L; }
                     }))
                     .orElse(null);
+        }
+    }
+
+    /**
+     * Writes the list variant beside the master, best-effort.
+     *
+     * <p>Silent when {@link #shrink} could not do better than its input — it returns the very
+     * same array in that case (a WebP, or an image already smaller than the target), and a
+     * byte-identical second copy would cost disk for nothing. {@link #readSmall} falls back to
+     * the master copy, so "no thumbnail" degrades to "slightly larger download", never to a
+     * missing avatar. Never throws: the master photo is already written and servable.
+     */
+    private void writeSmall(Path profileDir, byte[] stored, String remoteFileName, Instant stamp) {
+        byte[] small = shrink(stored, remoteFileName, SMALL_EDGE);
+        if (small == stored) return;
+        try {
+            Path dir = profileDir.resolve(SMALL_DIR);
+            Files.createDirectories(dir);
+            deletePhotos(dir);
+            Path target = dir.resolve(UUID.randomUUID() + extensionOf(remoteFileName));
+            Files.write(target, small);
+            try {
+                Files.setLastModifiedTime(target, FileTime.from(stamp));
+            } catch (IOException mtimeUnsupported) {
+                log.debug("Horodatage non applique sur la vignette {}: {}",
+                        target, mtimeUnsupported.getMessage());
+            }
+        } catch (IOException e) {
+            log.debug("Vignette non ecrite sous {}: {}", profileDir, e.getMessage());
         }
     }
 
@@ -244,6 +316,13 @@ public class ProfilePhotoCache {
      * failed would blank the avatar, so every failure path here keeps the original bytes.
      */
     private byte[] shrink(byte[] content, String fileName) {
+        return shrink(content, fileName, MAX_EDGE);
+    }
+
+    /** As {@link #shrink(byte[], String)}, to an explicit longest edge — {@link #SMALL_EDGE}
+     *  for the list variant. Same contract: the input array is returned, by reference, whenever
+     *  it cannot do better, which is how callers detect "no variant worth storing". */
+    private byte[] shrink(byte[] content, String fileName, int maxEdge) {
         if (content == null || content.length == 0) return content;
         String ext = extensionOf(fileName);
         if (ext.equals(".webp")) return content; // no reader in the JDK
@@ -253,9 +332,9 @@ public class ProfilePhotoCache {
             if (source == null) return content;
 
             int longest = Math.max(source.getWidth(), source.getHeight());
-            if (longest <= MAX_EDGE) return content;
+            if (longest <= maxEdge) return content;
 
-            double scale = (double) MAX_EDGE / longest;
+            double scale = (double) maxEdge / longest;
             int w = Math.max(1, (int) Math.round(source.getWidth()  * scale));
             int h = Math.max(1, (int) Math.round(source.getHeight() * scale));
 
