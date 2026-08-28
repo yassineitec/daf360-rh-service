@@ -420,24 +420,148 @@ public class GraphSharePointService {
      * avatar 404'd with the file sitting right there.
      */
     public java.util.List<RemoteFile> listFiles(String folderPath) {
-        if (!isConfigured()) return java.util.List.of();
+        return listFilesOrFail(folderPath).orElseGet(java.util.List::of);
+    }
+
+    /**
+     * As {@link #listFiles}, but able to say "I could not look".
+     *
+     * <p>{@code Optional.empty()} means the question was not answered — SharePoint unconfigured,
+     * auth or network failure, folder absent. An EMPTY LIST means it was answered and the folder
+     * holds no files.
+     *
+     * <p>That distinction exists because of one decision it enables: deleting a cached photo when
+     * the employee's folder no longer contains one. {@link #listFiles} collapses both cases into
+     * an empty list, and a caller that cleared its cache on that could throw away a good photo
+     * because Graph had a bad minute — strictly worse than serving a stale one. Only a caller
+     * that can tell the two apart may delete.
+     */
+    public java.util.Optional<java.util.List<RemoteFile>> listFilesOrFail(String folderPath) {
+        if (!isConfigured()) return java.util.Optional.empty();
         try {
             String token  = getAccessToken();
             String siteId = getSiteId(token);
             String resolved = resolveLeniently(token, siteId, folderPath);
-            return listChildren(token, siteId, resolved).stream()
+            // The folder itself must be there. Without this check a missing folder returns an
+            // empty children list, which would read as "answered: no files" — the very
+            // confusion this method exists to remove.
+            if (!folderExists(token, siteId, resolved)) return java.util.Optional.empty();
+            return java.util.Optional.of(listChildren(token, siteId, resolved).stream()
                     .filter(item -> item.folder() == null && item.name() != null)
+                    // Newest first. This ordering is load-bearing, not cosmetic: the caller takes
+                    // the first qualifying entry, which is how "the last photo uploaded to
+                    // SharePoint wins" is implemented.
                     .sorted(java.util.Comparator.comparing(
                             ChildItem::lastModifiedDateTime,
                             java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder())))
                     .map(item -> new RemoteFile(item.name(), item.lastModifiedDateTime(),
                             item.size(), item.webUrl()))
-                    .toList();
+                    .toList());
         } catch (Exception e) {
             log.warn("Échec du listage SharePoint de {}: {}", folderPath, e.getMessage());
-            return java.util.List.of();
+            return java.util.Optional.empty();
         }
     }
+
+    // ── Delta: what changed on the drive ──────────────────────────────────────
+
+    /**
+     * One item Graph reports as changed.
+     *
+     * @param parentPath the raw {@code parentReference.path}, e.g.
+     *                   {@code /drive/root:/Tunisia/01_HR/.../Identity Documents}. Kept verbatim
+     *                   rather than cleaned here: the caller matches employee folder segments
+     *                   against it, and every transformation is a chance to lose a segment.
+     * @param deleted    true when the item is gone. Graph reports a deletion as a normal change
+     *                   carrying a {@code deleted} facet, so this is the only way to tell a
+     *                   removal from an edit.
+     */
+    public record DeltaChange(String name, String parentPath, boolean deleted, boolean isFolder) {}
+
+    /**
+     * @param nextDeltaLink the URL to call next time — PERSIST IT. Without it the next call
+     *                      re-enumerates the whole drive and every item reads as changed.
+     */
+    public record DeltaResult(java.util.List<DeltaChange> changes, String nextDeltaLink) {}
+
+    /**
+     * Everything that changed on the site drive since {@code deltaLink}.
+     *
+     * <p>This is the one call that scales: it answers for the WHOLE drive, so its cost is
+     * independent of how many employees exist. Polling one folder per employee — the obvious
+     * alternative — is 2 Graph calls per person per check, which is a 429 waiting to happen on
+     * any list view.
+     *
+     * <p>Pass null on the very first run to start an enumeration. Graph then walks the entire
+     * drive across {@code @odata.nextLink} pages before handing back a delta link; the caller
+     * must treat that first result as "baseline", NOT as "all of this just changed", or a cold
+     * start would invalidate every cached photo at once.
+     *
+     * <p>Empty Optional on any failure, including the expired-token case ({@code 410 Gone}),
+     * which the caller answers by clearing its stored link and starting over.
+     */
+    public java.util.Optional<DeltaResult> delta(String deltaLink) {
+        if (!isConfigured()) return java.util.Optional.empty();
+        try {
+            String token  = getAccessToken();
+            String siteId = getSiteId(token);
+            String url = deltaLink != null && !deltaLink.isBlank()
+                    ? deltaLink
+                    : GRAPH_BASE + "/sites/" + siteId + "/drive/root/delta"
+                      + "?$select=name,parentReference,deleted,folder,file&$top=200";
+
+            java.util.List<DeltaChange> changes = new java.util.ArrayList<>();
+            String next = null;
+            while (url != null) {
+                DeltaResponse page = restClient.get()
+                        .uri(url)
+                        .header("Authorization", "Bearer " + token)
+                        .retrieve()
+                        .body(DeltaResponse.class);
+                if (page == null) break;
+                if (page.value() != null) {
+                    for (DeltaItem item : page.value()) {
+                        if (item.name() == null) continue;
+                        changes.add(new DeltaChange(
+                                item.name(),
+                                item.parentReference() == null ? null : item.parentReference().path(),
+                                item.deleted() != null,
+                                item.folder() != null));
+                    }
+                }
+                if (page.deltaLink() != null) {
+                    next = page.deltaLink();
+                    url  = null;                  // end of this run
+                } else {
+                    url = page.nextLink();        // more pages of the same run
+                }
+            }
+            return java.util.Optional.of(new DeltaResult(changes, next));
+
+        } catch (HttpClientErrorException.Gone expiredToken) {
+            // Graph invalidates a delta link that has fallen too far behind. Surfaced as a
+            // failure so the caller drops the link and re-baselines rather than retrying a URL
+            // that can never work again.
+            log.warn("Jeton delta SharePoint expire (410) — reenumeration necessaire");
+            return java.util.Optional.empty();
+        } catch (Exception e) {
+            log.warn("Echec de la synchro delta SharePoint: {}", e.getMessage());
+            return java.util.Optional.empty();
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record DeltaResponse(
+            java.util.List<DeltaItem> value,
+            @JsonProperty("@odata.nextLink")  String nextLink,
+            @JsonProperty("@odata.deltaLink") String deltaLink) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record DeltaItem(String name, ParentRef parentReference,
+                             Map<String, Object> deleted, Map<String, Object> folder) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record ParentRef(String path) {}
 
     /** One file in a SharePoint folder. {@code lastModified} is the raw ISO-8601 Graph value. */
     /**

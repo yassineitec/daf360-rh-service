@@ -637,6 +637,51 @@ public class EmployeeProfileService {
     }
 
     /**
+     * Re-reads one employee's photo from SharePoint now, whatever the cache says.
+     *
+     * <p>The primitive behind both "this folder changed" (delta sync) and the detail page's
+     * always-current avatar. Distinct from {@link #cachePhotoNow}, which is a warmup and skips
+     * anything already cached: this one deliberately discards what it has, because the whole
+     * premise is that the cached copy is known to be out of date.
+     *
+     * <p>Bumps the {@code photo_url} token on success — that is what makes the change visible to
+     * a browser holding the previous image, and the reason this cannot be a plain cache eviction.
+     *
+     * @return true when a photo is cached afterwards
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public boolean refreshPhotoFromSharePoint(Long profileId) {
+        try {
+            photoCache.clear(profileId);
+            byte[] bytes = fetchAndCachePhotoFromSharePoint(profileId);
+            if (bytes == null || bytes.length == 0) {
+                // Nothing there any more: drop the flag so lists fall back to initials instead
+                // of requesting a 404 per render.
+                clearPhotoUrl(profileId);
+                return false;
+            }
+            stampPhotoUrl(profileId);
+            return true;
+        } catch (Exception e) {
+            log.warn("Rafraichissement de la photo {} impossible: {}", profileId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * The entity tag for a cached photo, for conditional requests.
+     *
+     * <p>Deliberately does NOT resolve or fetch anything: a conditional request must be answerable
+     * without touching Graph, or the 304 path would cost more than the download it saves. Empty
+     * when nothing is cached yet, in which case the caller answers unconditionally and the fetch
+     * happens on the normal path.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public java.util.Optional<String> photoEtag(Long profileId, boolean small) {
+        return photoCache.etag(profileId, small);
+    }
+
+    /**
      * As {@link #servePhoto(Long)}, optionally serving the small list variant.
      *
      * <p>{@code small} changes only which cached file is returned — never what is fetched or
@@ -720,6 +765,22 @@ public class EmployeeProfileService {
      * re-download every avatar each time the pass runs. An absent value is a bug to fix; a
      * present one is already correct.
      */
+    /**
+     * Clears {@code photo_url}, so every list stops offering a photo that no longer exists.
+     *
+     * <p>The column is a presence flag for the frontend ({@code EmployeeAvatarDto} documents it):
+     * leaving it set after a deletion means every avatar render requests the endpoint, gets a 404
+     * and falls back to initials — the right picture, by the most expensive route available.
+     */
+    private void clearPhotoUrl(Long profileId) {
+        try {
+            jdbcTemplate.update(
+                    "UPDATE [dbo].[employee_profiles] SET photo_url = NULL WHERE id = ?", profileId);
+        } catch (Exception e) {
+            log.debug("photo_url non efface pour le profil {}: {}", profileId, e.getMessage());
+        }
+    }
+
     private void stampPhotoUrlIfAbsent(Long profileId) {
         try {
             jdbcTemplate.update(
@@ -747,8 +808,35 @@ public class EmployeeProfileService {
                     com.daf360.rh.service.sharepoint.DocKind.PHOTO);
             if (!location.isFound()) return null;
 
-            GraphSharePointService.RemoteFile remote = bestPortrait(location.basePath());
-            if (remote == null || !photoCache.remoteIsNewer(profileId, remote.lastModified())) {
+            // listFilesOrFail, not listFiles: an empty Optional means "could not look" and an
+            // empty list means "looked, nothing there". Clearing the cache on the first would
+            // discard a good photo because Graph had a bad minute; clearing on the second is the
+            // only way a deletion in SharePoint ever reaches the app.
+            var listing = graphSharePointService.listFilesOrFail(location.basePath());
+            if (listing.isEmpty()) {
+                log.debug("Dossier photo du profil {} illisible — copie en cache conservee", profileId);
+                return null;
+            }
+
+            GraphSharePointService.RemoteFile remote = bestPortrait(listing.get(), location.basePath());
+            if (remote == null) {
+                // The folder was read and holds no usable portrait: the photo was DELETED (or
+                // renamed to something the filter rejects). Until now this was indistinguishable
+                // from "nothing newer", so the cached copy was served for ever — a photo removed
+                // on purpose, e.g. because an employee withdrew consent, stayed visible
+                // indefinitely. Drop the cache and the flag together, so lists fall back to
+                // initials instead of requesting a 404 per render.
+                if (photoCache.has(profileId)) {
+                    log.info("Photo du profil {} supprimee de SharePoint — cache local vide", profileId);
+                    photoCache.clear(profileId);
+                    clearPhotoUrl(profileId);
+                    // markChecked was cleared with the directory; re-stamp it so a folder that
+                    // legitimately has no photo is not re-probed on every single render.
+                    photoCache.markChecked(profileId);
+                }
+                return null;
+            }
+            if (!photoCache.remoteIsNewer(profileId, remote.lastModified())) {
                 return null;
             }
             byte[] content = graphSharePointService
@@ -779,12 +867,27 @@ public class EmployeeProfileService {
      * names that look like an identity-document scan.
      */
     private GraphSharePointService.RemoteFile bestPortrait(String basePath) {
-        java.util.List<GraphSharePointService.RemoteFile> files =
-                graphSharePointService.listFiles(basePath);
+        return bestPortrait(graphSharePointService.listFiles(basePath), basePath);
+    }
+
+    /**
+     * The portrait to use out of an already-fetched listing: the MOST RECENTLY MODIFIED one that
+     * qualifies.
+     *
+     * <p>Newest wins, full stop. This used to prefer our own mirror's fixed {@code Photo.jpg}
+     * name over anything else, which meant a newer portrait dropped into the folder by hand was
+     * ignored in favour of an older app-uploaded one — the app's copy outranked reality. Since
+     * an upload through the app also produces the newest file, preferring recency subsumes the
+     * old rule instead of contradicting it.
+     *
+     * <p>The listing arrives newest-first from {@code listFilesOrFail}, so this is the first
+     * qualifying entry.
+     */
+    private GraphSharePointService.RemoteFile bestPortrait(
+            java.util.List<GraphSharePointService.RemoteFile> files, String basePath) {
         GraphSharePointService.RemoteFile best = files.stream()
                 .filter(f -> isLikelyPortrait(f.name()))
-                .min(java.util.Comparator.comparingInt(
-                        f -> f.name().toLowerCase(java.util.Locale.ROOT).startsWith("photo.") ? 0 : 1))
+                .findFirst()
                 .orElse(null);
 
         // Name what was actually there when nothing qualified. Without this the caller can

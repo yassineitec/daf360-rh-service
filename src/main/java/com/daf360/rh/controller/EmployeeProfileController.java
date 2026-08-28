@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.*;
 
 import com.daf360.rh.dto.absence.LeaveBalanceDto;
@@ -31,6 +32,7 @@ public class EmployeeProfileController {
 
     private final EmployeeProfileService profileService;
     private final AbsenceService         absenceService;
+    private final com.daf360.rh.service.sharepoint.SharePointDeltaService deltaSync;
 
     /**
      * POST /api/hr/profiles
@@ -69,6 +71,11 @@ public class EmployeeProfileController {
         filter.setGrade(grade);
         filter.setContract(contract);
         filter.setSearch(search);
+
+        // Ask SharePoint what changed, at most once every 30s across the whole platform and
+        // always on a background thread — no request waits for it. One Graph call covers every
+        // employee, so this is what keeps a list within seconds of the tree instead of 24h.
+        deltaSync.syncIfStale();
 
         Page<EmployeeProfileSummaryDto> page = profileService.listProfiles(filter, pageable);
         return ResponseEntity.ok(PageResponse.from(page));
@@ -185,6 +192,9 @@ public class EmployeeProfileController {
         filter.setHireDateFrom(hireDateFrom);
         filter.setHireDateTo(hireDateTo);
 
+        // Same background delta check as the paginated list above: this is the endpoint the
+        // profiles grid and the annuaire actually call.
+        deltaSync.syncIfStale();
         return ResponseEntity.ok(profileService.listAllEmployees(filter, pageable));
     }
 
@@ -279,21 +289,54 @@ public class EmployeeProfileController {
     @GetMapping("/{id}/photo")
     public ResponseEntity<byte[]> servePhoto(
             @PathVariable Long id,
-            @RequestParam(required = false) String size) {
+            @RequestParam(required = false) String size,
+            @RequestParam(required = false) Boolean fresh,
+            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
+
+        boolean small = "sm".equalsIgnoreCase(size);
+
+        // fresh=1 re-reads SharePoint for THIS employee, ignoring the 24h revalidation window.
+        // Affordable because it is one person: 2 Graph calls, on an image request that loads
+        // asynchronously and blocks nothing. The detail page uses it so the profile you are
+        // actually looking at is never stale. A LIST must never pass it — twelve avatars would
+        // be 24 Graph calls per page view, which is what the delta sync exists to avoid.
+        if (Boolean.TRUE.equals(fresh)) {
+            profileService.refreshPhotoFromSharePoint(id);
+        }
+
+        // ── Conditional request: answer 304 before doing any work ─────────────────────────
+        // This response used to advertise max-age=7d, which is OPAQUE caching: within a week a
+        // browser did not even ask, so a replaced photo stayed invisible on every machine that
+        // had loaded the old one — and the only escape was the ?v= token in photo_url, which any
+        // caller that rebuilt the URL by hand silently dropped (two of them did).
+        //
+        // Validation-based caching removes the whole class of bug: browsers always ask, and an
+        // unchanged photo costs a few hundred bytes of 304 instead of an image. A change is then
+        // visible to EVERY user on their next page load, with no token and no deploy involved.
+        String etag = profileService.photoEtag(id, small).orElse(null);
+        if (etag != null && ifNoneMatch != null && matchesEtag(ifNoneMatch, etag)) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.NOT_MODIFIED)
+                    .eTag(etag)
+                    .cacheControl(org.springframework.http.CacheControl.noCache())
+                    .build();
+        }
         // size=sm serves the 128px variant. The cache keeps 512px, which is 4x what the grid's
         // 112px circle shows and 16x the annuaire's 32px one — twelve of those is most of what
         // the profiles page downloads. Any other value (including none) means full size, so an
         // old client or a typo degrades to the previous behaviour rather than to no avatar.
-        byte[] bytes = profileService.servePhoto(id, "sm".equalsIgnoreCase(size));
+        byte[] bytes = profileService.servePhoto(id, small);
         if (bytes == null || bytes.length == 0) {
-            // `photo_url` is set on plenty of profiles whose file is missing from storage,
-            // so this 404 is hit constantly — once per avatar, per render. An uncached 404
-            // is re-requested every single time, which is why the console fills with them.
-            // Caching the negative answer costs nothing and stops the hammering; a real
-            // upload rewrites photo_url, so the URL changes and the cache is bypassed.
+            // `photo_url` is set on plenty of profiles whose file is missing from storage, so
+            // this 404 is hit constantly — once per avatar, per render — and an uncached 404 is
+            // re-requested every single time, which is what filled the console.
+            //
+            // 60 SECONDS, not the hour this used to be: the hour also hid a photo that had just
+            // been added, on every browser that happened to ask first, which is the same
+            // staleness the ETag above exists to eliminate. A minute still absorbs the render
+            // storm (the point of caching it at all) without making a new photo wait.
             return ResponseEntity.notFound()
                     .cacheControl(org.springframework.http.CacheControl
-                            .maxAge(1, java.util.concurrent.TimeUnit.HOURS))
+                            .maxAge(60, java.util.concurrent.TimeUnit.SECONDS))
                     .build();
         }
         // Detect content type from first bytes (magic numbers)
@@ -301,9 +344,35 @@ public class EmployeeProfileController {
         if (bytes.length > 3 && bytes[0] == (byte) 0x89 && bytes[1] == (byte) 0x50) {
             mediaType = MediaType.IMAGE_PNG;
         }
-        return ResponseEntity.ok()
+        ResponseEntity.BodyBuilder ok = ResponseEntity.ok()
                 .contentType(mediaType)
-                .cacheControl(org.springframework.http.CacheControl.maxAge(7, java.util.concurrent.TimeUnit.DAYS))
-                .body(bytes);
+                // noCache = "you may keep it, but ask before reusing it". Paired with the ETag,
+                // that ask is answered by a 304 in the common case, so this is cheaper than it
+                // looks: the bytes cross the wire only when the photo has actually changed.
+                .cacheControl(org.springframework.http.CacheControl.noCache());
+
+        // Recomputed rather than reusing the tag from before servePhoto(): that call can FETCH
+        // and cache a photo that was not on disk yet (or refresh a stale one), in which case the
+        // earlier tag described a file that no longer exists — and handing the client a tag that
+        // never matches again would make every later request a full download.
+        profileService.photoEtag(id, small).ifPresent(ok::eTag);
+        return ok.body(bytes);
+    }
+
+    /**
+     * Whether an {@code If-None-Match} header covers our tag.
+     *
+     * <p>Handles the three shapes a browser actually sends: the tag alone, a comma-separated
+     * list of tags, and {@code *}. Weak comparison — the {@code W/} prefix is ignored on both
+     * sides, which is what the spec requires for a GET and what makes our own weak tags usable
+     * at all.
+     */
+    private static boolean matchesEtag(String ifNoneMatch, String etag) {
+        String mine = etag.replaceFirst("^W/", "");
+        for (String candidate : ifNoneMatch.split(",")) {
+            String theirs = candidate.trim().replaceFirst("^W/", "");
+            if (theirs.equals("*") || theirs.equals(mine)) return true;
+        }
+        return false;
     }
 }

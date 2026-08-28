@@ -110,6 +110,41 @@ public class ProfilePhotoCache {
         return read(profileId);
     }
 
+    /**
+     * An HTTP entity tag for the cached photo, or empty when nothing is cached.
+     *
+     * <p>Built from the cached file's modification time and size — both already on disk, so this
+     * costs a stat and never reads the bytes. The mtime is the SharePoint timestamp
+     * ({@link #write} stamps it), so the tag changes exactly when the image does and is identical
+     * for every user: two browsers asking about the same photo get the same tag.
+     *
+     * <p>Weak ({@code W/}) because the bytes are re-encoded on the way in — the shrink is not
+     * guaranteed byte-stable across JDK versions, and a strong tag would be a promise about
+     * octets rather than about the image.
+     *
+     * @param small the list variant, which has its own file and therefore its own tag — serving
+     *              one variant's tag for the other would let a 128px copy satisfy a request for
+     *              the 512px one
+     */
+    public Optional<String> etag(Long profileId, boolean small) {
+        try {
+            Path dir = small ? directory(profileId).resolve(SMALL_DIR) : directory(profileId);
+            Path file = newestPhoto(dir);
+            // No thumbnail on disk means readSmall() falls back to the master, so the tag has
+            // to follow the file that will actually be served — otherwise a 304 would be
+            // answered against a tag for a file the client never received.
+            if (file == null && small) file = newestPhoto(directory(profileId));
+            if (file == null) return Optional.empty();
+            long mtime = Files.getLastModifiedTime(file).toMillis();
+            long size  = Files.size(file);
+            return Optional.of("W/\"" + mtime + "-" + size + "\"");
+        } catch (Exception e) {
+            // No tag means the caller sends no ETag and the response is simply unconditional.
+            log.debug("ETag photo indisponible pour le profil {}: {}", profileId, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
     /** Whether a photo is cached, without reading it. For the warmup pass, which asks this
      *  once per employee and must not pull ~100 files off disk to answer it. */
     public boolean has(Long profileId) {
