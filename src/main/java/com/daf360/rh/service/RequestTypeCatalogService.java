@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
 
 /**
  * Manages request_type_catalog — Admin only.
- * Seeds 15 default types per pays on first run (when catalog is empty).
+ * Seeds 13 default types per pays on first run (when catalog is empty).
  */
 @Slf4j
 @Service
@@ -35,7 +35,7 @@ public class RequestTypeCatalogService {
     // ── Seed ──────────────────────────────────────────────────────────────────
 
     /**
-     * Idempotent seed: inserts 15 default types for each pays that has no entries yet.
+     * Idempotent seed: inserts 13 default types for each pays that has no entries yet.
      * Called once from DataInitializer or on demand.
      */
     public void seedDefaults() {
@@ -151,7 +151,7 @@ public class RequestTypeCatalogService {
                 ? auth.getPrincipal().toString() : "SYSTEM";
     }
 
-    // ── 15 default types ──────────────────────────────────────────────────────
+    // ── 13 default types ──────────────────────────────────────────────────────
 
     record SeedType(String typeCode, String nameFr, String nameEn, String description,
                     RequestCategory category, String approvalLevel, int slaDays) {}
@@ -163,8 +163,12 @@ public class RequestTypeCatalogService {
                      "Attestation indiquant le salaire mensuel",                   RequestCategory.DOCUMENT, "L1", 2),
         new SeedType("BULLETIN_PAIE",          "Duplicata bulletin de paie",       "Pay Slip Duplicate",
                      "Demande d'un duplicata de fiche de paie",                    RequestCategory.DOCUMENT, "L1", 2),
-        new SeedType("ATTESTATION_ANCIENNETE", "Attestation d'ancienneté",         "Seniority Certificate",
-                     "Attestation précisant la durée de service",                  RequestCategory.DOCUMENT, "L1", 3),
+        // ATTESTATION_ANCIENNETE and TELETRAVAIL_PONCTUEL were removed from the catalogue on
+        // request (2026-08-28). Removed from the SEED rather than only deactivated in the
+        // database, because seedDefaults() re-inserts any type code a country is missing — so a
+        // row deactivated by hand would come back active the next time an administrator hit
+        // POST /request-types/seed. Existing employee_requests rows keep their type code; V89
+        // deactivates the rows instead of deleting them for exactly that reason.
         new SeedType("ATTESTATION_CONGE",      "Attestation de congé",             "Leave Certificate",
                      "Attestation de prise en charge de congé approuvé",           RequestCategory.DOCUMENT, "L1", 2),
         new SeedType("CHANGEMENT_ADRESSE",     "Mise à jour adresse domicile",     "Home Address Update",
@@ -183,8 +187,6 @@ public class RequestTypeCatalogService {
                      "Demande d'inscription à une formation professionnelle",       RequestCategory.CAREER, "L1", 7),
         new SeedType("MUTATION_INTERNE",       "Demande de mutation interne",      "Internal Transfer Request",
                      "Demande de changement de département ou de site",            RequestCategory.CAREER, "L1", 5),
-        new SeedType("TELETRAVAIL_PONCTUEL",   "Demande télétravail ponctuel",     "Ad-hoc Remote Work Request",
-                     "Demande de télétravail hors politique habituelle",            RequestCategory.CAREER, "L1", 5),
         new SeedType("AUTRE",                  "Autre demande RH",                 "Other HR Request",
                      "Toute autre demande ne correspondant pas aux catégories ci-dessus", RequestCategory.OTHER, "L1", 5)
     );
