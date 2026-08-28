@@ -207,7 +207,7 @@ class EmployeeProfileServiceTest {
         when(photoCache.remoteIsNewer(eq(PROFILE_ID), anyString())).thenReturn(true);
         givenFolderResolves();
         when(graphSharePointService.listFiles(BASE_PATH)).thenReturn(List.of(
-                new GraphSharePointService.RemoteFile("Photo.jpg", "2026-08-25T10:00:00Z")));
+                new GraphSharePointService.RemoteFile("Photo.jpg", "2026-08-25T10:00:00Z", null, null)));
         when(graphSharePointService.downloadFile(BASE_PATH + "/Photo.jpg"))
                 .thenReturn(Optional.of(new byte[]{7, 7, 7}));
 
@@ -223,7 +223,7 @@ class EmployeeProfileServiceTest {
         when(photoCache.remoteIsNewer(eq(PROFILE_ID), anyString())).thenReturn(false);
         givenFolderResolves();
         when(graphSharePointService.listFiles(BASE_PATH)).thenReturn(List.of(
-                new GraphSharePointService.RemoteFile("Photo.jpg", "2026-08-01T10:00:00Z")));
+                new GraphSharePointService.RemoteFile("Photo.jpg", "2026-08-01T10:00:00Z", null, null)));
 
         assertThat(service.servePhoto(PROFILE_ID)).isEqualTo(new byte[]{9, 9, 9});
         verify(graphSharePointService, never()).downloadFile(anyString());
@@ -248,7 +248,7 @@ class EmployeeProfileServiceTest {
     void servePhoto_discoversAndCaches_whenNothingIsCachedYet() {
         givenFolderResolves();
         when(graphSharePointService.listFiles(BASE_PATH)).thenReturn(List.of(
-                new GraphSharePointService.RemoteFile("Photo.jpg", "2026-08-01T10:00:00Z")));
+                new GraphSharePointService.RemoteFile("Photo.jpg", "2026-08-01T10:00:00Z", null, null)));
         when(graphSharePointService.downloadFile(BASE_PATH + "/Photo.jpg"))
                 .thenReturn(Optional.of(new byte[]{5, 5, 5}));
 
@@ -278,7 +278,7 @@ class EmployeeProfileServiceTest {
     void servePhoto_acceptsAPortraitHrNamedItself() {
         givenFolderResolves();
         when(graphSharePointService.listFiles(BASE_PATH)).thenReturn(List.of(
-                new GraphSharePointService.RemoteFile("Abdellatif_SASSI.jpg", "2026-08-01T10:00:00Z")));
+                new GraphSharePointService.RemoteFile("Abdellatif_SASSI.jpg", "2026-08-01T10:00:00Z", null, null)));
         when(graphSharePointService.downloadFile(BASE_PATH + "/Abdellatif_SASSI.jpg"))
                 .thenReturn(Optional.of(new byte[]{6, 6, 6}));
 
@@ -290,8 +290,8 @@ class EmployeeProfileServiceTest {
     void servePhoto_prefersOurOwnMirrorOverAnArbitraryImage() {
         givenFolderResolves();
         when(graphSharePointService.listFiles(BASE_PATH)).thenReturn(List.of(
-                new GraphSharePointService.RemoteFile("IMG_2381.jpg", "2026-08-09T10:00:00Z"),
-                new GraphSharePointService.RemoteFile("Photo.jpg", "2026-08-01T10:00:00Z")));
+                new GraphSharePointService.RemoteFile("IMG_2381.jpg", "2026-08-09T10:00:00Z", null, null),
+                new GraphSharePointService.RemoteFile("Photo.jpg", "2026-08-01T10:00:00Z", null, null)));
         when(graphSharePointService.downloadFile(BASE_PATH + "/Photo.jpg"))
                 .thenReturn(Optional.of(new byte[]{1}));
 
@@ -308,8 +308,8 @@ class EmployeeProfileServiceTest {
     void servePhoto_refusesIdentityScans_ratherThanShowingThemAsAnAvatar() {
         givenFolderResolves();
         when(graphSharePointService.listFiles(BASE_PATH)).thenReturn(List.of(
-                new GraphSharePointService.RemoteFile("CIN recto.jpg", "2026-08-02T10:00:00Z"),
-                new GraphSharePointService.RemoteFile("passeport.png", "2026-08-01T10:00:00Z")));
+                new GraphSharePointService.RemoteFile("CIN recto.jpg", "2026-08-02T10:00:00Z", null, null),
+                new GraphSharePointService.RemoteFile("passeport.png", "2026-08-01T10:00:00Z", null, null)));
 
         assertThat(service.servePhoto(PROFILE_ID)).isNull();
         verify(graphSharePointService, never()).downloadFile(anyString());
@@ -320,7 +320,7 @@ class EmployeeProfileServiceTest {
     void servePhoto_prefersAnExplicitlyNamedPhotoOverTheExclusionList() {
         givenFolderResolves();
         when(graphSharePointService.listFiles(BASE_PATH)).thenReturn(List.of(
-                new GraphSharePointService.RemoteFile("photo carte.jpg", "2026-08-01T10:00:00Z")));
+                new GraphSharePointService.RemoteFile("photo carte.jpg", "2026-08-01T10:00:00Z", null, null)));
         when(graphSharePointService.downloadFile(BASE_PATH + "/photo carte.jpg"))
                 .thenReturn(Optional.of(new byte[]{8, 8}));
 
@@ -332,7 +332,7 @@ class EmployeeProfileServiceTest {
     void servePhoto_ignoresNonImageFiles() {
         givenFolderResolves();
         when(graphSharePointService.listFiles(BASE_PATH)).thenReturn(List.of(
-                new GraphSharePointService.RemoteFile("attestation.pdf", "2026-08-01T10:00:00Z")));
+                new GraphSharePointService.RemoteFile("attestation.pdf", "2026-08-01T10:00:00Z", null, null)));
 
         assertThat(service.servePhoto(PROFILE_ID)).isNull();
     }

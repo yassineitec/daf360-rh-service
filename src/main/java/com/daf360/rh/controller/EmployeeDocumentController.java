@@ -3,6 +3,7 @@ package com.daf360.rh.controller;
 import com.daf360.rh.dto.document.DocumentMetadataRequest;
 import com.daf360.rh.dto.document.DocumentUploadResponseDto;
 import com.daf360.rh.service.EmployeeDocumentService;
+import com.daf360.rh.service.document.DocumentTypeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -30,11 +31,70 @@ public class EmployeeDocumentController {
 
     private final EmployeeDocumentService documentService;
 
+    /**
+     * The types this employee's COUNTRY accepts, in display order, with their labels.
+     *
+     * <p>Scoped to the profile rather than taking a {@code paysId}: the caller is already on a
+     * profile page and must not be able to offer a type that country does not have — the
+     * vocabulary is per-country ({@code document_types}, V87) precisely because CNSS has no
+     * Egyptian equivalent.
+     *
+     * <p>Labels come from the DB, not from {@code PROFILES.DOC_TYPES.*}: an i18n key would put
+     * a frontend deploy back in the path of adding a type, which is the whole thing V87
+     * removes. The frontend falls back to the code when a label is missing.
+     */
+    @GetMapping("/types")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<DocumentTypeService.DocumentType>> types(@PathVariable Long profileId) {
+        return ResponseEntity.ok(documentService.typesForProfile(profileId));
+    }
+
     /** Live documents only — soft-deleted rows are in {@link #listDeleted}. */
     @GetMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<DocumentUploadResponseDto>> list(@PathVariable Long profileId) {
         return ResponseEntity.ok(documentService.listDocuments(profileId));
+    }
+
+    /**
+     * What is actually in the employee's SharePoint folder for one type.
+     *
+     * <p>Lazily, per type: the caller expands a section and pays one Graph round trip for it.
+     * Listing every configured folder on tab open would be a round trip per type per profile
+     * view, which is how a directory page earns a 429.
+     *
+     * <p>Answers an empty list rather than an error when SharePoint is unconfigured or the folder
+     * is absent — the locally-known documents must stay visible either way.
+     */
+    @GetMapping("/remote")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<EmployeeDocumentService.RemoteDocument>> listRemote(
+            @PathVariable Long profileId,
+            @RequestParam String type) {
+        return ResponseEntity.ok(documentService.listRemote(profileId, type));
+    }
+
+    /**
+     * Streams one file straight out of SharePoint.
+     *
+     * <p>Takes a TYPE and a NAME, never a path: the folder is derived server-side from the
+     * profile and the type. This endpoint can reach a site holding every employee's contracts
+     * and identity documents, so accepting a path would be a traversal hole over precisely the
+     * data that must not leak.
+     */
+    @GetMapping("/remote/download")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Resource> downloadRemote(@PathVariable Long profileId,
+                                                   @RequestParam String type,
+                                                   @RequestParam String name) {
+        EmployeeDocumentService.DownloadPayload payload =
+                documentService.downloadRemote(profileId, type, name);
+        String encoded = java.net.URLEncoder.encode(payload.fileName(), StandardCharsets.UTF_8)
+                .replace("+", "%20");
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, payload.contentType())
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encoded)
+                .body(payload.resource());
     }
 
     /** The corbeille: what was withdrawn from the dossier, when and by whom. */

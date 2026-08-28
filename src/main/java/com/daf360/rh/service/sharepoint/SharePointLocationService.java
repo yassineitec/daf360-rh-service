@@ -43,9 +43,18 @@ public class SharePointLocationService {
     private record CacheEntry(Optional<String> template, Instant loadedAt) {}
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
-    /** One configured location, for the admin panel's table. */
+    /**
+     * One configured location, for the admin panel's table.
+     *
+     * @param docKind  the enum constant, or null when {@code kindCode} names a document type
+     *                 rather than a built-in kind
+     * @param kindCode the stored {@code doc_kind} verbatim. Present even when {@code docKind} is
+     *                 null, which is the point: V87 fills this table with document-type codes,
+     *                 and a row the enum cannot name is still a row the admin must see and edit
+     *                 — before this the panel could only report it as UNKNOWN_KIND.
+     */
     public record LocationRow(Long id, Long paysId, String isoCode, DocKind docKind,
-                              String pathTemplate, boolean active) {}
+                              String kindCode, String pathTemplate, boolean active) {}
 
     /**
      * The template for this country and kind, or empty when nothing usable is configured.
@@ -81,12 +90,14 @@ public class SharePointLocationService {
                     // An unknown doc_kind is a row prepared for a build that is not deployed
                     // here. Listing it as null lets the admin see it rather than wonder why
                     // their insert vanished.
-                    DocKind kind = DocKind.from(rs.getString("doc_kind")).orElse(null);
+                    String raw = rs.getString("doc_kind");
+                    DocKind kind = DocKind.from(raw).orElse(null);
                     return new LocationRow(
                             rs.getLong("id"),
                             rs.getLong("pays_id"),
                             rs.getString("iso_code"),
                             kind,
+                            raw,
                             rs.getString("path_template"),
                             rs.getBoolean("is_active"));
                 });
@@ -127,6 +138,55 @@ public class SharePointLocationService {
     }
 
     /**
+     * The template for a country and an arbitrary kind CODE — a document type from
+     * {@code document_types} (V87), which no Java enum can enumerate because the whole point is
+     * that an administrator adds one without a redeploy.
+     *
+     * <p>Validation is the non-year-scoped half of {@link DocKind#validateTemplate}:
+     * {@code {employeeFolder}} is required, {@code {year}} is refused. A document type filed
+     * per year would need the year folder to exist before the first upload of the year, and
+     * nothing creates it — so allowing the token would produce a path that 404s each January.
+     *
+     * <p>Deliberately NOT cached: {@link #templateFor} caches per {@code (pays, kind)} and its
+     * key is an enum name. Adding a second key space to that map for one call per upload buys
+     * nothing — uploads are not a hot path the way avatar renders are.
+     *
+     * @return empty when nothing usable is configured, exactly like {@link #templateFor}
+     */
+    public Optional<String> templateForCode(Long paysId, String code) {
+        if (paysId == null || code == null || code.isBlank()) return Optional.empty();
+        String kindCode = code.trim().toUpperCase(Locale.ROOT);
+
+        // An enum kind keeps its own rules (PAYSLIP really is year-scoped), so route it back.
+        Optional<DocKind> known = DocKind.from(kindCode);
+        if (known.isPresent()) return templateFor(paysId, known.get());
+
+        String template;
+        try {
+            List<String> rows = jdbc.queryForList(
+                    "SELECT path_template FROM [dbo].[sharepoint_locations] " +
+                    "WHERE pays_id = ? AND doc_kind = ? AND is_active = 1",
+                    String.class, paysId, kindCode);
+            if (rows.isEmpty()) return Optional.empty();
+            template = rows.get(0);
+        } catch (Exception e) {
+            log.debug("Lecture de sharepoint_locations impossible pour {} / {} : {}",
+                    paysId, kindCode, e.getMessage());
+            return Optional.empty();
+        }
+        if (template == null || template.isBlank()) return Optional.empty();
+
+        String t = template.trim();
+        List<String> problems = validateTemplateForCode(kindCode, t);
+        if (!problems.isEmpty()) {
+            log.warn("Chemin SharePoint invalide pour pays {} / type {} : '{}' — {}",
+                    paysId, kindCode, t, String.join(", ", problems));
+            return Optional.empty();
+        }
+        return Optional.of(t);
+    }
+
+    /**
      * The pre-V84 home of the PHOTO path. Kept readable so a deployment that has not applied
      * V84 keeps working; see the class javadoc for when to delete this.
      */
@@ -148,6 +208,38 @@ public class SharePointLocationService {
             if (templateFor(paysId, kind).isPresent()) kinds.add(kind);
         }
         return kinds;
+    }
+
+    /**
+     * Validates a stored template against whichever vocabulary its code belongs to.
+     *
+     * <p>An enum kind gets its own rules; anything else is treated as a document type and
+     * checked as non-year-scoped. Without this the admin panel reported every V87 row as
+     * UNKNOWN_KIND — 32 rows of false alarm on a tab whose entire purpose is telling a real
+     * misconfiguration apart from an absent one.
+     *
+     * <p>Note it cannot tell "a document type that exists" from "a typo in doc_kind": that
+     * needs the country's type list, and this is called per row. The write path
+     * ({@code SharePointAdminService.saveLocation}) does check, which is where a typo can still
+     * be introduced.
+     */
+    public List<String> validateTemplateForCode(String code, String template) {
+        Optional<DocKind> known = DocKind.from(code);
+        if (known.isPresent()) return known.get().validateTemplate(template);
+
+        List<String> problems = new ArrayList<>();
+        String t = template == null ? "" : template.trim();
+        if (t.isBlank()) {
+            problems.add("SHAREPOINT.TEMPLATE.BLANK");
+            return problems;
+        }
+        if (!t.contains(SharePointPaths.EMPLOYEE_FOLDER_TOKEN)) {
+            problems.add("SHAREPOINT.TEMPLATE.MISSING_EMPLOYEE_FOLDER");
+        }
+        if (t.contains(SharePointPaths.YEAR_TOKEN)) {
+            problems.add("SHAREPOINT.TEMPLATE.YEAR_NOT_ALLOWED");
+        }
+        return problems;
     }
 
     /** Normalises a kind coming off a query string, for controllers. */

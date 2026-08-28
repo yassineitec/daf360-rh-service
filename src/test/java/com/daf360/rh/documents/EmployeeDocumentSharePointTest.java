@@ -40,6 +40,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.lenient;
 
 /**
  * The SharePoint mirror on uploaded employee documents.
@@ -59,6 +60,11 @@ class EmployeeDocumentSharePointTest {
     @Mock JdbcTemplate              jdbc;
     @Mock GraphSharePointService     graphSharePointService;
     @Mock EmployeeFolderResolver     employeeFolderResolver;
+    // V87: the type vocabulary and the path model both moved to the database. Stubbed in
+    // setUp so these tests still exercise the DocumentFolderMapping fallback they were
+    // written for — an empty templateForCode is exactly what a server without V87 returns.
+    @Mock com.daf360.rh.service.document.DocumentTypeService documentTypeService;
+    @Mock com.daf360.rh.service.sharepoint.SharePointLocationService locationService;
 
     @TempDir Path tempDir;
 
@@ -76,7 +82,16 @@ class EmployeeDocumentSharePointTest {
     @BeforeEach
     void setUp() {
         service = new EmployeeDocumentService(documentRepository, profileRepository, mapper,
-                auditService, jdbc, graphSharePointService, employeeFolderResolver);
+                auditService, jdbc, graphSharePointService, employeeFolderResolver,
+                documentTypeService, locationService);
+
+        // V87 moved both the type vocabulary and the document paths into the database. These
+        // tests describe the DocumentFolderMapping behaviour, which is what a server WITHOUT
+        // V87 still gets — so the location lookup is stubbed empty on purpose, exercising the
+        // fallback rather than bypassing it. lenient() because not every test uploads.
+        lenient().when(locationService.templateForCode(any(), any())).thenReturn(Optional.empty());
+        lenient().when(documentTypeService.validate(any(), anyString()))
+                .thenAnswer(inv -> Optional.of(inv.getArgument(1, String.class).toUpperCase()));
         // storagePath is an @Value field, not a constructor arg.
         ReflectionTestUtils.setField(service, "storagePath", tempDir.toString());
 

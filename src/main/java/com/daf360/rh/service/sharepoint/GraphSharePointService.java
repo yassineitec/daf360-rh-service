@@ -430,7 +430,8 @@ public class GraphSharePointService {
                     .sorted(java.util.Comparator.comparing(
                             ChildItem::lastModifiedDateTime,
                             java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder())))
-                    .map(item -> new RemoteFile(item.name(), item.lastModifiedDateTime()))
+                    .map(item -> new RemoteFile(item.name(), item.lastModifiedDateTime(),
+                            item.size(), item.webUrl()))
                     .toList();
         } catch (Exception e) {
             log.warn("Échec du listage SharePoint de {}: {}", folderPath, e.getMessage());
@@ -439,10 +440,19 @@ public class GraphSharePointService {
     }
 
     /** One file in a SharePoint folder. {@code lastModified} is the raw ISO-8601 Graph value. */
-    public record RemoteFile(String name, String lastModified) {}
+    /**
+     * @param lastModified the raw ISO-8601 Graph value
+     * @param sizeBytes    null when Graph did not report it. Selected because the documents tab
+     *                     shows it — a list of names with no size gives no clue whether a row is
+     *                     a real scan or an empty placeholder someone created by mistake.
+     * @param webUrl       the SharePoint page for the item, for an "open in SharePoint" link.
+     *                     Never used to fetch content: that goes through this app, so the
+     *                     permission check stays ours rather than the viewer's.
+     */
+    public record RemoteFile(String name, String lastModified, Long sizeBytes, String webUrl) {}
 
     private java.util.List<ChildItem> listChildren(String token, String siteId, String parentPath) {
-        String select = "?$select=name,folder,lastModifiedDateTime&$top=200";
+        String select = "?$select=name,folder,lastModifiedDateTime,size,webUrl&$top=200";
         String url = parentPath.isEmpty()
                 ? GRAPH_BASE + "/sites/" + siteId + "/drive/root/children" + select
                 : GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + parentPath
@@ -514,5 +524,6 @@ public class GraphSharePointService {
 
     /** {@code folder} is Graph's folder facet — present on folders, absent on files. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    private record ChildItem(String name, Map<String, Object> folder, String lastModifiedDateTime) {}
+    private record ChildItem(String name, Map<String, Object> folder, String lastModifiedDateTime,
+                             Long size, String webUrl) {}
 }

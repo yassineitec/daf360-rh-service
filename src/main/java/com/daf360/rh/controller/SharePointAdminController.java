@@ -1,5 +1,6 @@
 package com.daf360.rh.controller;
 
+import com.daf360.rh.service.document.DocumentTypeService;
 import com.daf360.rh.service.sharepoint.DocKind;
 import com.daf360.rh.service.sharepoint.GraphSharePointService;
 import com.daf360.rh.service.sharepoint.SharePointAdminService;
@@ -56,6 +57,7 @@ public class SharePointAdminController {
     private final SharePointAdminService adminService;
     private final GraphSharePointService graph;
     private final com.daf360.rh.service.photo.ProfilePhotoWarmupService photoWarmup;
+    private final DocumentTypeService documentTypeService;
 
     // ── DTOs ──────────────────────────────────────────────────────────────────
 
@@ -77,6 +79,17 @@ public class SharePointAdminController {
         @NotBlank private String folderSegment;
     }
 
+    @Data
+    public static class SaveDocumentTypeRequest {
+        @NotNull  private Long    paysId;
+        @NotBlank private String  code;
+        @NotBlank private String  labelFr;
+                  private String  labelEn;
+        /** Null means active -- creating a type you cannot select would be a strange default. */
+                  private Boolean active;
+                  private Integer sortOrder;
+    }
+
     public record FolderListingDto(String path, List<String> folders) {}
 
     public record EmployeeRowDto(Long profileId, Long userId, String fullName, String paysIso,
@@ -95,17 +108,83 @@ public class SharePointAdminController {
     public record BatchResultDto(String docKind, int total, Map<String, Long> byStatus,
                                  List<BatchRowDto> rows) {}
 
-    /** The kinds this build understands, so the form offers exactly what the resolver supports. */
-    public record KindDto(String code, boolean yearScoped) {}
+    /**
+     * One configurable kind offered by the path form.
+     *
+     * @param builtIn true for a {@link DocKind} -- those have behaviour attached (year scoping,
+     *                their own template rules) and cannot be added or removed from the UI;
+     *                false for a document type, which is just a row
+     * @param label   what to show: the enum name for a built-in kind, the configured French
+     *                label for a document type
+     */
+    public record KindDto(String code, boolean yearScoped, boolean builtIn, String label) {}
 
     // ── Reference ─────────────────────────────────────────────────────────────
 
+    /**
+     * The kinds a path can be configured for: the built-in ones, plus this country's document
+     * types when {@code paysId} is given.
+     *
+     * <p>Document types are per country ({@code document_types}, V87), so they can only be
+     * offered once a country is chosen. Without them the form could configure paths for three
+     * kinds while the table held thirty-odd document rows it could not name — which is precisely
+     * what made document folders uneditable here.
+     *
+     * @param paysId optional; omit for the built-in kinds alone
+     */
     @GetMapping("/kinds")
     @PreAuthorize(ADMIN)
-    public ResponseEntity<List<KindDto>> kinds() {
-        return ResponseEntity.ok(java.util.Arrays.stream(DocKind.values())
-                .map(k -> new KindDto(k.name(), k.isYearScoped()))
-                .toList());
+    public ResponseEntity<List<KindDto>> kinds(@RequestParam(required = false) Long paysId) {
+        List<KindDto> kinds = new java.util.ArrayList<>(
+                java.util.Arrays.stream(DocKind.values())
+                        .map(k -> new KindDto(k.name(), k.isYearScoped(), true, k.name()))
+                        .toList());
+        if (paysId != null) {
+            for (var t : documentTypeService.forPays(paysId)) {
+                // PHOTO exists in both vocabularies and shares one row in sharepoint_locations
+                // (the key is (pays_id, doc_kind)). Listing it twice would offer the same row
+                // under two entries and let a form overwrite the profile-photo path by accident.
+                if (DocKind.from(t.code()).isPresent()) continue;
+                kinds.add(new KindDto(t.code(), false, false, t.labelFr()));
+            }
+        }
+        return ResponseEntity.ok(kinds);
+    }
+
+    // ── Panel 0: the document-type vocabulary ─────────────────────────────────
+
+    /** Every type for a country, deactivated ones included — they must be reactivatable. */
+    @GetMapping("/document-types")
+    @PreAuthorize(ADMIN)
+    public ResponseEntity<List<DocumentTypeService.AdminRow>> documentTypes(@RequestParam Long paysId) {
+        return ResponseEntity.ok(documentTypeService.listForAdmin(paysId));
+    }
+
+    /** Creates or updates one type. 422 carries the validation keys. */
+    @PutMapping("/document-types")
+    @PreAuthorize(ADMIN)
+    public ResponseEntity<List<String>> saveDocumentType(@RequestBody SaveDocumentTypeRequest req,
+                                                         Authentication auth) {
+        List<String> problems = documentTypeService.save(
+                req.getPaysId(), req.getCode(), req.getLabelFr(), req.getLabelEn(),
+                req.getActive() == null || req.getActive(), req.getSortOrder(), actorId(auth));
+        return problems.isEmpty()
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.unprocessableEntity().body(problems);
+    }
+
+    /**
+     * Deactivates a type — there is no delete.
+     *
+     * <p>Documents already filed store the code with no foreign key behind it, so removing the
+     * row would label them with something nothing can resolve. Deactivation takes it out of the
+     * dropdown and leaves every existing document readable.
+     */
+    @DeleteMapping("/document-types/{id}")
+    @PreAuthorize(ADMIN)
+    public ResponseEntity<Void> deactivateDocumentType(@PathVariable Long id, Authentication auth) {
+        documentTypeService.deactivate(id, actorId(auth));
+        return ResponseEntity.noContent().build();
     }
 
     // ── Panel 1: configured paths ─────────────────────────────────────────────
@@ -121,13 +200,13 @@ public class SharePointAdminController {
     @PreAuthorize(ADMIN)
     public ResponseEntity<List<LocationDto>> locations() {
         return ResponseEntity.ok(locationService.listAll().stream()
+                // kindCode, not docKind().name(): V87 fills this table with document-type codes
+                // that have no enum constant, and reporting those as UNKNOWN_KIND made 32 valid
+                // rows look broken. Validation routes on the code instead.
                 .map(r -> new LocationDto(
-                        r.id(), r.paysId(), r.isoCode(),
-                        r.docKind() == null ? null : r.docKind().name(),
+                        r.id(), r.paysId(), r.isoCode(), r.kindCode(),
                         r.pathTemplate(), r.active(),
-                        r.docKind() == null
-                                ? List.of("SHAREPOINT.TEMPLATE.UNKNOWN_KIND")
-                                : r.docKind().validateTemplate(r.pathTemplate())))
+                        locationService.validateTemplateForCode(r.kindCode(), r.pathTemplate())))
                 .toList());
     }
 
@@ -136,12 +215,11 @@ public class SharePointAdminController {
     @PreAuthorize(ADMIN)
     public ResponseEntity<List<String>> saveLocation(@RequestBody SaveLocationRequest request,
                                                      Authentication auth) {
-        Optional<DocKind> kind = locationService.parseKind(request.getDocKind());
-        if (kind.isEmpty()) {
-            return ResponseEntity.badRequest().body(List.of("SHAREPOINT.TEMPLATE.UNKNOWN_KIND"));
-        }
+        // Code, not DocKind: a document type from document_types (V87) has no enum constant,
+        // and rejecting it here is what used to make document paths uneditable in this tab.
+        // The service validates the code against both vocabularies.
         List<String> problems = adminService.saveLocation(
-                request.getPaysId(), kind.get(), request.getPathTemplate(), actorId(auth));
+                request.getPaysId(), request.getDocKind(), request.getPathTemplate(), actorId(auth));
         return problems.isEmpty()
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.unprocessableEntity().body(problems);

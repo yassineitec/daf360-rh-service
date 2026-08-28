@@ -31,6 +31,7 @@ public class SharePointAdminService {
     private final SharePointLocationService locationService;
     private final EmployeeSharePointFolderStore folderStore;
     private final GraphSharePointService graph;
+    private final com.daf360.rh.service.document.DocumentTypeService documentTypeService;
 
     /**
      * One employee's row in the status table.
@@ -48,37 +49,84 @@ public class SharePointAdminService {
     // ── Configuration ─────────────────────────────────────────────────────────
 
     /**
-     * Creates or replaces the path for one country and kind.
+     * As {@link #saveLocation(Long, DocKind, String, Long)}, for a kind identified by CODE —
+     * which is how a document type arrives, since {@code document_types} (V87) grows at runtime
+     * and no Java enum can name its rows.
+     *
+     * <p>Rejects a code that is neither a {@link DocKind} nor an active document type for this
+     * country. Without that check the form would happily write a row for a typo'd code: the
+     * insert succeeds, the path looks configured in the table, and nothing ever reads it.
+     *
+     * <p>Document types are validated as non-year-scoped ({@code {employeeFolder}} required,
+     * {@code {year}} refused) — a per-year document folder would have to exist before January's
+     * first upload, and nothing creates it.
+     *
+     * @return validation problems; empty means saved
+     */
+    public List<String> saveLocation(Long paysId, String kindCode, String pathTemplate, Long actorId) {
+        Optional<DocKind> known = DocKind.from(kindCode);
+        if (known.isPresent()) {
+            return saveLocation(paysId, known.get(), pathTemplate, actorId);
+        }
+        String code = kindCode == null ? "" : kindCode.trim().toUpperCase(java.util.Locale.ROOT);
+        if (documentTypeService.validate(paysId, code).isEmpty()) {
+            return List.of("SHAREPOINT.TEMPLATE.UNKNOWN_KIND");
+        }
+        List<String> problems = new java.util.ArrayList<>();
+        String t = pathTemplate == null ? "" : pathTemplate.trim();
+        if (t.isBlank()) {
+            problems.add("SHAREPOINT.TEMPLATE.BLANK");
+        } else {
+            if (!t.contains(SharePointPaths.EMPLOYEE_FOLDER_TOKEN)) {
+                problems.add("SHAREPOINT.TEMPLATE.MISSING_EMPLOYEE_FOLDER");
+            }
+            if (t.contains(SharePointPaths.YEAR_TOKEN)) {
+                problems.add("SHAREPOINT.TEMPLATE.YEAR_NOT_ALLOWED");
+            }
+        }
+        if (!problems.isEmpty()) return problems;
+        return upsertLocation(paysId, code, t, actorId);
+    }
+
+    /**
+     * Creates or replaces the path for one country and enum kind.
      *
      * <p>Validation is the same {@link DocKind#validateTemplate} the resolver applies, so the
-     * form cannot save a template the resolver would then silently refuse — which would show
-     * up as "the folder is missing" and send someone hunting through SharePoint for a fault
-     * that is actually one bad row.
+     * form cannot save a template the resolver would then silently refuse — which would show up
+     * as "the folder is missing" and send someone hunting through SharePoint for a fault that is
+     * actually one bad row.
      *
      * @return the validation problems; empty means saved
      */
     public List<String> saveLocation(Long paysId, DocKind kind, String pathTemplate, Long actorId) {
         List<String> problems = kind.validateTemplate(pathTemplate);
         if (!problems.isEmpty()) return problems;
+        return upsertLocation(paysId, kind.name(), pathTemplate.trim(), actorId);
+    }
 
-        String template = pathTemplate.trim();
+    /**
+     * The write itself, shared by both {@code saveLocation} overloads so an enum kind and a
+     * document-type code cannot drift into two different UPSERTs — the table has one unique
+     * key, {@code (pays_id, doc_kind)}, and one writer is what keeps that true.
+     */
+    private List<String> upsertLocation(Long paysId, String kindCode, String template, Long actorId) {
         int updated = jdbc.update(
                 "UPDATE [dbo].[sharepoint_locations] "
                 + "SET path_template = ?, is_active = 1, updated_at = SYSDATETIMEOFFSET(), updated_by = ? "
                 + "WHERE pays_id = ? AND doc_kind = ?",
-                template, actorId, paysId, kind.name());
+                template, actorId, paysId, kindCode);
         if (updated == 0) {
             jdbc.update(
                     "INSERT INTO [dbo].[sharepoint_locations] "
                     + "(pays_id, doc_kind, path_template, is_active, updated_at, updated_by) "
                     + "VALUES (?, ?, ?, 1, SYSDATETIMEOFFSET(), ?)",
-                    paysId, kind.name(), template, actorId);
+                    paysId, kindCode, template, actorId);
         }
         // Without this the edit is invisible for up to the config cache's TTL, and a stale
         // path is exactly the confusion this tab exists to remove.
         locationService.evictAll();
         log.info("Chemin SharePoint {} / pays {} enregistre par l utilisateur {} : {}",
-                kind, paysId, actorId, template);
+                kindCode, paysId, actorId, template);
         return List.of();
     }
 

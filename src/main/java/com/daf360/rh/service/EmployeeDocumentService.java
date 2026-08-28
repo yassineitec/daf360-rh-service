@@ -9,9 +9,11 @@ import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.mapper.EmployeeDocumentMapper;
 import com.daf360.rh.repository.EmployeeDocumentRepository;
 import com.daf360.rh.repository.EmployeeProfileRepository;
+import com.daf360.rh.service.document.DocumentTypeService;
 import com.daf360.rh.service.sharepoint.DocumentFolderMapping;
 import com.daf360.rh.service.sharepoint.EmployeeFolderResolver;
 import com.daf360.rh.service.sharepoint.GraphSharePointService;
+import com.daf360.rh.service.sharepoint.SharePointLocationService;
 import com.daf360.rh.service.sharepoint.SharePointPaths;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -73,6 +75,8 @@ public class EmployeeDocumentService {
     private final JdbcTemplate               jdbc;
     private final GraphSharePointService     graphSharePointService;
     private final EmployeeFolderResolver     employeeFolderResolver;
+    private final DocumentTypeService        documentTypeService;
+    private final SharePointLocationService  locationService;
 
     @Value("${app.storage-path:./uploads/hr}")
     private String storagePath;
@@ -87,7 +91,7 @@ public class EmployeeDocumentService {
         EmployeeProfile profile = profileRepository.findById(profileId).orElseThrow(() ->
                 new AppException(ErrorCode.EMPLOYEE_NOT_FOUND, "Profil introuvable: id=" + profileId));
 
-        String type = normaliseType(documentType);
+        String type = normaliseType(profile.getPaysId(), documentType);
 
         // Validate MIME type
         String contentType = file.getContentType();
@@ -147,6 +151,142 @@ public class EmployeeDocumentService {
         auditService.log(actorId(auth), "UPLOAD_DOCUMENT", "EmployeeDocument", saved.getId(),
                 null, type);
         return toDto(saved);
+    }
+
+    /**
+     * The document types this profile's country accepts.
+     *
+     * <p>Resolved from the profile rather than from a caller-supplied country, so the dropdown
+     * on a page can never offer a type that would then be rejected by
+     * {@link #normaliseType} — the two now read the same per-country vocabulary.
+     */
+    @Transactional(readOnly = true)
+    public List<DocumentTypeService.DocumentType> typesForProfile(Long profileId) {
+        Long paysId = profileRepository.findById(profileId)
+                .map(EmployeeProfile::getPaysId)
+                .orElseThrow(() -> new AppException(ErrorCode.EMPLOYEE_NOT_FOUND,
+                        "Profil introuvable: id=" + profileId));
+        return documentTypeService.forPays(paysId);
+    }
+
+    // ── What is really in SharePoint ──────────────────────────────────────────
+
+    /**
+     * One file found in the employee's SharePoint folder for a type.
+     *
+     * @param filedByApp true when the name carries the {@code {docId}_} prefix this service
+     *                   writes, i.e. the same file the DB already lists. The tab uses it to show
+     *                   one row instead of two.
+     * @param docId      the id parsed out of that prefix, so the caller can pair the two lists
+     *                   without matching on names
+     */
+    public record RemoteDocument(String name, String lastModified, Long sizeBytes, String webUrl,
+                                 boolean filedByApp, Long docId) {}
+
+    /**
+     * Lists the employee's SharePoint folder for one document type.
+     *
+     * <p>This is the half of the dossier the app never showed: a document existed only if it was
+     * uploaded THROUGH the app, while HR files most paperwork straight into SharePoint — exactly
+     * as they did with the profile photos. The tab was therefore empty for the majority of real
+     * documents.
+     *
+     * <p>Per type, not per employee: listing every configured folder on tab open is one Graph
+     * round trip per type per profile view, which is how you earn a 429 on a directory page.
+     * The caller expands a section and pays for that section only.
+     *
+     * <p>Empty — never an exception — when Graph is unconfigured, the type has no path, the
+     * folder does not exist, or the listing fails. Same posture as the rest of this package: the
+     * local rows remain visible regardless.
+     */
+    @Transactional(readOnly = true)
+    public List<RemoteDocument> listRemote(Long profileId, String documentType) {
+        EmployeeProfile profile = profileRepository.findById(profileId).orElseThrow(() ->
+                new AppException(ErrorCode.EMPLOYEE_NOT_FOUND, "Profil introuvable: id=" + profileId));
+        String folder = remoteFolder(profile, documentType);
+        if (folder == null) return List.of();
+
+        return graphSharePointService.listFiles(folder).stream()
+                .map(f -> {
+                    Long docId = parseDocIdPrefix(f.name());
+                    return new RemoteDocument(f.name(), f.lastModified(), f.sizeBytes(),
+                            f.webUrl(), docId != null, docId);
+                })
+                .toList();
+    }
+
+    /**
+     * Streams one file out of the employee's SharePoint folder.
+     *
+     * <p><b>The folder is derived here, from {@code (profileId, documentType)} — never taken from
+     * the caller.</b> This endpoint reaches a site holding every employee's contracts, ID scans
+     * and payslips, so a caller-supplied path would be a directory-traversal hole over exactly
+     * the data that must not leak. The only thing the caller names is a file, and a name
+     * containing a path separator is rejected rather than cleaned: a name that needs cleaning is
+     * not the name the caller meant.
+     *
+     * @throws AppException NOT_FOUND when the type has no folder, the name is unsafe, or
+     *                      SharePoint has no such file — the three are deliberately
+     *                      indistinguishable to the caller
+     */
+    @Transactional(readOnly = true)
+    public DownloadPayload downloadRemote(Long profileId, String documentType, String fileName) {
+        EmployeeProfile profile = profileRepository.findById(profileId).orElseThrow(() ->
+                new AppException(ErrorCode.EMPLOYEE_NOT_FOUND, "Profil introuvable: id=" + profileId));
+
+        if (fileName == null || fileName.isBlank()
+                || !fileName.equals(SharePointPaths.safeFileName(fileName, ""))) {
+            throw new AppException(ErrorCode.NOT_FOUND, "Nom de fichier invalide");
+        }
+        String folder = remoteFolder(profile, documentType);
+        if (folder == null) {
+            throw new AppException(ErrorCode.NOT_FOUND,
+                    "Aucun dossier SharePoint pour le type " + documentType);
+        }
+
+        byte[] content = graphSharePointService.downloadFile(folder + "/" + fileName).orElseThrow(
+                () -> new AppException(ErrorCode.NOT_FOUND, "Fichier introuvable sur SharePoint"));
+
+        return new DownloadPayload(
+                new org.springframework.core.io.ByteArrayResource(content),
+                fileName,
+                contentTypeFor(fileName));
+    }
+
+    /**
+     * The employee's folder for a type, with the placeholder substituted, or null when it cannot
+     * be determined (unknown type for this country, no configured path, unresolvable employee
+     * folder). Shared by the listing and the download so the two can never disagree about which
+     * folder they are talking about.
+     */
+    private String remoteFolder(EmployeeProfile profile, String documentType) {
+        String type = documentTypeService.validate(profile.getPaysId(), documentType).orElse(null);
+        if (type == null) return null;
+
+        EmployeeFolderResolver.EmployeeFolder folder =
+                employeeFolderResolver.resolve(profile.getPaysId(), profile.getUserId());
+        if (folder == null) return null;
+
+        return templateFor(profile.getPaysId(), type, folder)
+                .replace(SharePointPaths.EMPLOYEE_FOLDER_TOKEN, folder.employeeFolder());
+    }
+
+    /**
+     * The document id in a {@code 42_contrat.pdf} name, or null.
+     *
+     * <p>That prefix is written by {@link #locate}, and it is the only reliable way to tell "the
+     * file the app uploaded" from "the file HR dropped in": matching on the original name fails
+     * as soon as two employees both file {@code contrat.pdf}, which is why the prefix exists.
+     */
+    private Long parseDocIdPrefix(String name) {
+        if (name == null) return null;
+        int underscore = name.indexOf('_');
+        if (underscore <= 0) return null;
+        try {
+            return Long.parseLong(name.substring(0, underscore));
+        } catch (NumberFormatException notAnId) {
+            return null;
+        }
     }
 
     // ── Staged uploads (onboarding, before a profile exists) ──────────────────
@@ -398,10 +538,32 @@ public class EmployeeDocumentService {
 
         String safeName = SharePointPaths.safeFileName(doc.getFileName(), "document-" + doc.getId());
         return new DocLocation(
-                SharePointPaths.join(folder.locationTemplate(),
-                        DocumentFolderMapping.subfolderFor(doc.getDocumentType())),
+                templateFor(profile.getPaysId(), doc.getDocumentType(), folder),
                 folder.employeeFolder(),
                 doc.getId() + "_" + safeName);
+    }
+
+    /**
+     * The path template for one document type, from {@code sharepoint_locations} (V87 seeds a
+     * row per country and type) or, failing that, from the hardcoded map.
+     *
+     * <p>The fallback is not defensive padding — it is the only thing that makes this
+     * deployable. rh-service has no Flyway, so V87 is applied by hand, and on a server that
+     * missed it every upload would otherwise stop mirroring at once. It also keeps DOWNLOAD
+     * working for documents uploaded before the migration: {@code fetchFromSharePoint}
+     * recomputes the path from this same method, so if the two disagreed about where a file
+     * went, an old document would become unreachable the day V87 was applied. They agree
+     * because V87 seeds exactly what the map produces.
+     *
+     * <p>Remove the fallback once every environment is confirmed migrated, and delete
+     * {@code DocumentFolderMapping} with it.
+     */
+    private String templateFor(Long paysId, String documentType,
+                               EmployeeFolderResolver.EmployeeFolder folder) {
+        return locationService.templateForCode(paysId, documentType)
+                .orElseGet(() -> SharePointPaths.join(
+                        folder.locationTemplate(),
+                        DocumentFolderMapping.subfolderFor(documentType)));
     }
 
     /**
@@ -470,7 +632,13 @@ public class EmployeeDocumentService {
         EmployeeDocument doc = findOrThrow(docId);
         String before = doc.getDocumentType() + ";exp=" + doc.getExpirationDate();
 
-        if (req.getDocumentType() != null) doc.setDocumentType(normaliseType(req.getDocumentType()));
+        if (req.getDocumentType() != null) {
+            // The type vocabulary is per-country, so a correction has to be validated against
+            // the same country the document belongs to -- not against a global list.
+            Long paysId = profileRepository.findById(doc.getEmployeeProfileId())
+                    .map(EmployeeProfile::getPaysId).orElse(null);
+            doc.setDocumentType(normaliseType(paysId, req.getDocumentType()));
+        }
         // Null means "leave alone" on the type, but expiry and notes must be CLEARABLE, so
         // their own explicit flags say "set this to null" — a PATCH cannot express it otherwise.
         if (Boolean.TRUE.equals(req.getClearExpirationDate())) {
@@ -536,16 +704,18 @@ public class EmployeeDocumentService {
     }
 
     /**
-     * Accepts a known code, upper-cased and trimmed; anything else is a 422 rather than a
-     * silent new "type" that no screen can translate or filter on.
+     * Accepts a code this COUNTRY declares, upper-cased and trimmed; anything else is a 422
+     * rather than a silent new "type" that no screen can translate or filter on.
+     *
+     * <p>The vocabulary moved to {@code document_types} (V87) and is per-country, so the same
+     * code can be valid for Tunisia and rejected for Egypt — which is the point: CNSS has no
+     * Egyptian equivalent. {@link DocumentTypeService} falls back to {@link #DOCUMENT_TYPES}
+     * for a country with no rows, so a server without V87 behaves exactly as before.
      */
-    private String normaliseType(String raw) {
-        String type = raw != null ? raw.trim().toUpperCase() : "";
-        if (!DOCUMENT_TYPES.contains(type)) {
-            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
-                    "Type de document inconnu: " + raw);
-        }
-        return type;
+    private String normaliseType(Long paysId, String raw) {
+        return documentTypeService.validate(paysId, raw)
+                .orElseThrow(() -> new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                        "Type de document inconnu: " + raw));
     }
 
     private DocumentUploadResponseDto toDto(EmployeeDocument doc) {
@@ -574,7 +744,18 @@ public class EmployeeDocumentService {
         } catch (IOException ex) {
             log.debug("Could not probe content type for {}: {}", path, ex.getMessage());
         }
-        String name = path.getFileName().toString().toLowerCase();
+        return contentTypeFor(path.getFileName().toString());
+    }
+
+    /**
+     * Content type from a file NAME alone.
+     *
+     * <p>Split out of {@link #probeContentType} for the SharePoint download, where there is no
+     * local file to probe — {@code Files.probeContentType} needs a path on disk, and the remote
+     * bytes never land on one. Same three types the upload whitelist accepts.
+     */
+    private String contentTypeFor(String fileName) {
+        String name = fileName == null ? "" : fileName.toLowerCase();
         if (name.endsWith(".pdf"))                            return "application/pdf";
         if (name.endsWith(".png"))                            return "image/png";
         if (name.endsWith(".jpg") || name.endsWith(".jpeg"))  return "image/jpeg";
