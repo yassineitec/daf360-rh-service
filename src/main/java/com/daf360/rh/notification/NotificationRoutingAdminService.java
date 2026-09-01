@@ -1,6 +1,6 @@
 package com.daf360.rh.notification;
 
-import com.daf360.rh.exception.AppException;
+import com.daf360.rh.common.PermissionCatalog;import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.notification.dto.UpdateRoutingRuleRequest;
 import com.daf360.rh.service.AuditService;
@@ -25,6 +25,7 @@ import java.util.stream.Collectors;
 public class NotificationRoutingAdminService {
 
     private final NotificationRoutingRuleRepository     ruleRepo;
+    private final NotificationEventTypeRepository       eventTypeRepo;
     private final NotificationRoutingRecipientRepository inappRecipRepo;
     private final EmailRoutingRecipientRepository       emailRecipRepo;
     private final AuditService                          auditService;
@@ -47,7 +48,7 @@ public class NotificationRoutingAdminService {
 
     private static final String EVENT_TYPES_SQL =
         "SELECT et.id, et.event_code, et.label_fr, et.label_en, et.module, " +
-        "       et.supports_email, et.is_system, " +
+        "       et.supports_email, et.is_system, et.default_entity_type, " +
         "       rr.id as rule_id, rr.send_inapp, rr.send_email " +
         "FROM notification_event_types et " +
         "LEFT JOIN notification_routing_rules rr " +
@@ -63,16 +64,20 @@ public class NotificationRoutingAdminService {
         "SELECT COUNT(*) FROM email_routing_recipients " +
         "WHERE routing_rule_id=? AND recipient_field='TO' AND is_active=1";
 
+    // LEFT JOIN, not JOIN: a PERMISSION recipient has no role_id, and an inner join made
+    // every one of them invisible in the admin screen — configured and dispatching, but
+    // unlistable and therefore un-editable.
     private static final String INAPP_RECIP_SQL =
-        "SELECT nr.id, nr.role_id, r.frenchName " +
+        "SELECT nr.id, nr.role_id, r.frenchName, nr.recipient_mode, nr.permission_code " +
         "FROM notification_routing_recipients nr " +
-        "JOIN [dbo].[Roles] r ON r.id=nr.role_id " +
+        "LEFT JOIN [dbo].[Roles] r ON r.id=nr.role_id " +
         "WHERE nr.routing_rule_id=? AND nr.is_active=1";
 
     private static final String EMAIL_RECIP_SQL =
-        "SELECT er.id, er.role_id, r.frenchName, er.recipient_field " +
+        "SELECT er.id, er.role_id, r.frenchName, er.recipient_field, " +
+        "       er.recipient_mode, er.permission_code " +
         "FROM email_routing_recipients er " +
-        "JOIN [dbo].[Roles] r ON r.id=er.role_id " +
+        "LEFT JOIN [dbo].[Roles] r ON r.id=er.role_id " +
         "WHERE er.routing_rule_id=? AND er.is_active=1";
 
     // ── Public methods ────────────────────────────────────────────────────────
@@ -103,6 +108,7 @@ public class NotificationRoutingAdminService {
                         .module(rs.getString("module"))
                         .supportsEmail(rs.getBoolean("supports_email"))
                         .isSystem(rs.getBoolean("is_system"))
+                        .defaultEntityType(rs.getString("default_entity_type"))
                         .ruleId(ruleId)
                         .sendInapp(ruleId != null ? rs.getBoolean("send_inapp") : null)
                         .sendEmail(ruleId != null ? rs.getBoolean("send_email") : null)
@@ -129,8 +135,10 @@ public class NotificationRoutingAdminService {
                 INAPP_RECIP_SQL,
                 (rs, rowNum) -> new RecipientItem(
                         rs.getLong("id"),
-                        rs.getLong("role_id"),
-                        rs.getString("frenchName")),
+                        rs.getObject("role_id") != null ? rs.getLong("role_id") : null,
+                        rs.getString("frenchName"),
+                        rs.getString("recipient_mode"),
+                        rs.getString("permission_code")),
                 rule.getId());
 
         // Load email recipients grouped by recipientField
@@ -138,9 +146,11 @@ public class NotificationRoutingAdminService {
                 EMAIL_RECIP_SQL,
                 (rs, rowNum) -> new RecipientItemWithField(
                         rs.getLong("id"),
-                        rs.getLong("role_id"),
+                        rs.getObject("role_id") != null ? rs.getLong("role_id") : null,
                         rs.getString("frenchName"),
-                        rs.getString("recipient_field")),
+                        rs.getString("recipient_field"),
+                        rs.getString("recipient_mode"),
+                        rs.getString("permission_code")),
                 rule.getId());
 
         Map<String, List<RecipientItemWithField>> emailByField = emailRecipients.stream()
@@ -167,6 +177,96 @@ public class NotificationRoutingAdminService {
                 .build();
     }
 
+    /**
+     * 2b. Creates the routing rule for an event type that has none yet.
+     *
+     * Without this there was no way to configure a NEW event at all: the editor renders
+     * nothing when ruleId is null, and rules could only be born from hand-written INSERTs.
+     * That made "add a notification" a database task rather than an admin one, which is the
+     * opposite of what this whole screen is for.
+     *
+     * The rule is created global (pays_id NULL) — it applies to every entity until someone
+     * deliberately adds an override. Templates start from the event's own label so the rule
+     * is never saved in an invalid state (both template columns are NOT NULL), and the admin
+     * edits them straight away in the editor that opens on it.
+     */
+    public RoutingRuleDetail createRoutingRule(Long eventTypeId, Long createdBy) {
+        NotificationEventType eventType = eventTypeRepo.findById(eventTypeId)
+                .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
+                        "Notification event type not found: " + eventTypeId));
+
+        ruleRepo.findByEventTypeIdAndIsActiveTrue(eventTypeId).ifPresent(existing -> {
+            throw new AppException(ErrorCode.ALREADY_EXISTS,
+                    "An active routing rule already exists for eventTypeId=" + eventTypeId);
+        });
+
+        String label = eventType.getLabelFr() != null ? eventType.getLabelFr() : eventType.getEventCode();
+
+        NotificationRoutingRule rule = NotificationRoutingRule.builder()
+                .eventType(eventType)
+                .paysId(null)
+                .sendInapp(true)
+                // Email stays OFF until an admin opts in AND the event supports it: creating
+                // a rule must never start mailing people as a side effect.
+                .sendEmail(false)
+                .inappTitleTemplate(label)
+                .inappBodyTemplate(label)
+                .isActive(true)
+                .updatedBy(createdBy)
+                .updatedAt(OffsetDateTime.now())
+                .build();
+
+        NotificationRoutingRule saved = ruleRepo.save(rule);
+
+        auditService.log(
+                createdBy != null ? createdBy.toString() : "SYSTEM",
+                "CREATE_NOTIFICATION_RULE",
+                "NOTIFICATION_RULE",
+                saved.getId(),
+                null,
+                "eventCode=" + eventType.getEventCode());
+
+        // No recipients yet: the rule dispatches to nobody until roles are added, which the
+        // editor prompts for next. NotificationRoutingService warns when that is still true.
+        return getRoutingRule(eventTypeId);
+    }
+
+
+    /**
+     * 2c. Sets (or clears) an event type's deep-link kind.
+     *
+     * Validated against NotificationEntityType rather than stored free-form: an unknown kind
+     * would not break the read path — the frontend degrades it to a non-clickable row — but
+     * it would silently produce notifications nobody can follow, which is exactly the sort of
+     * failure this screen exists to prevent.
+     */
+    public void setDefaultEntityType(Long eventTypeId, String entityType, Long updatedBy) {
+        NotificationEventType eventType = eventTypeRepo.findById(eventTypeId)
+                .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
+                        "Notification event type not found: " + eventTypeId));
+
+        String normalized = null;
+        if (entityType != null && !entityType.isBlank()) {
+            NotificationEntityType parsed = NotificationEntityType.fromNullable(entityType);
+            if (parsed == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Unknown entity type: " + entityType);
+            }
+            normalized = parsed.name();
+        }
+
+        String before = eventType.getDefaultEntityType();
+        eventType.setDefaultEntityType(normalized);
+        eventTypeRepo.save(eventType);
+
+        auditService.log(
+                updatedBy != null ? updatedBy.toString() : "SYSTEM",
+                "UPDATE_NOTIFICATION_EVENT_TYPE",
+                "NOTIFICATION_EVENT_TYPE",
+                eventTypeId,
+                "defaultEntityType=" + before,
+                "defaultEntityType=" + normalized);
+    }
     /**
      * 3. Partially updates a routing rule (PATCH semantics).
      */
@@ -203,31 +303,40 @@ public class NotificationRoutingAdminService {
     }
 
     /**
-     * 4. Adds an in-app recipient role to a routing rule.
+     * 4. Adds an in-app recipient to a routing rule.
+     *
+     * A recipient is either a ROLE (mode ALL or MANAGER) or a PERMISSION (mode PERMISSION);
+     * the two are validated as mutually exclusive here rather than left to the DB, so a
+     * half-specified recipient never reaches the resolver, where it would silently expand to
+     * nobody.
      */
-    public RecipientItem addInappRecipient(Long ruleId, Long roleId, Long createdBy) {
+    public RecipientItem addInappRecipient(Long ruleId, Long roleId, String mode,
+                                           String permissionCode, Long createdBy) {
         NotificationRoutingRule rule = ruleRepo.findById(ruleId)
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
                         "Routing rule not found: " + ruleId));
 
-        // Duplicate check
-        boolean exists = inappRecipRepo.findByRuleIdAndIsActiveTrue(ruleId)
-                .stream().anyMatch(r -> roleId.equals(r.getRoleId()));
+        NotificationRecipientMode resolvedMode = validateRecipient(mode, roleId, permissionCode);
+
+        boolean exists = inappRecipRepo.findByRuleIdAndIsActiveTrue(ruleId).stream()
+                .anyMatch(r -> sameTarget(r.getRoleId(), r.getPermissionCode(), r.getRecipientMode(),
+                        roleId, permissionCode, resolvedMode));
         if (exists) {
             throw new AppException(ErrorCode.ALREADY_EXISTS,
-                    "Role " + roleId + " is already an in-app recipient for rule " + ruleId);
+                    "This recipient is already configured for rule " + ruleId);
         }
 
         NotificationRoutingRecipient entity = NotificationRoutingRecipient.builder()
                 .rule(rule)
-                .roleId(roleId)
+                .roleId(resolvedMode.isContextBased() || resolvedMode == NotificationRecipientMode.PERMISSION ? null : roleId)
+                .recipientMode(resolvedMode.name())
+                .permissionCode(resolvedMode == NotificationRecipientMode.PERMISSION ? permissionCode : null)
                 .isActive(true)
                 .createdBy(createdBy)
                 .build();
 
         NotificationRoutingRecipient saved = inappRecipRepo.save(entity);
-
-        String roleName = resolveRoleName(roleId);
+        String roleName = saved.getRoleId() != null ? resolveRoleName(saved.getRoleId()) : null;
 
         auditService.log(
                 createdBy != null ? createdBy.toString() : "SYSTEM",
@@ -235,9 +344,57 @@ public class NotificationRoutingAdminService {
                 "NOTIFICATION_RULE",
                 ruleId,
                 null,
-                "roleId=" + roleId + " recipientId=" + saved.getId());
+                "mode=" + resolvedMode + " roleId=" + saved.getRoleId()
+                    + " permission=" + saved.getPermissionCode() + " recipientId=" + saved.getId());
 
-        return new RecipientItem(saved.getId(), roleId, roleName);
+        return new RecipientItem(saved.getId(), saved.getRoleId(), roleName,
+                saved.getRecipientMode(), saved.getPermissionCode());
+    }
+
+    /**
+     * A role recipient and a permission recipient are never "the same" even with equal ids —
+     * they are different kinds of target, so the duplicate check compares kind first. A
+     * context-based mode has no target at all, so one per rule is the only sensible limit.
+     */
+    private boolean sameTarget(Long roleA, String permA, String modeA,
+                               Long roleB, String permB, NotificationRecipientMode modeB) {
+        NotificationRecipientMode a = NotificationRecipientMode.fromNullable(modeA);
+        if (a != modeB) return false;
+        if (modeB.isContextBased()) {
+            return true;    // same mode, nothing to compare — already configured
+        }
+        if (modeB == NotificationRecipientMode.PERMISSION) {
+            return permB != null && permB.equalsIgnoreCase(permA);
+        }
+        return roleB != null && roleB.equals(roleA);
+    }
+
+    /**
+     * Rejects a recipient that does not name what its mode needs.
+     *
+     * SUBJECT and MANAGER_OF_SUBJECT need NOTHING: they resolve from the dispatch rather than
+     * from configuration, so demanding a role would be nonsense — and storing one would be a
+     * lie about who actually receives the notification.
+     */
+    private NotificationRecipientMode validateRecipient(String mode, Long roleId, String permissionCode) {
+        NotificationRecipientMode resolved = NotificationRecipientMode.fromNullable(mode);
+        if (resolved.isContextBased()) {
+            return resolved;
+        }
+        if (resolved == NotificationRecipientMode.PERMISSION) {
+            if (permissionCode == null || permissionCode.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "PERMISSION mode requires a permissionCode");
+            }
+            if (!PermissionCatalog.ALL_CODES.contains(permissionCode)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Unknown permission: " + permissionCode);
+            }
+        } else if (roleId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    resolved + " mode requires a roleId");
+        }
+        return resolved;
     }
 
     /**
@@ -262,7 +419,8 @@ public class NotificationRoutingAdminService {
     /**
      * 6. Adds an email recipient role (TO / CC / BCC) to a routing rule.
      */
-    public RecipientItem addEmailRecipient(Long ruleId, Long roleId, String field, Long createdBy) {
+    public RecipientItem addEmailRecipient(Long ruleId, Long roleId, String field,
+                                           String mode, String permissionCode, Long createdBy) {
         String normalizedField = field != null ? field.toUpperCase() : "";
         if (!Set.of("TO", "CC", "BCC").contains(normalizedField)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -273,28 +431,31 @@ public class NotificationRoutingAdminService {
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
                         "Routing rule not found: " + ruleId));
 
-        // Duplicate check per (ruleId, roleId, field)
-        boolean exists = emailRecipRepo.findByRuleIdAndIsActiveTrue(ruleId)
-                .stream().anyMatch(r ->
-                        roleId.equals(r.getRoleId()) &&
-                        normalizedField.equalsIgnoreCase(r.getRecipientField()));
+        NotificationRecipientMode resolvedMode = validateRecipient(mode, roleId, permissionCode);
+
+        // Duplicate is per (rule, target, field): the same role can legitimately be TO on one
+        // rule and CC on another, or CC alongside a different role in TO.
+        boolean exists = emailRecipRepo.findByRuleIdAndIsActiveTrue(ruleId).stream()
+                .anyMatch(r -> normalizedField.equalsIgnoreCase(r.getRecipientField())
+                        && sameTarget(r.getRoleId(), r.getPermissionCode(), r.getRecipientMode(),
+                                roleId, permissionCode, resolvedMode));
         if (exists) {
             throw new AppException(ErrorCode.ALREADY_EXISTS,
-                    "Role " + roleId + " is already a " + normalizedField +
-                    " email recipient for rule " + ruleId);
+                    "This recipient is already a " + normalizedField + " recipient for rule " + ruleId);
         }
 
         EmailRoutingRecipient entity = EmailRoutingRecipient.builder()
                 .rule(rule)
-                .roleId(roleId)
+                .roleId(resolvedMode.isContextBased() || resolvedMode == NotificationRecipientMode.PERMISSION ? null : roleId)
                 .recipientField(normalizedField)
+                .recipientMode(resolvedMode.name())
+                .permissionCode(resolvedMode == NotificationRecipientMode.PERMISSION ? permissionCode : null)
                 .isActive(true)
                 .createdBy(createdBy)
                 .build();
 
         EmailRoutingRecipient saved = emailRecipRepo.save(entity);
-
-        String roleName = resolveRoleName(roleId);
+        String roleName = saved.getRoleId() != null ? resolveRoleName(saved.getRoleId()) : null;
 
         auditService.log(
                 createdBy != null ? createdBy.toString() : "SYSTEM",
@@ -302,9 +463,12 @@ public class NotificationRoutingAdminService {
                 "NOTIFICATION_RULE",
                 ruleId,
                 null,
-                "roleId=" + roleId + " field=" + normalizedField + " recipientId=" + saved.getId());
+                "mode=" + resolvedMode + " roleId=" + saved.getRoleId()
+                    + " permission=" + saved.getPermissionCode()
+                    + " field=" + normalizedField + " recipientId=" + saved.getId());
 
-        return new RecipientItem(saved.getId(), roleId, roleName);
+        return new RecipientItem(saved.getId(), saved.getRoleId(), roleName,
+                saved.getRecipientMode(), saved.getPermissionCode());
     }
 
     /**
@@ -327,16 +491,22 @@ public class NotificationRoutingAdminService {
     }
 
     /**
-     * 8. Simulates dispatch for a given event type and pays — no actual
-     *    notifications or emails sent.
+     * 8. Simulates dispatch for one routing RULE and a pays — nothing is sent or stored.
+     *
+     * Takes a rule id, matching both the endpoint it sits behind
+     * (POST /notification-rules/{ruleId}/test) and what the editor passes. It used to look
+     * the argument up as an EVENT TYPE id, and only appeared to work because V12 seeded
+     * eight event types and eight rules in the same order, so rule.id happened to equal
+     * event_type_id for every row. Adding or deleting a single rule would have made the
+     * preview silently show a different event's templates and recipients.
      */
     @Transactional(readOnly = true)
-    public TestDispatchResult testDispatch(Long eventTypeId, Long paysId) {
-        Optional<NotificationRoutingRule> ruleOpt =
-                ruleRepo.findByEventTypeIdAndIsActiveTrue(eventTypeId);
+    public TestDispatchResult testDispatch(Long ruleId, Long paysId) {
+        Optional<NotificationRoutingRule> ruleOpt = ruleRepo.findById(ruleId)
+                .filter(r -> Boolean.TRUE.equals(r.getIsActive()));
 
         if (ruleOpt.isEmpty()) {
-            log.warn("testDispatch: no active rule found for eventTypeId={}", eventTypeId);
+            log.warn("testDispatch: no active routing rule found for ruleId={}", ruleId);
             return TestDispatchResult.empty();
         }
 
@@ -413,6 +583,20 @@ public class NotificationRoutingAdminService {
                 .build();
     }
 
+    /**
+     * 9. The permission codes an admin may pick for a PERMISSION recipient.
+     *
+     * Read from PermissionCatalog rather than from RolePermissions: the catalogue is the
+     * closed set the backend validates against, whereas the table only shows what happens to
+     * be granted today — which would hide a valid code the moment no role held it.
+     */
+    @Transactional(readOnly = true)
+    public List<PermissionOption> getAssignablePermissions() {
+        return PermissionCatalog.GROUPS.stream()
+                .flatMap(g -> g.codes().stream().map(code -> new PermissionOption(code, g.label())))
+                .toList();
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private int countById(String sql, Long id) {
@@ -448,9 +632,21 @@ public class NotificationRoutingAdminService {
 
     // ── Inner DTOs / Records ──────────────────────────────────────────────────
 
-    // recipientField named to match Angular model
-    public record RecipientItem(Long id, Long roleId, String roleName) {}
-    public record RecipientItemWithField(Long id, Long roleId, String roleName, String recipientField) {}
+    /** A permission an admin can target, with its catalogue group for sectioning the picker. */
+    public record PermissionOption(String code, String group) {}
+
+    /**
+     * One configured recipient.
+     *
+     * `roleName` is null for a PERMISSION recipient — it targets a permission code and has no
+     * role, so the UI shows the code instead. `recipientField` is named to match the Angular
+     * model.
+     */
+    public record RecipientItem(Long id, Long roleId, String roleName,
+                                String recipientMode, String permissionCode) {}
+    public record RecipientItemWithField(Long id, Long roleId, String roleName,
+                                         String recipientField, String recipientMode,
+                                         String permissionCode) {}
     public record RoleItem(Long id, String frenchName) {}
     public record TestUserEntry(Long userId, String fullName, String email) {}
     public record TestEmailEntry(String email, String roleName) {}
@@ -467,6 +663,8 @@ public class NotificationRoutingAdminService {
         private String  module;
         private Boolean supportsEmail;
         private Boolean isSystem;
+        /** Deep-link kind this event points at; null = its notifications are not clickable. */
+        private String  defaultEntityType;
         private Long    ruleId;
         private Boolean sendInapp;
         private Boolean sendEmail;

@@ -404,8 +404,9 @@ public class OnboardingService {
             RoutingContext.builder()
                 .eventCode("ONBOARDING_COMPLETED")
                 .paysId(candidate.getPaysId())
-                .directUserId(prov.getUserId())
-                // directUserId bypasses role routing — sends directly to the new employee
+                .subjectUserId(prov.getUserId())
+                // The new employee is the SUBJECT: the rule targets them via a SUBJECT
+                // recipient, so an admin can add RH or the manager alongside them.
                 .templateVars(Map.of(
                     "firstName",      candidate.getFirstName(),
                     "candidateName",  candidate.getFirstName() + " " + candidate.getLastName(),

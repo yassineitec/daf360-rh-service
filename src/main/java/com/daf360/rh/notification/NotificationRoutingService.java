@@ -22,23 +22,92 @@ public class NotificationRoutingService {
     private final NotificationRoutingRuleRepository     ruleRepo;
     private final NotificationRoutingRecipientRepository recipientRepo;
     private final EmailRoutingRecipientRepository       emailRecipientRepo;
+    private final InAppNotifier                         inAppNotifier;
     private final MailService                           mailService;
     private final AuditService                          auditService;
     private final JdbcTemplate                          jdbc;
 
-    private static final String INSERT_NOTIF_SQL =
-        "INSERT INTO [dbo].[notifications] (user_id, module, title, message, is_read, created_at) " +
-        "VALUES (?, ?, ?, ?, 0, SYSDATETIMEOFFSET())";
+    // ── Recipient resolution ──────────────────────────────────────────────────
+    // Three targeting modes, all scoped to the event's entity. Every query filters on
+    // pays_id: the same role and the same permission exist in every country, and a
+    // hierarchy or a duty roster that crosses entities is not one.
 
+    /** ALL — every active holder of the role. */
     private static final String USERS_BY_ROLE_SQL =
         "SELECT u.id FROM [dbo].[Users] u " +
         "WHERE u.role_id = ? AND u.pays_id = ? " +
         "AND (u.isActive = 1 OR u.isActive IS NULL)";
 
+    /** MANAGER — holders of the PARENT of the given role (Roles.parent_role_id). */
+    private static final String USERS_BY_PARENT_ROLE_SQL =
+        "SELECT u.id FROM [dbo].[Users] u " +
+        "WHERE u.pays_id = ? AND (u.isActive = 1 OR u.isActive IS NULL) " +
+        "AND u.role_id = (" +
+        "  SELECT pr.id FROM [dbo].[Roles] cr " +
+        "  JOIN [dbo].[Roles] pr ON pr.id = cr.parent_role_id " +
+        "  WHERE cr.id = ? AND (pr.deleted = 0 OR pr.deleted IS NULL))";
+
+    /** PERMISSION — every active user whose role carries the permission. */
+    private static final String USERS_BY_PERMISSION_SQL =
+        "SELECT DISTINCT u.id FROM [dbo].[Users] u " +
+        "JOIN [dbo].[RolePermissions] rp ON rp.role_id = u.role_id " +
+        "WHERE rp.permission = ? AND u.pays_id = ? " +
+        "AND (u.isActive = 1 OR u.isActive IS NULL)";
+
+    /** SUBJECT — the one user the event is about, looked up only to confirm they are active. */
+    private static final String SUBJECT_USER_SQL =
+        "SELECT u.id FROM [dbo].[Users] u " +
+        "WHERE u.id = ? AND (u.isActive = 1 OR u.isActive IS NULL)";
+
+    private static final String SUBJECT_EMAIL_SQL =
+        "SELECT COALESCE(u.username, u.email) FROM [dbo].[Users] u " +
+        "WHERE u.id = ? AND (u.isActive = 1 OR u.isActive IS NULL) " +
+        "AND COALESCE(u.username, u.email) IS NOT NULL";
+
+    /**
+     * MANAGER_OF_SUBJECT — holders of the parent of the SUBJECT's own role, in the subject's
+     * entity. One parameter: everything is derived from the subject.
+     */
+    private static final String SUBJECT_MANAGERS_SQL =
+        "SELECT m.id FROM [dbo].[Users] s " +
+        "JOIN [dbo].[Roles] sr ON sr.id = s.role_id " +
+        "JOIN [dbo].[Roles] pr ON pr.id = sr.parent_role_id " +
+        "                     AND (pr.deleted = 0 OR pr.deleted IS NULL) " +
+        "JOIN [dbo].[Users] m ON m.role_id = pr.id AND m.pays_id = s.pays_id " +
+        "                     AND (m.isActive = 1 OR m.isActive IS NULL) " +
+        "WHERE s.id = ?";
+
+    private static final String SUBJECT_MANAGERS_EMAIL_SQL =
+        "SELECT COALESCE(m.username, m.email) FROM [dbo].[Users] s " +
+        "JOIN [dbo].[Roles] sr ON sr.id = s.role_id " +
+        "JOIN [dbo].[Roles] pr ON pr.id = sr.parent_role_id " +
+        "                     AND (pr.deleted = 0 OR pr.deleted IS NULL) " +
+        "JOIN [dbo].[Users] m ON m.role_id = pr.id AND m.pays_id = s.pays_id " +
+        "                     AND (m.isActive = 1 OR m.isActive IS NULL) " +
+        "WHERE s.id = ? AND COALESCE(m.username, m.email) IS NOT NULL";
+
     private static final String USER_EMAIL_BY_ROLE_SQL =
         "SELECT COALESCE(u.username, u.email) " +
         "FROM [dbo].[Users] u " +
         "WHERE u.role_id = ? AND u.pays_id = ? " +
+        "AND (u.isActive = 1 OR u.isActive IS NULL) " +
+        "AND COALESCE(u.username, u.email) IS NOT NULL";
+
+    private static final String USER_EMAIL_BY_PARENT_ROLE_SQL =
+        "SELECT COALESCE(u.username, u.email) " +
+        "FROM [dbo].[Users] u " +
+        "WHERE u.pays_id = ? AND (u.isActive = 1 OR u.isActive IS NULL) " +
+        "AND COALESCE(u.username, u.email) IS NOT NULL " +
+        "AND u.role_id = (" +
+        "  SELECT pr.id FROM [dbo].[Roles] cr " +
+        "  JOIN [dbo].[Roles] pr ON pr.id = cr.parent_role_id " +
+        "  WHERE cr.id = ? AND (pr.deleted = 0 OR pr.deleted IS NULL))";
+
+    private static final String USER_EMAIL_BY_PERMISSION_SQL =
+        "SELECT DISTINCT COALESCE(u.username, u.email) " +
+        "FROM [dbo].[Users] u " +
+        "JOIN [dbo].[RolePermissions] rp ON rp.role_id = u.role_id " +
+        "WHERE rp.permission = ? AND u.pays_id = ? " +
         "AND (u.isActive = 1 OR u.isActive IS NULL) " +
         "AND COALESCE(u.username, u.email) IS NOT NULL";
 
@@ -91,17 +160,14 @@ public class NotificationRoutingService {
         String module          = rule.getEventType().getModule();
 
         // ── Step C: dispatch in-app ───────────────────────────────────────────
+        NotificationTarget target = resolveTarget(rule, ctx);
+
         if (Boolean.TRUE.equals(rule.getSendInapp())) {
             List<Long> recipientIds = resolveInappRecipients(rule, ctx);
-            for (Long uid : recipientIds) {
-                try {
-                    jdbc.update(INSERT_NOTIF_SQL, uid, module, resolvedTitle, resolvedBody);
-                } catch (Exception ex) {
-                    log.error("Failed to insert notification for userId={}: {}", uid, ex.getMessage());
-                }
-            }
-            log.debug("Dispatched in-app notifications for event={} to {} recipients",
-                ctx.getEventCode(), recipientIds.size());
+            int written = inAppNotifier.notifyUsers(
+                recipientIds, module, resolvedTitle, resolvedBody, target);
+            log.debug("Dispatched in-app notifications for event={} to {}/{} recipients",
+                ctx.getEventCode(), written, recipientIds.size());
         }
 
         // ── Step D: dispatch email ────────────────────────────────────────────
@@ -134,19 +200,123 @@ public class NotificationRoutingService {
         );
     }
 
+    /**
+     * Resolves the deep-link target for a dispatch.
+     *
+     * The kind comes from the call site when it knows it, otherwise from the event type's
+     * configured `default_entity_type`; the id only ever comes from the call site. No id
+     * means no link — see NotificationTarget.of.
+     */
+    private NotificationTarget resolveTarget(NotificationRoutingRule rule, RoutingContext ctx) {
+        if (ctx.getEntityId() == null) return NotificationTarget.none();
+        NotificationEntityType type = ctx.getEntityType() != null
+            ? ctx.getEntityType()
+            : NotificationEntityType.fromNullable(rule.getEventType().getDefaultEntityType());
+        return NotificationTarget.of(type, ctx.getEntityId());
+    }
+
     private List<Long> resolveInappRecipients(NotificationRoutingRule rule, RoutingContext ctx) {
-        if (ctx.getDirectUserId() != null) {
-            return List.of(ctx.getDirectUserId());
-        }
-        List<NotificationRoutingRecipient> roleRecipients =
+        List<NotificationRoutingRecipient> recipients =
             recipientRepo.findByRuleIdAndIsActiveTrue(rule.getId());
+
         Set<Long> userIds = new LinkedHashSet<>();
-        for (NotificationRoutingRecipient r : roleRecipients) {
-            List<Long> ids = jdbc.queryForList(USERS_BY_ROLE_SQL, Long.class,
-                r.getRoleId(), ctx.getPaysId());
-            userIds.addAll(ids);
+        for (NotificationRoutingRecipient r : recipients) {
+            userIds.addAll(resolveOne(r, ctx, rule));
+        }
+
+        // Safety net for a subject-driven event whose rule has no recipients yet — the state
+        // between deploying this code and applying V93. Without it, removing the old
+        // directUserId short-circuit would have silently stopped telling employees that their
+        // own request was decided. Logged, because a configured rule should never need it.
+        if (userIds.isEmpty() && recipients.isEmpty() && ctx.getSubjectUserId() != null) {
+            log.warn("Rule {} for event={} has no recipients; falling back to the subject "
+                + "(userId={}). Add a SUBJECT recipient to make this explicit.",
+                rule.getId(), ctx.getEventCode(), ctx.getSubjectUserId());
+            return List.of(ctx.getSubjectUserId());
+        }
+
+        if (userIds.isEmpty()) {
+            // A rule can be active, correct and still reach nobody: recipients are filtered
+            // by pays_id, so a null or mismatched entity resolves to an empty list and the
+            // notification simply never appears. This used to return silently.
+            log.warn("No in-app recipients resolved for event={} pays={} rule={} — " +
+                "check the rule's recipients and the users' pays_id",
+                ctx.getEventCode(), ctx.getPaysId(), rule.getId());
         }
         return new ArrayList<>(userIds);
+    }
+
+    /**
+     * Expands one recipient row into user ids according to its mode.
+     *
+     * MANAGER falls back to ALL when the configured role has no parent: escalating from a
+     * top-level role has nowhere to go, and sending it one level too low beats sending it
+     * nowhere. The fallback is logged so a mis-configured hierarchy is visible rather than
+     * silently absorbed.
+     */
+    private List<Long> resolveOne(NotificationRoutingRecipient r, RoutingContext ctx,
+                                  NotificationRoutingRule rule) {
+        NotificationRecipientMode mode = NotificationRecipientMode.fromNullable(r.getRecipientMode());
+        try {
+            switch (mode) {
+                case PERMISSION -> {
+                    // The context wins when set: a per-task permission is more specific than
+                    // whatever the rule carries.
+                    String permission = effectivePermission(ctx, r.getPermissionCode());
+                    if (permission == null) {
+                        log.warn("Recipient {} on rule {} is PERMISSION mode with no permission — skipped",
+                            r.getId(), rule.getId());
+                        return List.of();
+                    }
+                    return jdbc.queryForList(USERS_BY_PERMISSION_SQL, Long.class,
+                        permission, ctx.getPaysId());
+                }
+                case SUBJECT -> {
+                    if (ctx.getSubjectUserId() == null) {
+                        log.warn("Recipient {} on rule {} is SUBJECT mode but event={} carries no "
+                            + "subjectUserId — skipped", r.getId(), rule.getId(), ctx.getEventCode());
+                        return List.of();
+                    }
+                    // Looked up rather than trusted: an inactive user must not be notified,
+                    // and the id comes from business data that may be stale.
+                    return jdbc.queryForList(SUBJECT_USER_SQL, Long.class, ctx.getSubjectUserId());
+                }
+                case MANAGER_OF_SUBJECT -> {
+                    if (ctx.getSubjectUserId() == null) return List.of();
+                    List<Long> managers = jdbc.queryForList(SUBJECT_MANAGERS_SQL, Long.class,
+                        ctx.getSubjectUserId());
+                    if (managers.isEmpty()) {
+                        // No fallback to the subject here: telling someone "your manager was
+                        // informed" by informing them instead would be actively misleading.
+                        log.warn("MANAGER_OF_SUBJECT found no manager for userId={} (event={}) — "
+                            + "their role may be top-level or have no active holder above it",
+                            ctx.getSubjectUserId(), ctx.getEventCode());
+                    }
+                    return managers;
+                }
+                case MANAGER -> {
+                    if (r.getRoleId() == null) return List.of();
+                    List<Long> managers = jdbc.queryForList(USERS_BY_PARENT_ROLE_SQL, Long.class,
+                        ctx.getPaysId(), r.getRoleId());
+                    if (!managers.isEmpty()) return managers;
+                    log.warn("MANAGER mode found no parent-role holder for roleId={} pays={} " +
+                        "(event={}) — falling back to the role itself",
+                        r.getRoleId(), ctx.getPaysId(), ctx.getEventCode());
+                    return jdbc.queryForList(USERS_BY_ROLE_SQL, Long.class,
+                        r.getRoleId(), ctx.getPaysId());
+                }
+                default -> {
+                    if (r.getRoleId() == null) return List.of();
+                    return jdbc.queryForList(USERS_BY_ROLE_SQL, Long.class,
+                        r.getRoleId(), ctx.getPaysId());
+                }
+            }
+        } catch (Exception ex) {
+            // One bad recipient row must not silence the whole notification.
+            log.error("Failed to resolve recipient {} (mode={}) on rule {}: {}",
+                r.getId(), mode, rule.getId(), ex.getMessage());
+            return List.of();
+        }
     }
 
     private EmailAddresses resolveEmailRecipients(NotificationRoutingRule rule, RoutingContext ctx) {
@@ -156,18 +326,67 @@ public class NotificationRoutingService {
         List<String> to = new ArrayList<>(), cc = new ArrayList<>(), bcc = new ArrayList<>();
 
         for (EmailRoutingRecipient r : emailRecipients) {
-            if (!r.getIsActive()) continue;
-            List<String> emails = jdbc.queryForList(USER_EMAIL_BY_ROLE_SQL, String.class,
-                r.getRoleId(), ctx.getPaysId());
-            switch (r.getRecipientField().toUpperCase()) {
-                case "TO"  -> to.addAll(emails);
+            if (!Boolean.TRUE.equals(r.getIsActive())) continue;
+            List<String> emails = resolveOneEmail(r, ctx, rule);
+            String field = r.getRecipientField() != null ? r.getRecipientField().toUpperCase() : "TO";
+            switch (field) {
                 case "CC"  -> cc.addAll(emails);
                 case "BCC" -> bcc.addAll(emails);
+                default    -> to.addAll(emails);
             }
         }
         return new EmailAddresses(dedupe(to), dedupe(cc), dedupe(bcc));
     }
 
+    /** Email counterpart of {@link #resolveOne}, mode for mode. */
+    private List<String> resolveOneEmail(EmailRoutingRecipient r, RoutingContext ctx,
+                                         NotificationRoutingRule rule) {
+        NotificationRecipientMode mode = NotificationRecipientMode.fromNullable(r.getRecipientMode());
+        try {
+            switch (mode) {
+                case PERMISSION -> {
+                    String permission = effectivePermission(ctx, r.getPermissionCode());
+                    if (permission == null) return List.of();
+                    return jdbc.queryForList(USER_EMAIL_BY_PERMISSION_SQL, String.class,
+                        permission, ctx.getPaysId());
+                }
+                case SUBJECT -> {
+                    if (ctx.getSubjectUserId() == null) return List.of();
+                    return jdbc.queryForList(SUBJECT_EMAIL_SQL, String.class, ctx.getSubjectUserId());
+                }
+                case MANAGER_OF_SUBJECT -> {
+                    if (ctx.getSubjectUserId() == null) return List.of();
+                    return jdbc.queryForList(SUBJECT_MANAGERS_EMAIL_SQL, String.class,
+                        ctx.getSubjectUserId());
+                }
+                case MANAGER -> {
+                    if (r.getRoleId() == null) return List.of();
+                    List<String> managers = jdbc.queryForList(USER_EMAIL_BY_PARENT_ROLE_SQL, String.class,
+                        ctx.getPaysId(), r.getRoleId());
+                    if (!managers.isEmpty()) return managers;
+                    return jdbc.queryForList(USER_EMAIL_BY_ROLE_SQL, String.class,
+                        r.getRoleId(), ctx.getPaysId());
+                }
+                default -> {
+                    if (r.getRoleId() == null) return List.of();
+                    return jdbc.queryForList(USER_EMAIL_BY_ROLE_SQL, String.class,
+                        r.getRoleId(), ctx.getPaysId());
+                }
+            }
+        } catch (Exception ex) {
+            log.error("Failed to resolve email recipient {} (mode={}) on rule {}: {}",
+                r.getId(), mode, rule.getId(), ex.getMessage());
+            return List.of();
+        }
+    }
+
+
+    /** Context permission if the dispatch supplied one, else the rule's own. */
+    private String effectivePermission(RoutingContext ctx, String rulePermission) {
+        String dynamic = ctx.getDynamicPermission();
+        if (dynamic != null && !dynamic.isBlank()) return dynamic;
+        return (rulePermission != null && !rulePermission.isBlank()) ? rulePermission : null;
+    }
     private List<String> dedupe(List<String> list) {
         return list.stream().distinct().filter(s -> s != null && !s.isBlank()).collect(Collectors.toList());
     }

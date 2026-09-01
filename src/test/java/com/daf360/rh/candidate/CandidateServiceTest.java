@@ -8,6 +8,9 @@ import com.daf360.rh.dto.candidate.*;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.mapper.CandidateMapper;
+import com.daf360.rh.notification.NotificationEntityType;
+import com.daf360.rh.notification.NotificationRoutingService;
+import com.daf360.rh.notification.RoutingContext;
 import com.daf360.rh.repository.CandidateRepository;
 import com.daf360.rh.repository.ItProvisioningRepository;
 import com.daf360.rh.service.AuditService;
@@ -37,6 +40,7 @@ class CandidateServiceTest {
     @Mock CandidateMapper          mapper;
     @Mock AuditService             auditService;
     @Mock JdbcTemplate             jdbc;
+    @Mock NotificationRoutingService notificationRoutingService;
 
     @InjectMocks CandidateService service;
 
@@ -69,8 +73,9 @@ class CandidateServiceTest {
 
     @BeforeEach
     void stubItProvRepo() {
-        // By default no provisioning exists for any candidate
-        when(itProvRepo.findByCandidateId(anyLong())).thenReturn(Optional.empty());
+        // By default no provisioning exists for any candidate. lenient: the guard-clause tests
+        // throw before ever reaching this lookup, and strict stubs fail them for it.
+        lenient().when(itProvRepo.findByCandidateId(anyLong())).thenReturn(Optional.empty());
     }
 
     // ── createCandidate ───────────────────────────────────────────────────────
@@ -124,12 +129,6 @@ class CandidateServiceTest {
         when(candidateRepo.findById(10L)).thenReturn(Optional.of(candidate));
         when(candidateRepo.save(candidate)).thenReturn(candidate);
         when(mapper.toResponse(candidate)).thenReturn(stubResponse(candidate));
-
-        // No IT users in this pays (simplifies notification assertion)
-        when(jdbc.queryForList(anyString(), eq(Long.class), eq("IT_PROVISIONING"), eq(PAYS_ID)))
-                .thenReturn(List.of());
-        when(jdbc.queryForList(anyString(), eq(Long.class), eq("HR_ONBOARDING"), eq(PAYS_ID)))
-                .thenReturn(List.of());
 
         service.acceptCandidate(10L, ACTOR_ID);
 
@@ -219,14 +218,20 @@ class CandidateServiceTest {
         when(candidateRepo.save(candidate)).thenReturn(candidate);
         when(mapper.toResponse(candidate)).thenReturn(stubResponse(candidate));
 
-        when(jdbc.queryForList(anyString(), eq(Long.class), eq("IT_PROVISIONING"), eq(PAYS_ID)))
-                .thenReturn(List.of(101L, 102L));
-        when(jdbc.queryForList(anyString(), eq(Long.class), eq("HR_ONBOARDING"), eq(PAYS_ID)))
-                .thenReturn(List.of(201L));
-
         service.acceptCandidate(10L, ACTOR_ID);
 
-        // 2 IT notifications + 1 HR notification
-        verify(jdbc, times(3)).update(anyString(), anyLong(), anyString(), anyString());
+        // Recipients are no longer resolved here: they are configured per role in the
+        // notification_routing_recipients table and resolved by NotificationRoutingService.
+        // What this service still owns is raising the right EVENT for the right candidate.
+        ArgumentCaptor<RoutingContext> ctxCaptor = ArgumentCaptor.forClass(RoutingContext.class);
+        verify(notificationRoutingService).resolveAndDispatch(ctxCaptor.capture());
+
+        RoutingContext ctx = ctxCaptor.getValue();
+        assertThat(ctx.getEventCode()).isEqualTo("CANDIDATE_ACCEPTED");
+        assertThat(ctx.getPaysId()).isEqualTo(PAYS_ID);
+        // Deep link: the notification points back at the candidate it is about.
+        assertThat(ctx.getEntityType()).isEqualTo(NotificationEntityType.CANDIDATE);
+        assertThat(ctx.getEntityId()).isEqualTo(10L);
+        assertThat(ctx.getTemplateVars()).containsEntry("candidateName", "Alice Martin");
     }
 }

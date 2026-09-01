@@ -60,15 +60,6 @@ public class ItProvisioningService {
     private static final String UPDATE_MATRICULE_SQL =
         "UPDATE [dbo].[Users] SET employee_id = ? WHERE id = ?";
 
-    private static final String USERS_WITH_PERMISSION_SQL =
-        "SELECT DISTINCT u.id FROM [dbo].[Users] u " +
-        "JOIN [dbo].[Roles] r       ON r.id    = u.role_id " +
-        "JOIN [dbo].[RolePermissions] rp ON rp.role_id = r.id " +
-        "WHERE rp.permission = ? AND u.pays_id = ? AND (u.isActive = 1 OR u.isActive IS NULL)";
-
-    private static final String INSERT_NOTIFICATION_SQL =
-        "INSERT INTO [dbo].[notifications] (user_id, module, title, message, is_read, created_at) " +
-        "VALUES (?, 'HR', ?, ?, 0, SYSDATETIMEOFFSET())";
 
     private final ItProvisioningRepository itProvRepo;
     private final CandidateRepository      candidateRepo;
@@ -311,6 +302,8 @@ public class ItProvisioningService {
             RoutingContext.builder()
                 .eventCode("IT_EMAIL_SUBMITTED")
                 .paysId(candidate.getPaysId())
+                .entityType(com.daf360.rh.notification.NotificationEntityType.IT_PROVISIONING)
+                .entityId(prov.getId())
                 .templateVars(Map.of(
                     "candidateName", candidate.getFirstName() + " " + candidate.getLastName(),
                     "firstName", candidate.getFirstName(),
@@ -447,20 +440,5 @@ public class ItProvisioningService {
                 .expectedStartDate(c != null ? c.getExpectedStartDate() : null)
                 .candidateAcceptedAt(c != null ? c.getAcceptedAt() : null)
                 .build();
-    }
-
-    @SuppressWarnings("unused")
-    private void notifyUsersWithPermission(String permission, Long paysId,
-                                           String title, String message) {
-        try {
-            List<Long> userIds = jdbc.queryForList(
-                    USERS_WITH_PERMISSION_SQL, Long.class, permission, paysId);
-            for (Long uid : userIds) {
-                jdbc.update(INSERT_NOTIFICATION_SQL, uid, title, message);
-            }
-        } catch (Exception ex) {
-            log.error("Notification failed for permission={} pays={}: {}",
-                    permission, paysId, ex.getMessage());
-        }
     }
 }

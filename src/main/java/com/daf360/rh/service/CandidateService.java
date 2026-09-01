@@ -89,24 +89,6 @@ public class CandidateService {
     /** Equipment ledger (V76) — seeded here too, see hireCandidate. */
     private final ItAssetAssignmentService        assetAssignmentService;
 
-    // ── SQL constants ─────────────────────────────────────────────────────────
-
-    /** Finds user IDs that hold a given permission for a given pays. */
-    private static final String USERS_WITH_PERMISSION_SQL = """
-        SELECT DISTINCT u.id
-          FROM [dbo].[Users] u
-          JOIN [dbo].[Roles] r       ON r.id    = u.role_id
-          JOIN [dbo].[RolePermissions] rp ON rp.role_id = r.id
-         WHERE rp.permission = ?
-           AND u.pays_id     = ?
-           AND (u.isActive = 1 OR u.isActive IS NULL)
-        """;
-
-    private static final String INSERT_NOTIFICATION_SQL = """
-        INSERT INTO [dbo].[notifications] (user_id, module, title, message, is_read, created_at)
-        VALUES (?, 'HR', ?, ?, 0, SYSDATETIMEOFFSET())
-        """;
-
     // ── Public API ────────────────────────────────────────────────────────────
 
     public CandidateResponse createCandidate(CreateCandidateRequest request, Long actorUserId) {
@@ -193,6 +175,8 @@ public class CandidateService {
                 RoutingContext.builder()
                         .eventCode("CANDIDATE_ACCEPTED")
                         .paysId(candidate.getPaysId())
+                        .entityType(com.daf360.rh.notification.NotificationEntityType.CANDIDATE)
+                        .entityId(candidate.getId())
                         .templateVars(Map.of(
                                 "candidateName", candidate.getFirstName() + " " + candidate.getLastName(),
                                 "firstName",     candidate.getFirstName(),
@@ -731,16 +715,5 @@ public class CandidateService {
                             v.getLabelFr() != null ? v.getLabelFr() : v.getLabelEn()));
         }
         return response;
-    }
-
-    private void notifyUsersWithPermission(String permission, Long paysId, String title, String message) {
-        try {
-            List<Long> userIds = jdbc.queryForList(USERS_WITH_PERMISSION_SQL, Long.class, permission, paysId);
-            for (Long uid : userIds) {
-                jdbc.update(INSERT_NOTIFICATION_SQL, uid, title, message);
-            }
-        } catch (Exception ex) {
-            log.error("Failed to send notifications for permission={} pays={}: {}", permission, paysId, ex.getMessage());
-        }
     }
 }

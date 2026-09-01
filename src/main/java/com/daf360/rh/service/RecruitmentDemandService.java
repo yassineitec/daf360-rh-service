@@ -1,6 +1,5 @@
 package com.daf360.rh.service;
 
-import com.daf360.rh.common.PermissionCatalog;
 import com.daf360.rh.domain.RecruitmentDemand;
 import com.daf360.rh.domain.enums.RecruitmentDemandStatus;
 import com.daf360.rh.dto.recruitment.*;
@@ -8,6 +7,8 @@ import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.lists.ConfigurableListTypeRepository;
 import com.daf360.rh.lists.ConfigurableListValueRepository;
+import com.daf360.rh.notification.NotificationEntityType;
+import com.daf360.rh.notification.RoutingContext;
 import com.daf360.rh.repository.RecruitmentDemandRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,40 +35,13 @@ public class RecruitmentDemandService {
     private final ConfigurableListValueRepository listValueRepo;
     private final ConfigurableListTypeRepository  listTypeRepo;
     private final AuditService  auditService;
-    private final MailService   mailService;
+    private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
     private final JdbcTemplate  jdbc;
     private final ObjectMapper  objectMapper;
     private final com.daf360.rh.security.TenantService tenantService;
 
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
 
-    // ── SQL constants ─────────────────────────────────────────────────────────
-
-    private static final String USERS_WITH_PERMISSION_SQL = """
-        SELECT DISTINCT u.id
-          FROM [dbo].[Users] u
-          JOIN [dbo].[Roles] r             ON r.id    = u.role_id
-          JOIN [dbo].[RolePermissions] rp  ON rp.role_id = r.id
-         WHERE rp.permission = ?
-           AND u.pays_id     = ?
-           AND (u.isActive = 1 OR u.isActive IS NULL)
-        """;
-
-    private static final String USERS_EMAILS_WITH_PERMISSION_SQL = """
-        SELECT DISTINCT u.email
-          FROM [dbo].[Users] u
-          JOIN [dbo].[Roles] r             ON r.id    = u.role_id
-          JOIN [dbo].[RolePermissions] rp  ON rp.role_id = r.id
-         WHERE rp.permission = ?
-           AND u.pays_id     = ?
-           AND (u.isActive = 1 OR u.isActive IS NULL)
-           AND u.email IS NOT NULL AND u.email <> ''
-        """;
-
-    private static final String INSERT_NOTIFICATION_SQL = """
-        INSERT INTO [dbo].[notifications] (user_id, module, title, message, is_read, created_at)
-        VALUES (?, 'HR', ?, ?, 0, SYSDATETIMEOFFSET())
-        """;
 
     // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -124,12 +98,7 @@ public class RecruitmentDemandService {
         auditService.log(actorUserId.toString(), "CREATE", "RECRUITMENT_DEMAND", demand.getId(),
                 null, "jobTitle=" + demand.getJobTitle());
 
-        notifyUsersWithPermission(
-                PermissionCatalog.RH_APPROVE_RECRUITMENT_DEMAND,
-                demand.getPaysId(),
-                "Nouvelle demande de recrutement",
-                "Une demande de recrutement pour le poste \"" + demand.getJobTitle() + "\" est en attente d'approbation."
-        );
+        dispatch("RECRUITMENT_DEMAND_CREATED", demand);
 
         return toResponse(demand);
     }
@@ -357,46 +326,30 @@ public class RecruitmentDemandService {
                     "La valeur sélectionnée n'appartient pas à la liste " + listTypeCode);
         }
     }
-
     private void onApproved(RecruitmentDemand demand) {
-        String title   = "Demande de recrutement approuvée";
-        String message = "La demande de recrutement pour le poste \""
-                + demand.getJobTitle() + "\" a été approuvée. Vous pouvez maintenant lancer le processus de recrutement.";
-
-        notifyUsersWithPermission(PermissionCatalog.RH_VIEW_RECRUITMENT_DEMAND,
-                demand.getPaysId(), title, message);
-
-        sendEmailToRecruitmentTeam(demand, title, message);
+        dispatch("RECRUITMENT_DEMAND_APPROVED", demand);
     }
 
-    private void notifyUsersWithPermission(String permission, Long paysId, String title, String message) {
-        try {
-            List<Long> userIds = jdbc.queryForList(USERS_WITH_PERMISSION_SQL, Long.class, permission, paysId);
-            for (Long uid : userIds) {
-                jdbc.update(INSERT_NOTIFICATION_SQL, uid, title, message);
-            }
-        } catch (Exception ex) {
-            log.error("Failed to send in-app notifications for permission={} pays={}: {}", permission, paysId, ex.getMessage());
-        }
-    }
-
-    private void sendEmailToRecruitmentTeam(RecruitmentDemand demand, String subject, String body) {
-        try {
-            List<String> emails = jdbc.queryForList(USERS_EMAILS_WITH_PERMISSION_SQL,
-                    String.class,
-                    PermissionCatalog.RH_VIEW_RECRUITMENT_DEMAND,
-                    demand.getPaysId());
-            if (!emails.isEmpty()) {
-                String htmlBody = "<p>" + body + "</p>"
-                        + "<p><strong>Poste :</strong> " + demand.getJobTitle() + "</p>"
-                        + (demand.getDepartment() != null ? "<p><strong>Département :</strong> " + demand.getDepartment() + "</p>" : "")
-                        + "<p><strong>Effectif requis :</strong> " + demand.getHeadcount() + "</p>"
-                        + (demand.getTargetStartDate() != null ? "<p><strong>Date cible :</strong> " + demand.getTargetStartDate() + "</p>" : "");
-                mailService.sendRoutedEmail(emails, List.of(), List.of(), subject, htmlBody);
-            }
-        } catch (Exception ex) {
-            log.error("Failed to send approval email for demandId={}: {}", demand.getId(), ex.getMessage());
-        }
+    /**
+     * Raises a recruitment-demand event through the routing engine.
+     *
+     * Replaces the pair of hand-written senders this class used to carry: an in-app helper
+     * that resolved holders of a hardcoded permission, and an e-mail helper that built its own
+     * HTML. Both are now the rule's business, so an admin can retune recipients and wording
+     * without a deploy — and there is one code path instead of two that could disagree.
+     */
+    private void dispatch(String eventCode, RecruitmentDemand demand) {
+        notificationRoutingService.resolveAndDispatch(RoutingContext.builder()
+                .eventCode(eventCode)
+                .paysId(demand.getPaysId())
+                .entityType(NotificationEntityType.RECRUITMENT_DEMAND)
+                .entityId(demand.getId())
+                .templateVars(Map.of(
+                        "jobTitle",   demand.getJobTitle() != null ? demand.getJobTitle() : "",
+                        "department", demand.getDepartment() != null ? demand.getDepartment() : "",
+                        "headcount",  String.valueOf(demand.getHeadcount())
+                ))
+                .build());
     }
 
     private RecruitmentDemandResponse toResponse(RecruitmentDemand d) {

@@ -160,7 +160,7 @@ public class EmployeeRequestService {
                 try {
                     notificationRoutingService.resolveAndDispatch(RoutingContext.builder()
                             .eventCode("REQUEST_REJECTED")
-                            .directUserId(requesterUserId)
+                            .subjectUserId(requesterUserId)
                             .paysId(requesterPaysId)
                             .templateVars(java.util.Map.of(
                                     "requestType", type.getDisplayNameFr(),
@@ -189,7 +189,7 @@ public class EmployeeRequestService {
                 try {
                     notificationRoutingService.resolveAndDispatch(RoutingContext.builder()
                             .eventCode("REQUEST_APPROVED")
-                            .directUserId(requesterUserId)
+                            .subjectUserId(requesterUserId)
                             .paysId(requesterPaysId)
                             .templateVars(java.util.Map.of(
                                     "requestType", type.getDisplayNameFr()

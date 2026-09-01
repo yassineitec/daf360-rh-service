@@ -8,6 +8,8 @@ import com.daf360.rh.dto.profile.LifecycleTransitionDto;
 import com.daf360.rh.domain.enums.LifecycleStatus;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.notification.RoutingContext;
+import com.daf360.rh.notification.NotificationEntityType;
 import com.daf360.rh.repository.*;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -36,16 +38,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OffboardingWorkflowService {
 
-    private static final String INSERT_NOTIF_SQL =
-        "INSERT INTO [dbo].[notifications] (user_id, module, title, message, is_read, created_at) " +
-        "VALUES (?, ?, ?, ?, 0, SYSDATETIMEOFFSET())";
-
-    private static final String USERS_WITH_PERM_SQL =
-        "SELECT u.id, COALESCE(u.username, u.email) as email " +
-        "FROM [dbo].[Users] u " +
-        "JOIN [dbo].[RolePermissions] rp ON u.role_id = rp.role_id " +
-        "WHERE rp.permission = ? AND u.pays_id = ? " +
-        "AND (u.isActive = 1 OR u.isActive IS NULL)";
 
     private static final String CONTRACT_TYPE_SQL =
         "SELECT contract_type_code FROM [dbo].[employee_contracts] WHERE id = ?";
@@ -159,7 +151,7 @@ public class OffboardingWorkflowService {
     /** Equipment ledger (V76): a confirmed return here closes the matching ledger row. */
     private final ItAssetAssignmentService              assetAssignmentService;
     private final AuditService                          auditService;
-    private final MailService                           mailService;
+    private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
     private final JdbcTemplate                         jdbc;
     private final ObjectMapper                         objectMapper;
     private final com.daf360.rh.security.TenantService tenantService;
@@ -302,10 +294,15 @@ public class OffboardingWorkflowService {
             "OFFBOARDING_STARTED", "OffboardingWorkflowInstance", instanceId,
             null, "profileId=" + profileId + " reason=" + request.getDepartureReason());
 
-        notifyTaskOwners(savedInstance.getPaysId(),
-            "Offboarding initié",
-            "Un processus d'offboarding a été initié pour " + nameDisplay + ".",
-            PermissionCatalog.RH_MANAGE_OFFBOARDING);
+        notificationRoutingService.resolveAndDispatch(RoutingContext.builder()
+            .eventCode("OFFBOARDING_STARTED")
+            .paysId(savedInstance.getPaysId())
+            .entityType(NotificationEntityType.OFFBOARDING)
+            .entityId(instanceId)
+            .templateVars(Map.of(
+                "employeeName", nameDisplay,
+                "instanceId",   String.valueOf(instanceId)))
+            .build());
 
         return toInstanceDto(savedInstance);
     }
@@ -1567,11 +1564,13 @@ public class OffboardingWorkflowService {
             "OFFBOARDING_MANAGER_VALIDATED", "OffboardingWorkflowInstance", instanceId,
             null, "byNamedManager=" + isNamedManager);
 
-        notifyTaskOwners(instance.getPaysId(),
-            "Avis manager enregistré — offboarding",
-            "L'avis du manager a été enregistré pour le dossier d'offboarding id=" + instanceId
-                + ". La validation RH peut être effectuée.",
-            PermissionCatalog.RH_VALIDATE_OFFBOARDING);
+        notificationRoutingService.resolveAndDispatch(RoutingContext.builder()
+            .eventCode("OFFBOARDING_MANAGER_OPINION")
+            .paysId(instance.getPaysId())
+            .entityType(NotificationEntityType.OFFBOARDING)
+            .entityId(instanceId)
+            .templateVars(Map.of("instanceId", String.valueOf(instanceId)))
+            .build());
 
         return toInstanceDto(instance);
     }
@@ -2556,31 +2555,6 @@ public class OffboardingWorkflowService {
         return date;
     }
 
-    private void notifyTaskOwners(Long paysId, String title, String message, String permission) {
-        try {
-            List<Map<String, Object>> users = jdbc.queryForList(
-                USERS_WITH_PERM_SQL, permission, paysId);
-            List<String> emails = new ArrayList<>();
-            for (Map<String, Object> row : users) {
-                Long uid   = ((Number) row.get("id")).longValue();
-                String email = (String) row.get("email");
-                try {
-                    jdbc.update(INSERT_NOTIF_SQL, uid, "RH", title, message);
-                } catch (Exception ex) {
-                    log.error("Failed in-app notification for userId={}: {}", uid, ex.getMessage());
-                }
-                if (email != null && !email.isBlank()) {
-                    emails.add(email);
-                }
-            }
-            if (!emails.isEmpty()) {
-                mailService.sendRoutedEmail(emails, List.of(), List.of(),
-                    "[DAF360 RH] " + title, message);
-            }
-        } catch (Exception e) {
-            log.error("Failed to notify task owners for permission={}: {}", permission, e.getMessage());
-        }
-    }
 
     // ── DTO mappers ───────────────────────────────────────────────────────────
 

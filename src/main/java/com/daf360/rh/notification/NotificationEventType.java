@@ -33,6 +33,14 @@ public class NotificationEventType {
     @Column(name = "module", length = 50)
     private String module;
 
+    /**
+     * Deep-link kind this event points at, when every occurrence targets the same one
+     * (CANDIDATE_ACCEPTED always means a candidate). Null for events whose recipient has
+     * nowhere useful to land - see V90 for why REQUEST_* and ONBOARDING_COMPLETED are null.
+     */
+    @Column(name = "default_entity_type", length = 50)
+    private String defaultEntityType;
+
     @Column(name = "supports_email", columnDefinition = "BIT DEFAULT 0")
     @Builder.Default
     private Boolean supportsEmail = false;

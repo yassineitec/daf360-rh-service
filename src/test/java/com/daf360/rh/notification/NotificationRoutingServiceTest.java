@@ -11,6 +11,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +39,7 @@ class NotificationRoutingServiceTest {
     @Mock MailService                             mailService;
     @Mock AuditService                            auditService;
     @Mock JdbcTemplate                            jdbc;
+    @Mock InAppNotifier                           inAppNotifier;
 
     @InjectMocks NotificationRoutingService service;
 
@@ -132,8 +134,11 @@ class NotificationRoutingServiceTest {
         verify(ruleRepo, times(1))
                 .findByEventTypeEventCodeAndPaysIdIsNullAndIsActiveTrue(EVENT_CODE);
 
-        // No recipients → no in-app rows inserted
-        verify(jdbc, never()).update(anyString(), any(Object[].class));
+        // No recipients → the notifier is handed an empty list, so no rows are written
+        ArgumentCaptor<Collection<Long>> emptyCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(inAppNotifier).notifyUsers(
+                emptyCaptor.capture(), anyString(), anyString(), anyString(), any());
+        assertThat(emptyCaptor.getValue()).isEmpty();
     }
 
     // ── Test 3: no rule found — fails silently ────────────────────────────────
@@ -150,37 +155,71 @@ class NotificationRoutingServiceTest {
         assertThatNoException().isThrownBy(() -> service.resolveAndDispatch(ctxForPays(PAYS_ID)));
 
         // No side-effects
-        verify(jdbc,        never()).update(anyString(), any(Object[].class));
+        verify(inAppNotifier, never()).notifyUsers(any(), any(), any(), any(), any());
         verify(mailService, never()).sendRoutedEmail(any(), any(), any(), any(), any());
     }
 
-    // ── Test 4: directUserId bypasses role routing ────────────────────────────
+    // ── Test 4a: a SUBJECT recipient resolves to the event's subject ───────────
 
     @Test
-    void resolveAndDispatch_directUserId_bypassesRoleRouting() {
-        final Long DIRECT_USER = 500L;
+    void resolveAndDispatch_subjectRecipient_resolvesToTheSubject() {
+        final Long SUBJECT_USER = 500L;
 
-        // Given
         when(ruleRepo.findByEventTypeEventCodeAndPaysIdAndIsActiveTrue(EVENT_CODE, PAYS_ID))
-                .thenReturn(Optional.of(entityRule));  // sendInapp=true
+                .thenReturn(Optional.of(entityRule));   // sendInapp=true
 
-        // When
-        RoutingContext ctx = RoutingContext.builder()
+        NotificationRoutingRecipient subjectRecipient = NotificationRoutingRecipient.builder()
+                .id(9L)
+                .recipientMode("SUBJECT")
+                .isActive(true)
+                .build();
+        when(recipientRepo.findByRuleIdAndIsActiveTrue(entityRule.getId()))
+                .thenReturn(List.of(subjectRecipient));
+        // The subject is looked up, not trusted: an inactive user must not be notified.
+        when(jdbc.queryForList(anyString(), eq(Long.class), eq(SUBJECT_USER)))
+                .thenReturn(List.of(SUBJECT_USER));
+
+        service.resolveAndDispatch(RoutingContext.builder()
                 .eventCode(EVENT_CODE)
                 .paysId(PAYS_ID)
-                .directUserId(DIRECT_USER)
-                .build();
-        service.resolveAndDispatch(ctx);
+                .subjectUserId(SUBJECT_USER)
+                .build());
 
-        // Then — one INSERT for the direct user
-        ArgumentCaptor<Object[]> argsCaptor = ArgumentCaptor.forClass(Object[].class);
-        verify(jdbc, times(1)).update(anyString(), argsCaptor.capture());
-        Object[] sqlArgs = argsCaptor.getValue();
-        // First bind-parameter is user_id
-        assertThat(sqlArgs[0]).isEqualTo(DIRECT_USER);
+        ArgumentCaptor<Collection<Long>> recipientsCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(inAppNotifier, times(1)).notifyUsers(
+                recipientsCaptor.capture(), anyString(), anyString(), anyString(), any());
+        assertThat(recipientsCaptor.getValue()).containsExactly(SUBJECT_USER);
 
-        // Role-based recipient lookup must NOT be consulted
-        verify(recipientRepo, never()).findByRuleIdAndIsActiveTrue(anyLong());
+        // The configured recipients ARE consulted now. The old directUserId short-circuit
+        // returned before this call, which is exactly what made the admin screen's
+        // Destinataires section dead for subject-driven events.
+        verify(recipientRepo).findByRuleIdAndIsActiveTrue(entityRule.getId());
+    }
+
+    // ── Test 4b: subject fallback when the rule has no recipients at all ──────
+
+    @Test
+    void resolveAndDispatch_noRecipientsButSubject_fallsBackToSubject() {
+        final Long SUBJECT_USER = 501L;
+
+        when(ruleRepo.findByEventTypeEventCodeAndPaysIdAndIsActiveTrue(EVENT_CODE, PAYS_ID))
+                .thenReturn(Optional.of(entityRule));
+        when(recipientRepo.findByRuleIdAndIsActiveTrue(entityRule.getId()))
+                .thenReturn(Collections.emptyList());
+
+        service.resolveAndDispatch(RoutingContext.builder()
+                .eventCode(EVENT_CODE)
+                .paysId(PAYS_ID)
+                .subjectUserId(SUBJECT_USER)
+                .build());
+
+        // Safety net for the window between deploying the code and applying V93: without it,
+        // removing the short-circuit would silently stop telling employees their own request
+        // was decided.
+        ArgumentCaptor<Collection<Long>> recipientsCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(inAppNotifier, times(1)).notifyUsers(
+                recipientsCaptor.capture(), anyString(), anyString(), anyString(), any());
+        assertThat(recipientsCaptor.getValue()).containsExactly(SUBJECT_USER);
     }
 
     // ── Test 5: sendEmail=false — no email sent ───────────────────────────────
@@ -280,14 +319,13 @@ class NotificationRoutingServiceTest {
 
         service.resolveAndDispatch(ctx);
 
-        // Capture the varargs passed to jdbc.update(sql, Object...)
-        ArgumentCaptor<Object[]> argsCaptor = ArgumentCaptor.forClass(Object[].class);
-        verify(jdbc, times(1)).update(anyString(), argsCaptor.capture());
+        // The rendered title is notifyUsers' 3rd argument
+        // (recipients, module, title, message, target).
+        ArgumentCaptor<String> titleCaptor = ArgumentCaptor.forClass(String.class);
+        verify(inAppNotifier, times(1)).notifyUsers(
+                anyCollection(), anyString(), titleCaptor.capture(), anyString(), any());
 
-        Object[] sqlArgs = argsCaptor.getValue();
-        // INSERT bind params: (user_id, module, title, message)
-        // index 0 = user_id, index 1 = module, index 2 = title, index 3 = body
-        assertThat(sqlArgs[2]).asString().contains("Alice");
-        assertThat(sqlArgs[2]).asString().doesNotContain("{firstName}");
+        assertThat(titleCaptor.getValue()).contains("Alice");
+        assertThat(titleCaptor.getValue()).doesNotContain("{firstName}");
     }
 }

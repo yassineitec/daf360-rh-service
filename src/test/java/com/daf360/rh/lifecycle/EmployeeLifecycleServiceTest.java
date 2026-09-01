@@ -6,8 +6,10 @@ import com.daf360.rh.domain.EmployeeLifecycleAlert;
 import com.daf360.rh.domain.EmployeeProfile;
 import com.daf360.rh.dto.lifecycle.*;
 import com.daf360.rh.exception.BusinessRuleException;
+import com.daf360.rh.notification.NotificationRoutingService;
+import com.daf360.rh.notification.NotificationEntityType;
+import com.daf360.rh.notification.RoutingContext;
 import com.daf360.rh.repository.*;
-import com.daf360.rh.service.MailService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,7 +40,7 @@ class EmployeeLifecycleServiceTest {
     @Mock ContractTypeConfigRepository            configRepo;
     @Mock EmployeeProfileRepository               profileRepo;
     @Mock LifecycleStateMachine                   stateMachine;
-    @Mock MailService                             mailService;
+    @Mock NotificationRoutingService              notificationRoutingService;
     @Mock JdbcTemplate                            jdbc;
     @Mock ObjectMapper                            objectMapper;
 
@@ -439,11 +441,10 @@ class EmployeeLifecycleServiceTest {
         verify(alertRepo, never()).save(any());
     }
 
-    // ── 16. sendAlert — simultaneous RH + IT + Directeur notifications ────────
+    // ── 16. sendAlert — raises CONTRACT_EXPIRY through the routing engine ──────
 
     @Test
-    @SuppressWarnings("unchecked")
-    void sendAlert_simultaneousRHITDirector() throws Exception {
+    void sendAlert_dispatchesContractExpiryEvent() {
         EmployeeContract contract = EmployeeContract.builder()
             .id(700L).contractTypeCode("CDD")
             .paysId(1L).employeeProfile(profile).build();
@@ -457,27 +458,28 @@ class EmployeeLifecycleServiceTest {
             .recipients("[\"RH\",\"IT\",\"DIRECTEUR_PAYS\"]")
             .isSent(false).build();
 
-        // Permission is first vararg: queryForList(sql, permission, paysId)
-        // RH perm: user 1, IT perm: user 2, DIRECTEUR perm: user 3
-        lenient().when(jdbc.queryForList(anyString(), eq("RH_VIEW_CONTRACTS"), eq(1L)))
-            .thenReturn(List.of(Map.of("id", 1, "email", "rh@test.com")));
-        lenient().when(jdbc.queryForList(anyString(), eq("RH_MANAGE_LIFECYCLE"), eq(1L)))
-            .thenReturn(List.of(Map.of("id", 2, "email", "it@test.com")));
-        lenient().when(jdbc.queryForList(anyString(), eq("RH_APPROVE_RECRUITMENT_DEMAND"), eq(1L)))
-            .thenReturn(List.of(Map.of("id", 3, "email", "dir@test.com")));
-        lenient().when(jdbc.queryForObject(anyString(), eq(String.class), eq(10L))).thenReturn("Test User");
+        lenient().when(jdbc.queryForObject(anyString(), eq(String.class), eq(10L)))
+            .thenReturn("Test User");
 
-        // LifecycleAlertJob needs the objectMapper, get it via LifecycleAlertJob
         LifecycleAlertJob job = new LifecycleAlertJob(
-            contractRepo, alertRepo, configRepo, service, mailService, jdbc, objectMapper);
-
-        when(objectMapper.readValue(eq("[\"RH\",\"IT\",\"DIRECTEUR_PAYS\"]"),
-                ArgumentMatchers.<com.fasterxml.jackson.core.type.TypeReference<List<String>>>any()))
-            .thenReturn(List.of("RH", "IT", "DIRECTEUR_PAYS"));
+            contractRepo, alertRepo, configRepo, service, notificationRoutingService);
 
         job.sendAlert(alert);
 
-        // Verify 3 distinct in-app notifications sent (one per unique user)
-        verify(jdbc, times(3)).update(contains("notifications"), any(), eq("RH"), any(), any());
+        // Recipients are no longer resolved here — they are the CONTRACT_EXPIRY rule's
+        // business. What this job still owns is raising the right event, for the right
+        // entity, with the variables the templates interpolate.
+        ArgumentCaptor<RoutingContext> ctxCaptor = ArgumentCaptor.forClass(RoutingContext.class);
+        verify(notificationRoutingService).resolveAndDispatch(ctxCaptor.capture());
+
+        RoutingContext ctx = ctxCaptor.getValue();
+        assertThat(ctx.getEventCode()).isEqualTo("CONTRACT_EXPIRY");
+        assertThat(ctx.getPaysId()).isEqualTo(1L);
+        assertThat(ctx.getEntityType()).isEqualTo(NotificationEntityType.EMPLOYEE_PROFILE);
+        assertThat(ctx.getEntityId()).isEqualTo(10L);
+        assertThat(ctx.getTemplateVars())
+            .containsEntry("employeeName", "Test User")
+            .containsEntry("contractType", "CDD")
+            .containsKey("targetDate");
     }
 }

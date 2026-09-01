@@ -96,5 +96,10 @@ mail:
   enabled: ${MAIL_ENABLED:false}
   from: ${MAIL_FROM:noreply@daf360.com}
 
+notifications:
+  # Read notifications older than this are purged nightly; unread rows are never deleted.
+  retention-days: ${NOTIFICATIONS_RETENTION_DAYS:180}
+  retention-enabled: ${NOTIFICATIONS_RETENTION_ENABLED:true}
+
 portal:
   url: ${PORTAL_URL:http://localhost:8080}

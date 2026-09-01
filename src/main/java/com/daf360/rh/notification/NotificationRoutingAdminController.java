@@ -58,16 +58,16 @@ public class NotificationRoutingAdminController {
 
     /**
      * POST /api/hr/admin/notification-rules/{ruleId}/inapp-recipients
-     * Body: { "roleId": 5 }
+     * Body: { "roleId": 5, "mode": "ALL" } or { "mode": "PERMISSION", "permissionCode": "..." }
      */
     @PostMapping("/notification-rules/{ruleId}/inapp-recipients")
     public ResponseEntity<NotificationRoutingAdminService.RecipientItem> addInappRecipient(
             @PathVariable Long ruleId,
-            @RequestBody Map<String, Long> body,
+            @RequestBody Map<String, Object> body,
             Authentication auth) {
-        Long roleId = body.get("roleId");
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(notifAdminService.addInappRecipient(ruleId, roleId, actorId(auth)));
+        return ResponseEntity.status(HttpStatus.CREATED).body(notifAdminService.addInappRecipient(
+                ruleId, asLong(body.get("roleId")), asString(body.get("mode")),
+                asString(body.get("permissionCode")), actorId(auth)));
     }
 
     /**
@@ -85,17 +85,27 @@ public class NotificationRoutingAdminController {
 
     /**
      * POST /api/hr/admin/notification-rules/{ruleId}/email-recipients
-     * Body: { "roleId": 5, "field": "TO" }
+     * Body: { "roleId": 5, "field": "TO", "mode": "ALL" }
+     *    or { "field": "CC", "mode": "PERMISSION", "permissionCode": "..." }
      */
     @PostMapping("/notification-rules/{ruleId}/email-recipients")
     public ResponseEntity<NotificationRoutingAdminService.RecipientItem> addEmailRecipient(
             @PathVariable Long ruleId,
             @RequestBody Map<String, Object> body,
             Authentication auth) {
-        Long   roleId = body.get("roleId") != null ? Long.valueOf(body.get("roleId").toString()) : null;
-        String field  = body.get("field") != null ? body.get("field").toString() : null;
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(notifAdminService.addEmailRecipient(ruleId, roleId, field, actorId(auth)));
+        return ResponseEntity.status(HttpStatus.CREATED).body(notifAdminService.addEmailRecipient(
+                ruleId, asLong(body.get("roleId")), asString(body.get("field")),
+                asString(body.get("mode")), asString(body.get("permissionCode")), actorId(auth)));
+    }
+
+    /**
+     * GET /api/hr/admin/notification-permissions
+     * The permission codes selectable for a PERMISSION recipient, grouped as the catalogue
+     * groups them so the picker can show sections rather than 80 flat codes.
+     */
+    @GetMapping("/notification-permissions")
+    public ResponseEntity<List<NotificationRoutingAdminService.PermissionOption>> getAssignablePermissions() {
+        return ResponseEntity.ok(notifAdminService.getAssignablePermissions());
     }
 
     /**
@@ -109,6 +119,36 @@ public class NotificationRoutingAdminController {
         notifAdminService.removeEmailRecipient(id, actorId(auth));
     }
 
+
+    /**
+     * POST /api/hr/admin/notification-rules/event-type/{eventTypeId}
+     * Creates the (global) routing rule for an event type that has none yet.
+     * Returns the same detail payload the editor loads, so the UI can open straight into it.
+     */
+    @PostMapping("/notification-rules/event-type/{eventTypeId}")
+    public ResponseEntity<NotificationRoutingAdminService.RoutingRuleDetail> createRoutingRule(
+            @PathVariable Long eventTypeId,
+            Authentication auth) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(notifAdminService.createRoutingRule(eventTypeId, actorId(auth)));
+    }
+
+    /**
+     * PATCH /api/hr/admin/notification-event-types/{id}/entity-type
+     * Body: { "defaultEntityType": "CANDIDATE" }  (null clears it)
+     *
+     * The deep-link kind lives on the EVENT TYPE, not the rule: an event always points at
+     * the same sort of thing whatever an entity's routing says. Until now it could only be
+     * set in SQL.
+     */
+    @PatchMapping("/notification-event-types/{id}/entity-type")
+    public ResponseEntity<Void> setDefaultEntityType(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> body,
+            Authentication auth) {
+        notifAdminService.setDefaultEntityType(id, body.get("defaultEntityType"), actorId(auth));
+        return ResponseEntity.noContent().build();
+    }
     // ── Test dispatch ─────────────────────────────────────────────────────────
 
     /**
@@ -123,6 +163,14 @@ public class NotificationRoutingAdminController {
     }
 
     // ── Private helper ────────────────────────────────────────────────────────
+
+    private static Long asLong(Object v) {
+        return v != null ? Long.valueOf(v.toString()) : null;
+    }
+
+    private static String asString(Object v) {
+        return v != null ? v.toString() : null;
+    }
 
     private Long actorId(Authentication auth) {
         if (auth == null || auth.getPrincipal() == null) return null;

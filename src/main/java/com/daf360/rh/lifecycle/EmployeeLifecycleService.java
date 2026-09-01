@@ -4,7 +4,8 @@ import com.daf360.rh.domain.*;
 import com.daf360.rh.dto.lifecycle.*;
 import com.daf360.rh.exception.BusinessRuleException;
 import com.daf360.rh.repository.*;
-import com.daf360.rh.service.MailService;
+import com.daf360.rh.notification.RoutingContext;
+import com.daf360.rh.notification.NotificationEntityType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,16 +33,6 @@ public class EmployeeLifecycleService {
         "RESILIATION", "RETRAITE", "RUPTURE_PE"
     );
 
-    private static final String INSERT_NOTIF_SQL =
-        "INSERT INTO [dbo].[notifications] (user_id, module, title, message, is_read, created_at) " +
-        "VALUES (?, ?, ?, ?, 0, SYSDATETIMEOFFSET())";
-
-    private static final String USERS_WITH_PERM_SQL =
-        "SELECT u.id, COALESCE(u.username, u.email) as email " +
-        "FROM [dbo].[Users] u " +
-        "JOIN [dbo].[RolePermissions] rp ON u.role_id = rp.role_id " +
-        "WHERE rp.permission = ? AND u.pays_id = ? " +
-        "AND (u.isActive = 1 OR u.isActive IS NULL)";
 
     private static final String EMPLOYEE_NAME_SQL =
         "SELECT COALESCE(u.fullName, u.username, u.email, 'Collaborateur') " +
@@ -55,7 +46,7 @@ public class EmployeeLifecycleService {
     private final ContractTypeConfigRepository       configRepo;
     private final EmployeeProfileRepository          profileRepo;
     private final LifecycleStateMachine              stateMachine;
-    private final MailService                        mailService;
+    private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
     private final JdbcTemplate                       jdbc;
     private final ObjectMapper                       objectMapper;
 
@@ -549,40 +540,31 @@ public class EmployeeLifecycleService {
 
     // ── Notifications (D3-103) ────────────────────────────────────────────────
 
+    /**
+     * Raises EMPLOYEE_STATUS_CHANGED through the routing engine.
+     *
+     * The two permissions this used to query by hand — RH_VIEW_CONTRACTS and
+     * RH_MANAGE_LIFECYCLE — are now the rule's recipients (V92), so the audience and the
+     * de-duplication are unchanged while the wording and channels become admin-editable.
+     * @Async stays: the engine is async too, but a caller must not wait on either.
+     */
     @Async
     void triggerTransitionNotifications(EmployeeContract contract,
                                          String previousStatus, String newStatus,
                                          Long triggeredBy) {
         try {
-            String employeeName = loadEmployeeName(contract.getEmployeeProfile().getId());
-            String title = "Changement de statut collaborateur";
-            String body  = employeeName + " : " + previousStatus + " → " + newStatus
-                + " (" + contract.getContractTypeCode() + ")";
-
-            Set<Long> notified = new HashSet<>();
-            for (String perm : List.of("RH_VIEW_CONTRACTS", "RH_MANAGE_LIFECYCLE")) {
-                List<Map<String, Object>> rows = jdbc.queryForList(
-                    USERS_WITH_PERM_SQL, perm, contract.getPaysId());
-                for (Map<String, Object> row : rows) {
-                    Long uid   = ((Number) row.get("id")).longValue();
-                    String email = (String) row.get("email");
-                    if (!notified.add(uid)) continue;
-                    try {
-                        jdbc.update(INSERT_NOTIF_SQL, uid, "RH", title, body);
-                    } catch (Exception ex) {
-                        log.error("In-app notification failed for userId={}: {}", uid, ex.getMessage());
-                    }
-                    if (email != null && !email.isBlank()) {
-                        try {
-                            mailService.sendRoutedEmail(
-                                List.of(email), List.of(), List.of(),
-                                "[DAF360 RH] " + title, body);
-                        } catch (Exception ex) {
-                            log.warn("Email notification failed for userId={}: {}", uid, ex.getMessage());
-                        }
-                    }
-                }
-            }
+            Long profileId = contract.getEmployeeProfile().getId();
+            notificationRoutingService.resolveAndDispatch(RoutingContext.builder()
+                .eventCode("EMPLOYEE_STATUS_CHANGED")
+                .paysId(contract.getPaysId())
+                .entityType(NotificationEntityType.EMPLOYEE_PROFILE)
+                .entityId(profileId)
+                .templateVars(Map.of(
+                    "employeeName",   loadEmployeeName(profileId),
+                    "previousStatus", previousStatus != null ? previousStatus : "",
+                    "newStatus",      newStatus != null ? newStatus : "",
+                    "contractType",   contract.getContractTypeCode() != null ? contract.getContractTypeCode() : ""))
+                .build());
         } catch (Exception e) {
             log.error("triggerTransitionNotifications failed for contract {}: {}",
                 contract.getId(), e.getMessage());
