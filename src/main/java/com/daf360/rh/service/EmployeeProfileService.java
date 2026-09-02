@@ -1,5 +1,6 @@
 package com.daf360.rh.service;
 
+import com.daf360.rh.common.UserScope;
 import com.daf360.rh.common.GenderNormalizer;
 import com.daf360.rh.domain.EmployeeProfile;
 import com.daf360.rh.domain.enums.LifecycleStatus;
@@ -325,6 +326,10 @@ public class EmployeeProfileService {
 
         String baseWhere =
             "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
+            // Test logins, duplicated imports and service accounts are not people. NOT a
+            // profile requirement: 155 active users have no HR file and nearly all are real
+            // (the DRH and the PDG among them) — see UserScope.
+            "AND " + UserScope.realPeople("u") + " " +
             (searchLike != null ? "AND (u.fullName LIKE ? OR u.username LIKE ?) " : "") +
             (paysId     != null ? "AND u.pays_id = ? " : "") +
             (status     != null ? "AND ep.lifecycle_status = ? " : "") +
@@ -416,6 +421,7 @@ public class EmployeeProfileService {
                 "FROM [dbo].[pays] p " +
                 "JOIN [dbo].[Users] u ON u.pays_id = p.id " +
                 "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
+                "  AND " + UserScope.realPeople("u") + " " +
                 "  AND p.french_label IS NOT NULL " +
                 "ORDER BY p.french_label",
                 (rs, i) -> new com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto(

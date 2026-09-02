@@ -1,5 +1,6 @@
 package com.daf360.rh.notification;
 
+import com.daf360.rh.common.UserScope;
 import com.daf360.rh.service.AuditService;
 import com.daf360.rh.service.MailService;
 import lombok.RequiredArgsConstructor;
@@ -36,12 +37,12 @@ public class NotificationRoutingService {
     private static final String USERS_BY_ROLE_SQL =
         "SELECT u.id FROM [dbo].[Users] u " +
         "WHERE u.role_id = ? AND u.pays_id = ? " +
-        "AND (u.isActive = 1 OR u.isActive IS NULL)";
+        "AND (u.isActive = 1 OR u.isActive IS NULL) AND " + UserScope.realPeople("u");
 
     /** MANAGER — holders of the PARENT of the given role (Roles.parent_role_id). */
     private static final String USERS_BY_PARENT_ROLE_SQL =
         "SELECT u.id FROM [dbo].[Users] u " +
-        "WHERE u.pays_id = ? AND (u.isActive = 1 OR u.isActive IS NULL) " +
+        "WHERE u.pays_id = ? AND (u.isActive = 1 OR u.isActive IS NULL) AND " + UserScope.realPeople("u") + " " +
         "AND u.role_id = (" +
         "  SELECT pr.id FROM [dbo].[Roles] cr " +
         "  JOIN [dbo].[Roles] pr ON pr.id = cr.parent_role_id " +
@@ -52,16 +53,16 @@ public class NotificationRoutingService {
         "SELECT DISTINCT u.id FROM [dbo].[Users] u " +
         "JOIN [dbo].[RolePermissions] rp ON rp.role_id = u.role_id " +
         "WHERE rp.permission = ? AND u.pays_id = ? " +
-        "AND (u.isActive = 1 OR u.isActive IS NULL)";
+        "AND (u.isActive = 1 OR u.isActive IS NULL) AND " + UserScope.realPeople("u");
 
     /** SUBJECT — the one user the event is about, looked up only to confirm they are active. */
     private static final String SUBJECT_USER_SQL =
         "SELECT u.id FROM [dbo].[Users] u " +
-        "WHERE u.id = ? AND (u.isActive = 1 OR u.isActive IS NULL)";
+        "WHERE u.id = ? AND (u.isActive = 1 OR u.isActive IS NULL) AND " + UserScope.realPeople("u");
 
     private static final String SUBJECT_EMAIL_SQL =
         "SELECT COALESCE(u.username, u.email) FROM [dbo].[Users] u " +
-        "WHERE u.id = ? AND (u.isActive = 1 OR u.isActive IS NULL) " +
+        "WHERE u.id = ? AND (u.isActive = 1 OR u.isActive IS NULL) AND " + UserScope.realPeople("u") + " " +
         "AND COALESCE(u.username, u.email) IS NOT NULL";
 
     /**
@@ -74,7 +75,7 @@ public class NotificationRoutingService {
         "JOIN [dbo].[Roles] pr ON pr.id = sr.parent_role_id " +
         "                     AND (pr.deleted = 0 OR pr.deleted IS NULL) " +
         "JOIN [dbo].[Users] m ON m.role_id = pr.id AND m.pays_id = s.pays_id " +
-        "                     AND (m.isActive = 1 OR m.isActive IS NULL) " +
+        "                     AND (m.isActive = 1 OR m.isActive IS NULL) AND " + UserScope.realPeople("m") + " " +
         "WHERE s.id = ?";
 
     private static final String SUBJECT_MANAGERS_EMAIL_SQL =
@@ -83,20 +84,20 @@ public class NotificationRoutingService {
         "JOIN [dbo].[Roles] pr ON pr.id = sr.parent_role_id " +
         "                     AND (pr.deleted = 0 OR pr.deleted IS NULL) " +
         "JOIN [dbo].[Users] m ON m.role_id = pr.id AND m.pays_id = s.pays_id " +
-        "                     AND (m.isActive = 1 OR m.isActive IS NULL) " +
+        "                     AND (m.isActive = 1 OR m.isActive IS NULL) AND " + UserScope.realPeople("m") + " " +
         "WHERE s.id = ? AND COALESCE(m.username, m.email) IS NOT NULL";
 
     private static final String USER_EMAIL_BY_ROLE_SQL =
         "SELECT COALESCE(u.username, u.email) " +
         "FROM [dbo].[Users] u " +
         "WHERE u.role_id = ? AND u.pays_id = ? " +
-        "AND (u.isActive = 1 OR u.isActive IS NULL) " +
+        "AND (u.isActive = 1 OR u.isActive IS NULL) AND " + UserScope.realPeople("u") + " " +
         "AND COALESCE(u.username, u.email) IS NOT NULL";
 
     private static final String USER_EMAIL_BY_PARENT_ROLE_SQL =
         "SELECT COALESCE(u.username, u.email) " +
         "FROM [dbo].[Users] u " +
-        "WHERE u.pays_id = ? AND (u.isActive = 1 OR u.isActive IS NULL) " +
+        "WHERE u.pays_id = ? AND (u.isActive = 1 OR u.isActive IS NULL) AND " + UserScope.realPeople("u") + " " +
         "AND COALESCE(u.username, u.email) IS NOT NULL " +
         "AND u.role_id = (" +
         "  SELECT pr.id FROM [dbo].[Roles] cr " +
@@ -108,7 +109,7 @@ public class NotificationRoutingService {
         "FROM [dbo].[Users] u " +
         "JOIN [dbo].[RolePermissions] rp ON rp.role_id = u.role_id " +
         "WHERE rp.permission = ? AND u.pays_id = ? " +
-        "AND (u.isActive = 1 OR u.isActive IS NULL) " +
+        "AND (u.isActive = 1 OR u.isActive IS NULL) AND " + UserScope.realPeople("u") + " " +
         "AND COALESCE(u.username, u.email) IS NOT NULL";
 
     // ── Public API ────────────────────────────────────────────────────────────

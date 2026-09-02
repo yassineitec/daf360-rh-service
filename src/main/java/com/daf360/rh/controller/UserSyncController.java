@@ -25,12 +25,23 @@ public class UserSyncController {
 
     private final JdbcTemplate jdbcTemplate;
 
+    /**
+     * The user replica the finance, payroll and pointage services copy into their own
+     * `user_ref` / shadow tables.
+     *
+     * Deliberately UNFILTERED: this mirrors ACCOUNTS, not people. The consuming services
+     * resolve real traffic against their copy, including machine accounts that sign in and
+     * have work attributed to them, so removing rows here would break an integration rather
+     * than tidy a list. Filtering belongs to lists of PEOPLE — see UserScope.
+     *
+     * The two hierarchy endpoints below ARE filtered: nobody's manager is a machine account.
+     */
     @GetMapping("/users-for-sync")
     public List<UserForSyncDto> usersForSync() {
         log.debug("UserSyncController: serving users-for-sync");
         String sql = """
                 SELECT u.id, u.azure_oid, u.fullName, u.email, u.pays_id,
-                       r.frenchName AS role_name, u.isActive
+                       r.frenchName AS role_name, u.isActive, u.is_employee
                 FROM Users u
                 LEFT JOIN Roles r ON r.id = u.role_id
                 WHERE u.isActive = 1
@@ -49,7 +60,8 @@ public class UserSyncController {
                 // synchronisation de TOUS les autres.
                 rs.getObject("pays_id", Long.class),
                 rs.getString("role_name"),
-                rs.getBoolean("isActive")
+                rs.getBoolean("isActive"),
+                rs.getBoolean("is_employee")
         ));
     }
 
@@ -100,6 +112,7 @@ public class UserSyncController {
                 FROM Users u
                 LEFT JOIN Roles r ON r.id = u.role_id
                 WHERE u.isActive = 1
+                  AND u.is_employee = 1
                   AND u.role_id = (
                       SELECT pr.id
                       FROM Users cu
@@ -120,7 +133,9 @@ public class UserSyncController {
                 rs.getString("email"),
                 rs.getLong("pays_id"),
                 rs.getString("role_name"),
-                rs.getBoolean("isActive")
+                rs.getBoolean("isActive"),
+                // Always true here: the query already restricts to is_employee = 1.
+                true
         ), userId, userId, userId);
     }
 
@@ -163,6 +178,7 @@ public class UserSyncController {
                 FROM Users u
                 LEFT JOIN Roles r ON r.id = u.role_id
                 WHERE u.isActive = 1
+                  AND u.is_employee = 1
                   AND u.role_id IN (SELECT id FROM descendants)
                   AND u.id <> ?
                   AND (
@@ -178,7 +194,9 @@ public class UserSyncController {
                 rs.getString("email"),
                 rs.getObject("pays_id", Long.class),
                 rs.getString("role_name"),
-                rs.getBoolean("isActive")
+                rs.getBoolean("isActive"),
+                // Always true here: the query already restricts to is_employee = 1.
+                true
         ), userId, userId, userId, userId);
     }
 }

@@ -1,5 +1,6 @@
 package com.daf360.rh.service;
 
+import com.daf360.rh.common.UserScope;
 import com.daf360.rh.domain.Candidate;
 import com.daf360.rh.domain.CandidateInterview;
 import com.daf360.rh.domain.CandidateInterviewInterviewer;
@@ -55,7 +56,10 @@ public class CandidateInterviewService {
         Long effectivePaysId = tenantService.getEffectivePaysId();
         Long filter = (effectivePaysId != null) ? effectivePaysId : paysId;
         return jdbcTemplate.query(
-                "SELECT id, fullName FROM Users WHERE isActive = 1 AND pays_id = ? ORDER BY fullName",
+                "SELECT id, fullName FROM Users u " +
+                "WHERE u.isActive = 1 AND u.pays_id = ? " +
+                "AND " + UserScope.realPeople("u") + " " +
+                "ORDER BY u.fullName",
                 (rs, rn) -> new UserPickerDto(rs.getLong("id"), rs.getString("fullName")),
                 filter);
     }

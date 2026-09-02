@@ -91,6 +91,7 @@ public class MissionService {
                 FROM Users u
                 LEFT JOIN Roles r ON r.id = u.role_id
                 WHERE u.isActive = 1
+                  AND u.is_employee = 1
                   AND u.role_id IN (SELECT id FROM descendants)
                   AND u.id <> ?
                   AND (

@@ -30,6 +30,21 @@ public class AppProperties {
      */
     private String internalApiKey  = "";
 
+    /**
+     * Consuming modules to notify when an account changes — see ModuleSyncService.
+     *
+     * This reverses the usual direction: normally the consumers pull from RH and RH knows
+     * nothing about them. The reversal is deliberate and its scope is deliberately tiny —
+     * RH holds a URL and nothing else, and every consumer keeps its own 15-minute pull as
+     * the correctness floor. What this buys is the one case the pull cannot serve: an
+     * account deactivated in an emergency, where 15 minutes is not an acceptable delay.
+     *
+     * Blank disables that consumer, which is how a deployment without payroll (or a local
+     * run with the container stopped) avoids a pointless failed call on every propagation.
+     */
+    private String factApiBaseUrl    = "";
+    private String payrollApiBaseUrl = "";
+
     // ── Microsoft Graph / SharePoint (document storage) ────────────────────────
     // Blank tenant/client id/secret = integration disabled: GraphSharePointService
     // skips the upload silently (local disk save, which happens first and unconditionally,
