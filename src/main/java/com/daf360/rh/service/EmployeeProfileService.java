@@ -56,6 +56,9 @@ public class EmployeeProfileService {
     private final GraphSharePointService graphSharePointService;
     private final com.daf360.rh.service.sharepoint.SharePointResolver sharePointResolver;
     private final com.daf360.rh.service.photo.ProfilePhotoCache photoCache;
+    /** For the cache's identity key — the same fullName the folder convention is built on, so
+     *  the marker and the folder name can never describe two different people. */
+    private final com.daf360.rh.service.sharepoint.EmployeeFolderResolver employeeFolderResolver;
 
     // ── Dimension repos injected for FK lookups ───────────────────────────────
     private final GradeRepository        gradeRepo;
@@ -524,7 +527,7 @@ public class EmployeeProfileService {
             // Through the cache, so the upload is shrunk on the way in exactly like a photo
             // pulled from SharePoint. It also replaces any previous file rather than adding
             // to a pile of them, which is what the old direct write did.
-            photoCache.write(profileId, "upload" + ext, null, bytes);
+            photoCache.write(profileId, "upload" + ext, null, bytes, photoIdentity(profileId));
 
             // Versioned, so browsers holding the previous image for the seven days this
             // endpoint advertises actually see the new one. The query string is inert
@@ -675,6 +678,33 @@ public class EmployeeProfileService {
     }
 
     /**
+     * Who profile {@code profileId} currently belongs to, as a cache-verification key.
+     *
+     * <p>{@code {userId}|{fullName}} — the two facts the folder name is derived from. The cache
+     * stamps this beside the bytes and rejects a directory whose stamp disagrees, which is what
+     * makes an id re-assignment self-correcting instead of silently serving the previous
+     * occupant's face.
+     *
+     * <p>Both halves are needed: a data reload can re-point {@code user_id} without changing a
+     * name, and can change a name without moving the id.
+     *
+     * <p>Null when the profile or its user cannot be read — the caller then reads unverified,
+     * which is the pre-marker behaviour. A lookup failure must not blank an avatar.
+     */
+    private String photoIdentity(Long profileId) {
+        try {
+            EmployeeProfile profile = profileRepository.findById(profileId).orElse(null);
+            if (profile == null || profile.getUserId() == null) return null;
+            String fullName = employeeFolderResolver.fullNameOf(profile.getUserId());
+            if (fullName == null || fullName.isBlank()) return null;
+            return profile.getUserId() + "|" + employeeFolderResolver.normalize(fullName);
+        } catch (Exception e) {
+            log.debug("Identite photo indisponible pour le profil {}: {}", profileId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * The entity tag for a cached photo, for conditional requests.
      *
      * <p>Deliberately does NOT resolve or fetch anything: a conditional request must be answerable
@@ -698,9 +728,15 @@ public class EmployeeProfileService {
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public byte[] servePhoto(Long profileId, boolean small) {
         try {
+            // One indexed lookup per render, and it buys the guarantee that these bytes belong
+            // to THIS person. Cheap next to the Graph calls the cache still avoids, and the
+            // failure it prevents — one employee's photo on another's record — is a data
+            // integrity and privacy problem rather than a performance one.
+            String identity = photoIdentity(profileId);
+
             java.util.Optional<byte[]> cached = small
-                    ? photoCache.readSmall(profileId)
-                    : photoCache.read(profileId);
+                    ? photoCache.readSmall(profileId, identity)
+                    : photoCache.read(profileId, identity);
             if (cached.isPresent()) {
                 // The cached copy used to be trusted forever, which meant a photo replaced in
                 // SharePoint never appeared — the cache had silently become the source of
@@ -713,7 +749,7 @@ public class EmployeeProfileService {
                     // a 512px image to a 32px annuaire cell on exactly the requests that
                     // happened to refresh. The variant is on disk by now.
                     if (refreshed != null) {
-                        return small ? photoCache.readSmall(profileId).orElse(refreshed) : refreshed;
+                        return small ? photoCache.readSmall(profileId, identity).orElse(refreshed) : refreshed;
                     }
                 }
                 return cached.get();
@@ -722,7 +758,7 @@ public class EmployeeProfileService {
             // Nothing cached — resolve and fetch from SharePoint, then cache for next time.
             byte[] fetched = fetchAndCachePhotoFromSharePoint(profileId);
             if (fetched == null) return null;
-            return small ? photoCache.readSmall(profileId).orElse(fetched) : fetched;
+            return small ? photoCache.readSmall(profileId, identity).orElse(fetched) : fetched;
 
         } catch (Exception e) {
             // Exception, not IOException: see the class-level note above.
@@ -842,16 +878,27 @@ public class EmployeeProfileService {
                 }
                 return null;
             }
-            if (!photoCache.remoteIsNewer(profileId, remote.lastModified())) {
+            // The timestamp comparison is a SECOND-order check — it may only decide between two
+            // copies of the SAME person's photo. It cannot be allowed to decide whether to keep
+            // a photo that belongs to somebody else: a wrongly-cached file written today is
+            // "newer" than the correct portrait uploaded weeks ago, so on identity alone the
+            // wrong face wins the comparison and gets re-confirmed every 24h, for ever. That is
+            // exactly what turned an id re-assignment into a permanent mislink on the test
+            // server. An unverifiable cache entry (no marker) also falls through to a refresh,
+            // which is the safe direction.
+            boolean identityConfirmed = photoCache.hasIdentity(profileId, photoIdentity(profileId));
+            if (identityConfirmed && !photoCache.remoteIsNewer(profileId, remote.lastModified())) {
                 return null;
             }
             byte[] content = graphSharePointService
                     .downloadFile(location.basePath() + "/" + remote.name()).orElse(null);
             if (content == null || content.length == 0) return null;
 
-            log.info("Photo du profil {} rafraichie depuis SharePoint ('{}', modifiee le {})",
-                    profileId, remote.name(), remote.lastModified());
-            byte[] stored = photoCache.write(profileId, remote.name(), remote.lastModified(), content);
+            log.info("Photo du profil {} rafraichie depuis SharePoint ('{}', modifiee le {}{})",
+                    profileId, remote.name(), remote.lastModified(),
+                    identityConfirmed ? "" : ", identite du cache non confirmee");
+            byte[] stored = photoCache.write(profileId, remote.name(), remote.lastModified(),
+                    content, photoIdentity(profileId));
             // The response is cached by browsers for a week, so a new photo behind an
             // unchanged URL would stay invisible for that week. Bumping the token in
             // photo_url is what actually makes the change visible to someone who already
@@ -976,7 +1023,8 @@ public class EmployeeProfileService {
 
         log.info("Photo du profil {} recuperee depuis SharePoint sous le nom '{}'",
                 profileId, remote.name());
-        return photoCache.write(profileId, remote.name(), remote.lastModified(), content);
+        return photoCache.write(profileId, remote.name(), remote.lastModified(), content,
+                photoIdentity(profileId));
     }
 
     /** Image extensions the photo endpoint can serve, matching the upload's own whitelist. */

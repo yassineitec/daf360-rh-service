@@ -75,14 +75,50 @@ public class ProfilePhotoCache {
 
     private static final String CHECK_MARKER = ".checked";
 
+    /**
+     * Records WHOSE photo the cached bytes are, so a directory cannot outlive the person it was
+     * filled for.
+     *
+     * <p>The bug this exists to prevent, observed on the test server (2026-09-07): the cache is
+     * keyed on {@code employee_profiles.id}, an SSIS reload re-assigned every id from 1, and the
+     * directories — which live on the container's volume, not in the database — kept the previous
+     * mapping. So {@code profiles/68/} still held the JPEG of whoever used to be id 68, and
+     * {@link #read} served it happily. Every database-side check came back clean, because the
+     * poisoned state was not in the database.
+     *
+     * <p>A foreign key cannot help here and neither can a cascade: nothing in SQL Server can
+     * reach a filesystem. The only defence is for the cache to carry its own proof of identity
+     * and check it on read — which also means no operator step, and no post-reload hook, is
+     * needed for it to recover.
+     *
+     * <p>Content is {@code {userId}|{normalized fullName}} — both halves, because a reload can
+     * re-point {@code user_id} without changing the name, and can change a name without moving
+     * the id. Either alone leaves a hole.
+     */
+    private static final String IDENTITY_MARKER = ".identity";
+
     private final AppProperties appProperties;
 
     public Path directory(Long profileId) {
         return Paths.get(appProperties.getStoragePath(), "profiles", String.valueOf(profileId));
     }
 
-    /** The cached bytes, or empty when nothing usable is cached. Never throws. */
-    public Optional<byte[]> read(Long profileId) {
+    /**
+     * The cached bytes for an identity, or empty when nothing usable is cached FOR THAT IDENTITY.
+     *
+     * <p>{@code identity} is the caller's proof of who this profile currently belongs to. A
+     * directory whose {@link #IDENTITY_MARKER} disagrees is treated as a MISS, not as a hit —
+     * the bytes belong to whoever held this id before, and serving them is how one employee's
+     * face ends up on another's record.
+     *
+     * <p>Passing null skips the check, for callers that genuinely have no identity to offer.
+     * That is the pre-existing behaviour and stays available deliberately: a missing identity
+     * must not blank an avatar, it just cannot be verified.
+     *
+     * <p>Never throws.
+     */
+    public Optional<byte[]> read(Long profileId, String identity) {
+        if (!identityMatches(profileId, identity)) return Optional.empty();
         try {
             Path file = newestPhoto(directory(profileId));
             return file == null ? Optional.empty() : Optional.of(Files.readAllBytes(file));
@@ -90,6 +126,14 @@ public class ProfilePhotoCache {
             log.warn("Cache photo illisible pour le profil {}: {}", profileId, e.getMessage());
             return Optional.empty();
         }
+    }
+
+    /** @deprecated unverified read — kept for callers with no identity in hand. Prefer
+     *  {@link #read(Long, String)}: an unverified hit is exactly how a re-assigned profile id
+     *  serves the previous occupant's photo. */
+    @Deprecated
+    public Optional<byte[]> read(Long profileId) {
+        return read(profileId, null);
     }
 
     /**
@@ -100,14 +144,55 @@ public class ProfilePhotoCache {
      * master copy is a blank avatar until something happens to rewrite them. A warmup pass or
      * the next revalidation fills the variant in.
      */
-    public Optional<byte[]> readSmall(Long profileId) {
+    public Optional<byte[]> readSmall(Long profileId, String identity) {
+        if (!identityMatches(profileId, identity)) return Optional.empty();
         try {
             Path file = newestPhoto(directory(profileId).resolve(SMALL_DIR));
             if (file != null) return Optional.of(Files.readAllBytes(file));
         } catch (Exception e) {
             log.debug("Vignette illisible pour le profil {}: {}", profileId, e.getMessage());
         }
-        return read(profileId);
+        return read(profileId, identity);
+    }
+
+    /** @deprecated see {@link #read(Long)}. */
+    @Deprecated
+    public Optional<byte[]> readSmall(Long profileId) {
+        return readSmall(profileId, null);
+    }
+
+    /**
+     * Whether the cached directory was filled for this identity.
+     *
+     * <p>Three outcomes, and the middle one is the important one:
+     * <ul>
+     *   <li>marker matches → true, serve the cache;</li>
+     *   <li>marker DISAGREES → false, and the directory is cleared on the spot. Leaving it would
+     *       mean re-reading, re-comparing and re-rejecting on every avatar render, and the bytes
+     *       are known to belong to someone else — there is nothing to keep;</li>
+     *   <li>no marker at all → true. Entries written before this marker existed are unverifiable,
+     *       not wrong, and blanking every avatar on deploy day to prove a point would be its own
+     *       outage. They gain a marker the next time they are written.</li>
+     * </ul>
+     */
+    private boolean identityMatches(Long profileId, String identity) {
+        if (identity == null || identity.isBlank()) return true;   // nothing to verify against
+        try {
+            Path marker = directory(profileId).resolve(IDENTITY_MARKER);
+            if (!Files.exists(marker)) return true;                // pre-marker entry
+            String stored = Files.readString(marker, java.nio.charset.StandardCharsets.UTF_8).trim();
+            if (stored.isEmpty() || stored.equals(identity.trim())) return true;
+
+            log.warn("Cache photo du profil {} rejete : rempli pour '{}', demande pour '{}' — "
+                     + "l'identite derriere cet id a change (rechargement de donnees ?), cache vide",
+                    profileId, stored, identity);
+            clear(profileId);
+            return false;
+        } catch (Exception e) {
+            // Unreadable marker must not blank the avatar: degrade to the previous behaviour.
+            log.debug("Marqueur d'identite illisible pour le profil {}: {}", profileId, e.getMessage());
+            return true;
+        }
     }
 
     /**
@@ -218,10 +303,23 @@ public class ProfilePhotoCache {
      */
     public byte[] write(Long profileId, String remoteFileName, String remoteLastModified,
                         byte[] content) {
+        return write(profileId, remoteFileName, remoteLastModified, content, null);
+    }
+
+    /**
+     * As {@link #write}, recording WHOSE photo these bytes are.
+     *
+     * <p>{@code identity} is stamped into {@link #IDENTITY_MARKER} and checked by every later
+     * read. Without it the directory is unverifiable and a re-assigned profile id will serve it
+     * to the wrong person — so every caller that knows the identity should pass it.
+     */
+    public byte[] write(Long profileId, String remoteFileName, String remoteLastModified,
+                        byte[] content, String identity) {
         byte[] stored = shrink(content, remoteFileName);
         try {
             Path dir = directory(profileId);
             Files.createDirectories(dir);
+            writeIdentity(dir, identity);
             // Old entries must go: read() serves the newest file, so leaving them would keep
             // a superseded photo one mtime away from being served again.
             deletePhotos(dir);
@@ -245,18 +343,59 @@ public class ProfilePhotoCache {
         return stored;
     }
 
+    /**
+     * Stamps the identity these bytes belong to. Silent when the caller offered none — the
+     * directory is then simply unverifiable, exactly as before this marker existed.
+     */
+    private void writeIdentity(Path profileDir, String identity) {
+        if (identity == null || identity.isBlank()) return;
+        try {
+            Files.writeString(profileDir.resolve(IDENTITY_MARKER), identity.trim(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            // Not fatal, but it does leave this entry unverifiable — worth a line, unlike the
+            // other best-effort writes here.
+            log.warn("Marqueur d'identite non ecrit pour {}: {}", profileDir, e.getMessage());
+        }
+    }
+
     /** Forgets the cached photo, so the next request rediscovers it. */
     public void clear(Long profileId) {
         try {
             Path dir = directory(profileId);
             if (!Files.isDirectory(dir)) return;
             deletePhotos(dir);
+            // The identity marker goes too. Leaving it would describe bytes that no longer
+            // exist, and the next write may be for a different person entirely.
+            Files.deleteIfExists(dir.resolve(IDENTITY_MARKER));
             // The variant too, or readSmall keeps serving the old face from sm/ after the
             // master is gone — a cleared cache that still shows the previous photo.
             deletePhotos(dir.resolve(SMALL_DIR));
             Files.deleteIfExists(dir.resolve(CHECK_MARKER));
         } catch (IOException e) {
             log.warn("Cache photo non vide pour le profil {}: {}", profileId, e.getMessage());
+        }
+    }
+
+    /**
+     * Whether the cached directory carries a marker CONFIRMING this identity.
+     *
+     * <p>Stricter than {@link #read}'s check, and deliberately so: read tolerates a missing
+     * marker (a pre-marker entry is unverifiable, not wrong, and blanking it would be its own
+     * outage), whereas a caller deciding whether to trust a timestamp comparison needs to know
+     * the difference between "confirmed as this person" and "cannot tell".
+     *
+     * @return true only when a marker exists AND matches
+     */
+    public boolean hasIdentity(Long profileId, String identity) {
+        if (identity == null || identity.isBlank()) return false;
+        try {
+            Path marker = directory(profileId).resolve(IDENTITY_MARKER);
+            if (!Files.exists(marker)) return false;
+            return Files.readString(marker, java.nio.charset.StandardCharsets.UTF_8)
+                    .trim().equals(identity.trim());
+        } catch (Exception e) {
+            return false;
         }
     }
 
