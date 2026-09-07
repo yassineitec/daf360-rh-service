@@ -124,6 +124,13 @@ public final class PermissionCatalog {
     public static final String ADMIN_LISTS             = "ADMIN_LISTS";
     public static final String ADMIN_EVENTS            = "ADMIN_EVENTS";
     public static final String ADMIN_NOTIFICATIONS     = "ADMIN_NOTIFICATIONS";
+    /**
+     * Cross-country override for admin screens that otherwise default to the caller's own
+     * pays (Jours fériés "Ajouter", Gestion de pause filter): pick any country instead of
+     * only the one you're logged in under. Kept separate from HR_ADMIN_ROLES so it can be
+     * withheld from admins who only manage their own country's data.
+     */
+    public static final String RH_SUPER_ADMIN          = "RH_SUPER_ADMIN";
 
     /**
      * Configure SharePoint document paths, and browse the site's folder tree to pick them.
