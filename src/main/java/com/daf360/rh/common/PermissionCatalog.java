@@ -114,6 +114,13 @@ public final class PermissionCatalog {
     public static final String ADMIN_LISTS             = "ADMIN_LISTS";
     public static final String ADMIN_EVENTS            = "ADMIN_EVENTS";
     public static final String ADMIN_NOTIFICATIONS     = "ADMIN_NOTIFICATIONS";
+    /**
+     * Cross-country override for admin screens that otherwise default to the caller's own
+     * pays (Jours fériés "Ajouter", Gestion de pause filter): pick any country instead of
+     * only the one you're logged in under. Kept separate from HR_ADMIN_ROLES so it can be
+     * withheld from admins who only manage their own country's data.
+     */
+    public static final String RH_SUPER_ADMIN          = "RH_SUPER_ADMIN";
 
     // ── Module Payroll (must stay in sync with daf360-payroll-service PermissionCatalog) ─
     public static final String PAYROLL_RUN_SIMULATION              = "PAYROLL_RUN_SIMULATION";
@@ -151,7 +158,7 @@ public final class PermissionCatalog {
         new PermGroup("Entretiens",          List.of(RH_ADMIN_INTERVIEW_TYPES, RH_MANAGE_INTERVIEWS)),
         new PermGroup("Temps de travail",    List.of(ADMIN_REGIMES, ADMIN_BREAKS)),
         new PermGroup("Module IT",           List.of(IT_PROVISIONING, RH_MANAGE_IT_ASSETS)),
-        new PermGroup("Administration",      List.of(ADMIN_LISTS, ADMIN_NOTIFICATIONS, ADMIN_ROLES)),
+        new PermGroup("Administration",      List.of(ADMIN_LISTS, ADMIN_NOTIFICATIONS, ADMIN_ROLES, RH_SUPER_ADMIN)),
         new PermGroup("Module Payroll",      List.of(
             PAYROLL_RUN_SIMULATION, PAYROLL_VIEW_INDIVIDUAL,
             PAYROLL_APPROVE_PARAMSET, PAYROLL_APPROVE_PARAMSET_FAST_TRACK,
