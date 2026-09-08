@@ -242,8 +242,12 @@ public class SharePointLocationService {
         return problems;
     }
 
-    /** Normalises a kind coming off a query string, for controllers. */
-    public Optional<DocKind> parseKind(String raw) {
-        return DocKind.from(raw == null ? null : raw.trim().toUpperCase(Locale.ROOT));
-    }
+    /*
+     * There was a `parseKind(String) -> Optional<DocKind>` here, "for controllers". It is gone
+     * on purpose: every controller that used it answered a bodiless 400 for any document type
+     * from `document_types` (V87), because those have no enum constant — so the admin panel
+     * could save a path for CONTRACT and then refuse to show whether it resolved. Controllers
+     * take a kind off a query string with {@link KindRef#parse(String)}, which knows both
+     * vocabularies. Nothing should reintroduce an enum-only parse at the edge.
+     */
 }

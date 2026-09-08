@@ -3,6 +3,7 @@ package com.daf360.rh.controller;
 import com.daf360.rh.service.document.DocumentTypeService;
 import com.daf360.rh.service.sharepoint.DocKind;
 import com.daf360.rh.service.sharepoint.GraphSharePointService;
+import com.daf360.rh.service.sharepoint.KindRef;
 import com.daf360.rh.service.sharepoint.SharePointAdminService;
 import com.daf360.rh.service.sharepoint.SharePointLocationService;
 import com.daf360.rh.service.sharepoint.SharePointResolver;
@@ -256,11 +257,20 @@ public class SharePointAdminController {
 
     // ── Panel 2: who resolves, who does not ───────────────────────────────────
 
-    /** The status table. Database only — no Graph call, whatever the row count. */
+    /**
+     * The status table. Database only — no Graph call, whatever the row count.
+     *
+     * <p>{@code docKind} is a CODE from either vocabulary, so 400 here now means malformed, not
+     * "not one of the three enum kinds". That distinction is the whole point of {@link KindRef}:
+     * this endpoint used to reject every {@code document_types} row, which made the panel
+     * unusable for the 15-odd document types whose paths the form next door could already save.
+     * An unconfigured kind is not an error — it resolves to NO_CONFIG per employee, which is
+     * exactly what this table exists to show.
+     */
     @GetMapping("/employees")
     @PreAuthorize(ADMIN)
     public ResponseEntity<List<EmployeeRowDto>> employees(@RequestParam String docKind) {
-        Optional<DocKind> kind = locationService.parseKind(docKind);
+        Optional<KindRef> kind = KindRef.parse(docKind);
         if (kind.isEmpty()) return ResponseEntity.badRequest().build();
 
         return ResponseEntity.ok(adminService.employeeRows(kind.get()).stream()
@@ -286,7 +296,7 @@ public class SharePointAdminController {
             @RequestParam String docKind,
             @RequestParam(defaultValue = "false") boolean force) {
 
-        Optional<DocKind> kind = locationService.parseKind(docKind);
+        Optional<KindRef> kind = KindRef.parse(docKind);
         if (kind.isEmpty()) return ResponseEntity.badRequest().build();
 
         List<SharePointResolver.BatchRow> rows = resolver.resolveAll(kind.get(), force);
@@ -296,14 +306,14 @@ public class SharePointAdminController {
         // never asks. Warming follows the resolve for PHOTO, in the BACKGROUND — a hundred
         // sequential downloads outlive any reverse-proxy read timeout, and the admin needs the
         // resolve verdict now, not in three minutes.
-        if (kind.get() == DocKind.PHOTO) {
+        if (DocKind.PHOTO.name().equals(kind.get().code())) {
             photoWarmup.warmInBackground("resolution admin");
         }
         Map<String, Long> byStatus = rows.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
                         r -> r.status().name(), java.util.stream.Collectors.counting()));
 
-        return ResponseEntity.ok(new BatchResultDto(kind.get().name(), rows.size(), byStatus,
+        return ResponseEntity.ok(new BatchResultDto(kind.get().code(), rows.size(), byStatus,
                 rows.stream()
                         .map(r -> new BatchRowDto(r.profileId(), r.employeeFolder(), r.status(),
                                 r.source() == null ? null : r.source().name(), r.detail()))
@@ -321,7 +331,7 @@ public class SharePointAdminController {
     @PreAuthorize(ADMIN)
     public ResponseEntity<String> pinFolder(@PathVariable Long profileId,
                                             @RequestBody PinFolderRequest request) {
-        Optional<DocKind> kind = locationService.parseKind(request.getDocKind());
+        Optional<KindRef> kind = KindRef.parse(request.getDocKind());
         if (kind.isEmpty()) {
             return ResponseEntity.badRequest().body("SHAREPOINT.TEMPLATE.UNKNOWN_KIND");
         }
@@ -335,7 +345,7 @@ public class SharePointAdminController {
     @PreAuthorize(ADMIN)
     public ResponseEntity<Void> clearFolder(@PathVariable Long profileId,
                                             @RequestParam String docKind) {
-        Optional<DocKind> kind = locationService.parseKind(docKind);
+        Optional<KindRef> kind = KindRef.parse(docKind);
         if (kind.isEmpty()) return ResponseEntity.badRequest().build();
         adminService.clearFolder(profileId, kind.get());
         return ResponseEntity.noContent().build();
@@ -358,7 +368,7 @@ public class SharePointAdminController {
             @RequestParam String docKind,
             @RequestParam(defaultValue = "false") boolean force) {
 
-        Optional<DocKind> kind = locationService.parseKind(docKind);
+        Optional<KindRef> kind = KindRef.parse(docKind);
         if (kind.isEmpty()) return ResponseEntity.badRequest().build();
 
         SharePointResolver.ResolvedLocation loc = resolver.resolve(profileId, kind.get(), force);
@@ -366,10 +376,10 @@ public class SharePointAdminController {
         List<String> files = List.of();
         List<String> years = List.of();
         if (loc.isFound()) {
-            years = kind.get().isYearScoped() ? resolver.years(loc, YEAR_SAMPLE) : List.of();
+            years = kind.get().yearScoped() ? resolver.years(loc, YEAR_SAMPLE) : List.of();
             // For a year-scoped kind the files live under a year, not under basePath, so list
             // the newest year rather than reporting an empty folder that is not empty.
-            String listAt = kind.get().isYearScoped()
+            String listAt = kind.get().yearScoped()
                     ? (years.isEmpty() ? null
                                        : loc.path().replace(
                                              com.daf360.rh.service.sharepoint.SharePointPaths.YEAR_TOKEN,
@@ -383,7 +393,7 @@ public class SharePointAdminController {
         }
 
         return ResponseEntity.ok(new DiagnosisDto(
-                profileId, kind.get().name(), loc.status(), loc.path(), loc.basePath(),
+                profileId, kind.get().code(), loc.status(), loc.path(), loc.basePath(),
                 loc.employeeFolder(), loc.source() == null ? null : loc.source().name(),
                 loc.detail(), graph.isConfigured(), files, years));
     }

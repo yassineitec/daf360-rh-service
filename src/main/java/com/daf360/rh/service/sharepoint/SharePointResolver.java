@@ -83,18 +83,25 @@ public class SharePointResolver {
         }
     }
 
-    /** Cached-where-possible resolution. This is what request paths should call. */
+    /** Cached-where-possible resolution for a built-in kind. What request paths call. */
     public ResolvedLocation resolve(Long employeeProfileId, DocKind kind) {
-        return resolve(employeeProfileId, kind, false);
+        return resolve(employeeProfileId, kind == null ? null : KindRef.of(kind), false);
+    }
+
+    /** As {@link #resolve(Long, DocKind)}, with the forced variant for a built-in kind. */
+    public ResolvedLocation resolve(Long employeeProfileId, DocKind kind, boolean force) {
+        return resolve(employeeProfileId, kind == null ? null : KindRef.of(kind), force);
     }
 
     /**
+     * Resolution for any kind, built-in or a {@code document_types} code — see {@link KindRef}.
+     *
      * @param force skip both caches and re-run discovery. What the admin panel's "re-resolve"
      *              uses, so a correction in SharePoint can be picked up immediately instead of
      *              waiting out {@link #NEGATIVE_TTL}. A MANUAL override still wins — forcing
      *              refreshes a discovery, it does not discard a human's answer.
      */
-    public ResolvedLocation resolve(Long employeeProfileId, DocKind kind, boolean force) {
+    public ResolvedLocation resolve(Long employeeProfileId, KindRef kind, boolean force) {
         if (employeeProfileId == null || kind == null) {
             return ResolvedLocation.miss(SharePointStatus.NO_CONFIG, "requete incomplete");
         }
@@ -105,7 +112,7 @@ public class SharePointResolver {
                     "profil " + employeeProfileId + " introuvable");
         }
 
-        Optional<String> template = locationService.templateFor(profile.getPaysId(), kind);
+        Optional<String> template = locationService.templateForCode(profile.getPaysId(), kind.code());
         if (template.isEmpty()) {
             // Not logged: a country with no path configured for a kind is a normal, expected
             // state (Egypt has no payroll tree yet), and logging it would fire on every render.
@@ -156,7 +163,7 @@ public class SharePointResolver {
      * hundred-plus lookups is a 429 storm that makes every row fail for a reason that has
      * nothing to do with the folders.
      */
-    public List<BatchRow> resolveAll(DocKind kind, boolean force) {
+    public List<BatchRow> resolveAll(KindRef kind, boolean force) {
         if (kind == null) return List.of();
         List<BatchRow> rows = new java.util.ArrayList<>();
         for (EmployeeProfile profile : profileRepository.findAll()) {
@@ -191,7 +198,7 @@ public class SharePointResolver {
 
     // ── Discovery ─────────────────────────────────────────────────────────────
 
-    private ResolvedLocation discover(EmployeeProfile profile, DocKind kind, String template) {
+    private ResolvedLocation discover(EmployeeProfile profile, KindRef kind, String template) {
         Long profileId = profile.getId();
 
         String fullName = employeeFolderResolver.fullNameOf(profile.getUserId());
@@ -224,9 +231,9 @@ public class SharePointResolver {
      *               the Graph call back on the request path.
      */
     private ResolvedLocation build(String template, String employeeFolder, ResolutionSource source,
-                                  DocKind kind, boolean verify) {
+                                  KindRef kind, boolean verify) {
         String path = template.replace(SharePointPaths.EMPLOYEE_FOLDER_TOKEN, employeeFolder);
-        String basePath = kind.isYearScoped()
+        String basePath = kind.yearScoped()
                 ? SharePointPaths.stripFrom(path, SharePointPaths.YEAR_TOKEN)
                 : path;
 
@@ -252,7 +259,7 @@ public class SharePointResolver {
      * unconfigured country or an employee with no documents yet is a normal state, not an
      * incident, and a WARN storm would train everyone to ignore it.
      */
-    private ResolvedLocation remember(Long profileId, DocKind kind, String segment,
+    private ResolvedLocation remember(Long profileId, KindRef kind, String segment,
                                       SharePointStatus status, String detail) {
         folderStore.saveDiscovered(profileId, kind, segment, status, detail);
         log.info("SharePoint {} non resolu pour le profil {} : {} ({})",

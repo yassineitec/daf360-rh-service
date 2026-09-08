@@ -174,7 +174,7 @@ public class SharePointAdminService {
      * batch action existed that was the state of ~128 of 130 employees, and the only ones
      * resolved were those whose profile page somebody had happened to open.
      */
-    public List<EmployeeFolderRow> employeeRows(DocKind kind) {
+    public List<EmployeeFolderRow> employeeRows(KindRef kind) {
         Map<Long, EmployeeSharePointFolderStore.CachedFolder> cached = new HashMap<>();
         for (EmployeeSharePointFolderStore.CachedFolder row : folderStore.findAll(kind)) {
             cached.put(row.employeeProfileId(), row);
@@ -221,7 +221,7 @@ public class SharePointAdminService {
      *
      * @return empty when stored, otherwise the reason it was refused
      */
-    public Optional<String> pinFolder(Long profileId, DocKind kind, String folderSegment) {
+    public Optional<String> pinFolder(Long profileId, KindRef kind, String folderSegment) {
         String segment = folderSegment == null ? "" : folderSegment.trim();
         if (segment.isEmpty() || !SharePointPaths.isSafeRelativePath(segment)
                 || segment.contains("/")) {
@@ -230,13 +230,13 @@ public class SharePointAdminService {
 
         Long paysId = jdbc.queryForObject(
                 "SELECT pays_id FROM [dbo].[employee_profiles] WHERE id = ?", Long.class, profileId);
-        Optional<String> template = locationService.templateFor(paysId, kind);
+        Optional<String> template = locationService.templateForCode(paysId, kind.code());
         if (template.isEmpty()) {
             return Optional.of("SHAREPOINT.OVERRIDE.NO_CONFIG");
         }
 
         String path = template.get().replace(SharePointPaths.EMPLOYEE_FOLDER_TOKEN, segment);
-        String basePath = kind.isYearScoped()
+        String basePath = kind.yearScoped()
                 ? SharePointPaths.stripFrom(path, SharePointPaths.YEAR_TOKEN)
                 : path;
         if (!graph.folderExists(basePath)) {
@@ -248,7 +248,7 @@ public class SharePointAdminService {
     }
 
     /** Forgets an employee's resolution, override included, so the next lookup starts over. */
-    public void clearFolder(Long profileId, DocKind kind) {
+    public void clearFolder(Long profileId, KindRef kind) {
         folderStore.clear(profileId, kind);
         log.info("Resolution SharePoint {} / profil {} reinitialisee", kind, profileId);
     }

@@ -11,7 +11,10 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.util.UriUtils;
 
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
@@ -152,7 +155,7 @@ public class GraphSharePointService {
 
     private byte[] fetch(String token, String siteId, String path) {
         return restClient.get()
-                .uri(GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + path + ":/content")
+                .uri(driveUri(siteId, path, ":/content"))
                 .header("Authorization", "Bearer " + token)
                 .retrieve()
                 .body(byte[].class);
@@ -170,7 +173,7 @@ public class GraphSharePointService {
         try {
             String token  = getAccessToken();
             String siteId = getSiteId(token);
-            String url = GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + path;
+            URI url = driveUri(siteId, path, "");
             restClient.delete()
                     .uri(url)
                     .header("Authorization", "Bearer " + token)
@@ -269,9 +272,9 @@ public class GraphSharePointService {
                 continue; // ce niveau existe déjà, passe au suivant
             }
 
-            String createUrl = parentPath.isEmpty()
-                    ? GRAPH_BASE + "/sites/" + siteId + "/drive/root/children"
-                    : GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + parentPath + ":/children";
+            URI createUrl = parentPath.isEmpty()
+                    ? URI.create(GRAPH_BASE + "/sites/" + siteId + "/drive/root/children")
+                    : driveUri(siteId, parentPath, ":/children");
 
             Map<String, Object> body = Map.of(
                     "name", segment,
@@ -505,10 +508,13 @@ public class GraphSharePointService {
         try {
             String token  = getAccessToken();
             String siteId = getSiteId(token);
-            String url = deltaLink != null && !deltaLink.isBlank()
+            // Both branches are already-encoded absolute URLs (ours, and Graph's own delta link
+            // whose token carries % escapes), so they go out as URIs rather than as templates a
+            // second encoding pass would corrupt.
+            URI url = URI.create(deltaLink != null && !deltaLink.isBlank()
                     ? deltaLink
                     : GRAPH_BASE + "/sites/" + siteId + "/drive/root/delta"
-                      + "?$select=name,parentReference,deleted,folder,file&$top=200";
+                      + "?$select=name,parentReference,deleted,folder,file&$top=200");
 
             java.util.List<DeltaChange> changes = new java.util.ArrayList<>();
             String next = null;
@@ -533,7 +539,8 @@ public class GraphSharePointService {
                     next = page.deltaLink();
                     url  = null;                  // end of this run
                 } else {
-                    url = page.nextLink();        // more pages of the same run
+                    // more pages of the same run
+                    url = page.nextLink() == null ? null : URI.create(page.nextLink());
                 }
             }
             return java.util.Optional.of(new DeltaResult(changes, next));
@@ -576,11 +583,13 @@ public class GraphSharePointService {
     public record RemoteFile(String name, String lastModified, Long sizeBytes, String webUrl) {}
 
     private java.util.List<ChildItem> listChildren(String token, String siteId, String parentPath) {
+        // The query string is appended INSIDE the suffix rather than to the finished URI: its
+        // `?` and `&` are syntax and must stay unescaped, while everything in parentPath is data
+        // and must not. Conflating the two is the whole bug this encoding exists to fix.
         String select = "?$select=name,folder,lastModifiedDateTime,size,webUrl&$top=200";
-        String url = parentPath.isEmpty()
-                ? GRAPH_BASE + "/sites/" + siteId + "/drive/root/children" + select
-                : GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + parentPath
-                  + ":/children" + select;
+        URI url = parentPath.isEmpty()
+                ? URI.create(GRAPH_BASE + "/sites/" + siteId + "/drive/root/children" + select)
+                : driveUri(siteId, parentPath, ":/children" + select);
         java.util.List<ChildItem> items = new java.util.ArrayList<>();
         while (url != null) {
             ChildrenResponse page;
@@ -595,13 +604,72 @@ public class GraphSharePointService {
             }
             if (page == null || page.value() == null) break;
             items.addAll(page.value());
-            url = page.nextLink();
+            // Graph hands back an already-encoded absolute link; URI.create keeps it verbatim,
+            // where a String would be re-encoded into a 400.
+            url = page.nextLink() == null ? null : URI.create(page.nextLink());
         }
         return items;
     }
 
+    // ── URL building ──────────────────────────────────────────────────────────
+    //
+    // Every drive call in this class addresses an item by path: `/drive/root:/{path}:/children`.
+    // That syntax requires the path to be PERCENT-ENCODED, and until this was added it was pasted
+    // in raw — which broke every folder whose name contains a reserved character, silently and
+    // permanently:
+    //
+    //   Employment Contracts & Amendments   ← CONTRACT, CONTRACT_SIGNED, AMENDMENT,
+    //   Time Off & Leaves                     RESIGNATION, DISCHARGE, MEDICAL_CERTIFICATE
+    //
+    // An unencoded `&` ends the path as far as Graph's parser is concerned, so the request asked
+    // about "…/Employment Contracts " and got a 404. `folderExists` then answered false and
+    // `listFilesOrFail` returned "could not look", i.e. an empty documents tab — while
+    // `Identity Documents`, `Administrative Documents`, `HR Requests` and `Profile Photo`, which
+    // contain nothing reserved, worked perfectly. That asymmetry is why this read as "documents
+    // are broken" rather than "one character is unescaped".
+    //
+    // The URLs are passed as java.net.URI, NOT as String. A String reaching RestClient.uri() is
+    // treated as a URI TEMPLATE and encoded again, which would turn our %26 into %2526 — so
+    // pre-encoding and passing a String is worse than doing nothing. A URI is used verbatim.
+
+    /**
+     * A drive URL addressing {@code path} by name, with the encoding Graph's {@code root:/…:/}
+     * syntax requires.
+     *
+     * @param suffix the part after the closing colon ({@code ":/children"}, {@code ":/content"},
+     *               or {@code ""} for the item itself), appended already-encoded — it is our own
+     *               syntax, never user data
+     */
+    private static URI driveUri(String siteId, String path, String suffix) {
+        return URI.create(GRAPH_BASE + "/sites/" + siteId + "/drive/root:/"
+                          + encodePath(path) + suffix);
+    }
+
+    /**
+     * Percent-encodes a slash-separated drive path, segment by segment.
+     *
+     * <p>Segment by segment so the separators survive: encoding the whole string would escape
+     * the {@code /} that makes it a path. {@code :} is encoded on top of what
+     * {@code encodePathSegment} does — a colon is legal in a URI segment but not in Graph's
+     * colon-delimited addressing, where it would end the path early exactly as {@code &} did.
+     * SharePoint refuses {@code :} in item names anyway, so this only guards against a bad
+     * template.
+     */
+    private static String encodePath(String path) {
+        if (path == null || path.isEmpty()) return "";
+        StringBuilder out = new StringBuilder(path.length() + 16);
+        String[] segments = path.split("/", -1);
+        for (int i = 0; i < segments.length; i++) {
+            if (i > 0) out.append('/');
+            // encodePathSegment escapes % first, so any ':' left here is a literal one.
+            out.append(UriUtils.encodePathSegment(segments[i], StandardCharsets.UTF_8)
+                    .replace(":", "%3A"));
+        }
+        return out.toString();
+    }
+
     private boolean folderExists(String token, String siteId, String path) {
-        String getUrl = GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + path;
+        URI getUrl = driveUri(siteId, path, "");
         try {
             restClient.get()
                     .uri(getUrl)
@@ -619,7 +687,7 @@ public class GraphSharePointService {
     private String uploadFile(String token, String siteId, String folderPath,
                                String fileName, byte[] content) {
         String targetPath = folderPath + "/" + fileName;
-        String url = GRAPH_BASE + "/sites/" + siteId + "/drive/root:/" + targetPath + ":/content";
+        URI url = driveUri(siteId, targetPath, ":/content");
         DriveItemResponse item = restClient.put()
                 .uri(url)
                 .header("Authorization", "Bearer " + token)

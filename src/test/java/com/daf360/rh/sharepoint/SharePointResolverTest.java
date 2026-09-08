@@ -6,6 +6,7 @@ import com.daf360.rh.service.sharepoint.DocKind;
 import com.daf360.rh.service.sharepoint.EmployeeFolderResolver;
 import com.daf360.rh.service.sharepoint.EmployeeSharePointFolderStore;
 import com.daf360.rh.service.sharepoint.GraphSharePointService;
+import com.daf360.rh.service.sharepoint.KindRef;
 import com.daf360.rh.service.sharepoint.ResolutionSource;
 import com.daf360.rh.service.sharepoint.SharePointLocationService;
 import com.daf360.rh.service.sharepoint.SharePointResolver;
@@ -75,7 +76,7 @@ class SharePointResolverTest {
 
     @Test
     void discoversAndCachesAFolderThatExists() {
-        when(locationService.templateFor(PAYS, DocKind.PHOTO)).thenReturn(Optional.of(PHOTO_TPL));
+        when(locationService.templateForCode(PAYS, "PHOTO")).thenReturn(Optional.of(PHOTO_TPL));
         when(graph.folderExists(anyString())).thenReturn(true);
 
         SharePointResolver.ResolvedLocation loc = resolver.resolve(PROFILE, DocKind.PHOTO);
@@ -85,7 +86,7 @@ class SharePointResolverTest {
                 .isEqualTo("Tunisia/01_HR/01_Contracts-Employment/Bilel ZEDINI/Identity Documents");
         assertThat(loc.basePath()).isEqualTo(loc.path());
         assertThat(loc.employeeFolder()).isEqualTo("Bilel ZEDINI");
-        verify(folderStore).saveDiscovered(PROFILE, DocKind.PHOTO, "Bilel ZEDINI",
+        verify(folderStore).saveDiscovered(PROFILE, KindRef.of(DocKind.PHOTO), "Bilel ZEDINI",
                 SharePointStatus.FOUND, null);
     }
 
@@ -93,7 +94,7 @@ class SharePointResolverTest {
      *  year's folder may legitimately not exist yet, which is an empty list, not a fault. */
     @Test
     void yearScopedKindKeepsTheYearTokenAndVerifiesTheParent() {
-        when(locationService.templateFor(PAYS, DocKind.PAYSLIP)).thenReturn(Optional.of(PAYSLIP_TPL));
+        when(locationService.templateForCode(PAYS, "PAYSLIP")).thenReturn(Optional.of(PAYSLIP_TPL));
         when(graph.folderExists("Tunisia/01_HR/03_Payroll-Admin/Bilel ZEDINI/01_Pay-Slip"))
                 .thenReturn(true);
 
@@ -108,14 +109,14 @@ class SharePointResolverTest {
      *  be a clean, explained degrade rather than an error. */
     @Test
     void reportsFolderMissingWhenTheTreeIsNotThereYet() {
-        when(locationService.templateFor(PAYS, DocKind.PAYSLIP)).thenReturn(Optional.of(PAYSLIP_TPL));
+        when(locationService.templateForCode(PAYS, "PAYSLIP")).thenReturn(Optional.of(PAYSLIP_TPL));
         when(graph.folderExists(anyString())).thenReturn(false);
 
         SharePointResolver.ResolvedLocation loc = resolver.resolve(PROFILE, DocKind.PAYSLIP);
 
         assertThat(loc.status()).isEqualTo(SharePointStatus.FOLDER_MISSING);
         assertThat(loc.detail()).contains("01_Pay-Slip");
-        verify(folderStore).saveDiscovered(eq(PROFILE), eq(DocKind.PAYSLIP), isNull(),
+        verify(folderStore).saveDiscovered(eq(PROFILE), eq(KindRef.of(DocKind.PAYSLIP)), isNull(),
                 eq(SharePointStatus.FOLDER_MISSING), anyString());
     }
 
@@ -126,7 +127,7 @@ class SharePointResolverTest {
      */
     @Test
     void distinguishesAnUnconfiguredIntegrationFromAMissingFolder() {
-        when(locationService.templateFor(PAYS, DocKind.PHOTO)).thenReturn(Optional.of(PHOTO_TPL));
+        when(locationService.templateForCode(PAYS, "PHOTO")).thenReturn(Optional.of(PHOTO_TPL));
         when(graph.folderExists(anyString())).thenReturn(false);
         when(graph.isConfigured()).thenReturn(false);
 
@@ -138,7 +139,7 @@ class SharePointResolverTest {
      *  resolves to NO_CONFIG without ever touching Graph. */
     @Test
     void reportsNoConfigWithoutCallingGraph() {
-        when(locationService.templateFor(PAYS, DocKind.PAYSLIP)).thenReturn(Optional.empty());
+        when(locationService.templateForCode(PAYS, "PAYSLIP")).thenReturn(Optional.empty());
 
         assertThat(resolver.resolve(PROFILE, DocKind.PAYSLIP).status())
                 .isEqualTo(SharePointStatus.NO_CONFIG);
@@ -148,7 +149,7 @@ class SharePointResolverTest {
 
     @Test
     void refusesAnEmployeeWhoseNameIsSharedWithAColleague() {
-        when(locationService.templateFor(PAYS, DocKind.PHOTO)).thenReturn(Optional.of(PHOTO_TPL));
+        when(locationService.templateForCode(PAYS, "PHOTO")).thenReturn(Optional.of(PHOTO_TPL));
         when(employeeFolderResolver.isAmbiguous("Bilel ZEDINI", PAYS)).thenReturn(true);
 
         SharePointResolver.ResolvedLocation loc = resolver.resolve(PROFILE, DocKind.PHOTO);
@@ -159,7 +160,7 @@ class SharePointResolverTest {
 
     @Test
     void reportsNoNameWhenTheEmployeeHasNoUsableFullName() {
-        when(locationService.templateFor(PAYS, DocKind.PHOTO)).thenReturn(Optional.of(PHOTO_TPL));
+        when(locationService.templateForCode(PAYS, "PHOTO")).thenReturn(Optional.of(PHOTO_TPL));
         when(employeeFolderResolver.fullNameOf(USER)).thenReturn("   ");
         when(employeeFolderResolver.normalize("   ")).thenReturn(null);
 
@@ -176,10 +177,10 @@ class SharePointResolverTest {
      */
     @Test
     void trustsARememberedFailureWithoutCallingGraph() {
-        when(locationService.templateFor(PAYS, DocKind.PHOTO)).thenReturn(Optional.of(PHOTO_TPL));
-        when(folderStore.find(PROFILE, DocKind.PHOTO)).thenReturn(Optional.of(
+        when(locationService.templateForCode(PAYS, "PHOTO")).thenReturn(Optional.of(PHOTO_TPL));
+        when(folderStore.find(PROFILE, KindRef.of(DocKind.PHOTO))).thenReturn(Optional.of(
                 new EmployeeSharePointFolderStore.CachedFolder(
-                        PROFILE, DocKind.PHOTO, null, ResolutionSource.DISCOVERED,
+                        PROFILE, "PHOTO", null, ResolutionSource.DISCOVERED,
                         SharePointStatus.FOLDER_MISSING, OffsetDateTime.now().minusHours(1),
                         "dossier introuvable")));
 
@@ -193,10 +194,10 @@ class SharePointResolverTest {
      *  out the 24h negative window. */
     @Test
     void forceBypassesARememberedFailure() {
-        when(locationService.templateFor(PAYS, DocKind.PHOTO)).thenReturn(Optional.of(PHOTO_TPL));
-        when(folderStore.find(PROFILE, DocKind.PHOTO)).thenReturn(Optional.of(
+        when(locationService.templateForCode(PAYS, "PHOTO")).thenReturn(Optional.of(PHOTO_TPL));
+        when(folderStore.find(PROFILE, KindRef.of(DocKind.PHOTO))).thenReturn(Optional.of(
                 new EmployeeSharePointFolderStore.CachedFolder(
-                        PROFILE, DocKind.PHOTO, null, ResolutionSource.DISCOVERED,
+                        PROFILE, "PHOTO", null, ResolutionSource.DISCOVERED,
                         SharePointStatus.FOLDER_MISSING, OffsetDateTime.now().minusMinutes(5),
                         "dossier introuvable")));
         when(graph.folderExists(anyString())).thenReturn(true);
@@ -208,10 +209,10 @@ class SharePointResolverTest {
     /** An expired negative entry is retried rather than trusted forever. */
     @Test
     void rediscoversOnceTheNegativeWindowHasElapsed() {
-        when(locationService.templateFor(PAYS, DocKind.PHOTO)).thenReturn(Optional.of(PHOTO_TPL));
-        when(folderStore.find(PROFILE, DocKind.PHOTO)).thenReturn(Optional.of(
+        when(locationService.templateForCode(PAYS, "PHOTO")).thenReturn(Optional.of(PHOTO_TPL));
+        when(folderStore.find(PROFILE, KindRef.of(DocKind.PHOTO))).thenReturn(Optional.of(
                 new EmployeeSharePointFolderStore.CachedFolder(
-                        PROFILE, DocKind.PHOTO, null, ResolutionSource.DISCOVERED,
+                        PROFILE, "PHOTO", null, ResolutionSource.DISCOVERED,
                         SharePointStatus.FOLDER_MISSING, OffsetDateTime.now().minusDays(2),
                         "dossier introuvable")));
         when(graph.folderExists(anyString())).thenReturn(true);
@@ -228,10 +229,10 @@ class SharePointResolverTest {
      */
     @Test
     void manualOverrideWinsAndIsNeverRediscovered() {
-        when(locationService.templateFor(PAYS, DocKind.PAYSLIP)).thenReturn(Optional.of(PAYSLIP_TPL));
-        when(folderStore.find(PROFILE, DocKind.PAYSLIP)).thenReturn(Optional.of(
+        when(locationService.templateForCode(PAYS, "PAYSLIP")).thenReturn(Optional.of(PAYSLIP_TPL));
+        when(folderStore.find(PROFILE, KindRef.of(DocKind.PAYSLIP))).thenReturn(Optional.of(
                 new EmployeeSharePointFolderStore.CachedFolder(
-                        PROFILE, DocKind.PAYSLIP, "Bilel ZEDINI-CDI-ARX tunisie",
+                        PROFILE, "PAYSLIP", "Bilel ZEDINI-CDI-ARX tunisie",
                         ResolutionSource.MANUAL, SharePointStatus.FOUND,
                         OffsetDateTime.now().minusYears(1), null)));
 

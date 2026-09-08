@@ -36,8 +36,15 @@ public class EmployeeSharePointFolderStore {
 
     private final JdbcTemplate jdbc;
 
-    /** @param folderSegment the real folder name, null when the lookup failed */
-    public record CachedFolder(Long employeeProfileId, DocKind docKind, String folderSegment,
+    /**
+     * @param docKind       the code as stored, NOT a {@link DocKind}. It was the enum, mapped
+     *                      through {@code DocKind.from(...).orElse(null)} — which silently
+     *                      nulled the field for every {@code document_types} code, i.e. for
+     *                      every kind but three. A row is keyed by whatever string wrote it, so
+     *                      that is what this carries; see {@link KindRef}.
+     * @param folderSegment the real folder name, null when the lookup failed
+     */
+    public record CachedFolder(Long employeeProfileId, String docKind, String folderSegment,
                                ResolutionSource source, SharePointStatus status,
                                OffsetDateTime resolvedAt, String lastError) {
 
@@ -46,7 +53,7 @@ public class EmployeeSharePointFolderStore {
         public boolean isUsable() { return folderSegment != null && !folderSegment.isBlank(); }
     }
 
-    public Optional<CachedFolder> find(Long employeeProfileId, DocKind kind) {
+    public Optional<CachedFolder> find(Long employeeProfileId, KindRef kind) {
         if (employeeProfileId == null || kind == null) return Optional.empty();
         try {
             List<CachedFolder> rows = jdbc.query(
@@ -54,7 +61,7 @@ public class EmployeeSharePointFolderStore {
                     + "resolved_at, last_error "
                     + "FROM [dbo].[employee_sharepoint_folders] "
                     + "WHERE employee_profile_id = ? AND doc_kind = ?",
-                    (rs, i) -> map(rs), employeeProfileId, kind.name());
+                    (rs, i) -> map(rs), employeeProfileId, kind.code());
             return rows.stream().findFirst();
         } catch (Exception e) {
             // V84 not applied on this server, most likely. Resolution still works, it just
@@ -66,14 +73,14 @@ public class EmployeeSharePointFolderStore {
     }
 
     /** Every cached row for a kind, for the admin panel's "who resolves, who does not" table. */
-    public List<CachedFolder> findAll(DocKind kind) {
+    public List<CachedFolder> findAll(KindRef kind) {
         if (kind == null) return List.of();
         try {
             return jdbc.query(
                     "SELECT employee_profile_id, doc_kind, folder_segment, source, status, "
                     + "resolved_at, last_error "
                     + "FROM [dbo].[employee_sharepoint_folders] WHERE doc_kind = ?",
-                    (rs, i) -> map(rs), kind.name());
+                    (rs, i) -> map(rs), kind.code());
         } catch (Exception e) {
             log.debug("Listage de employee_sharepoint_folders impossible: {}", e.getMessage());
             return List.of();
@@ -88,7 +95,7 @@ public class EmployeeSharePointFolderStore {
      * MANUAL row is exactly what blocked the update. So the protection is enforced by the
      * database rather than by a check this method could be refactored out of.
      */
-    public void saveDiscovered(Long employeeProfileId, DocKind kind, String folderSegment,
+    public void saveDiscovered(Long employeeProfileId, KindRef kind, String folderSegment,
                                SharePointStatus status, String detail) {
         if (employeeProfileId == null || kind == null || status == null) return;
         try {
@@ -97,7 +104,7 @@ public class EmployeeSharePointFolderStore {
                     + "SET folder_segment = ?, status = ?, last_error = ?, "
                     + "resolved_at = SYSDATETIMEOFFSET() "
                     + "WHERE employee_profile_id = ? AND doc_kind = ? AND source = 'DISCOVERED'",
-                    folderSegment, status.name(), truncate(detail), employeeProfileId, kind.name());
+                    folderSegment, status.name(), truncate(detail), employeeProfileId, kind.code());
             if (updated > 0) return;
 
             jdbc.update(
@@ -105,7 +112,7 @@ public class EmployeeSharePointFolderStore {
                     + "(employee_profile_id, doc_kind, folder_segment, source, status, "
                     + "resolved_at, last_error) "
                     + "VALUES (?, ?, ?, 'DISCOVERED', ?, SYSDATETIMEOFFSET(), ?)",
-                    employeeProfileId, kind.name(), folderSegment, status.name(), truncate(detail));
+                    employeeProfileId, kind.code(), folderSegment, status.name(), truncate(detail));
 
         } catch (DuplicateKeyException manualRowWins) {
             // A MANUAL row is already there, or a concurrent resolve inserted one. Both are
@@ -120,20 +127,20 @@ public class EmployeeSharePointFolderStore {
     }
 
     /** An administrator pinning the folder for an employee the convention cannot predict. */
-    public void saveManual(Long employeeProfileId, DocKind kind, String folderSegment) {
+    public void saveManual(Long employeeProfileId, KindRef kind, String folderSegment) {
         if (employeeProfileId == null || kind == null) return;
         int updated = jdbc.update(
                 "UPDATE [dbo].[employee_sharepoint_folders] "
                 + "SET folder_segment = ?, source = 'MANUAL', status = ?, last_error = NULL, "
                 + "resolved_at = SYSDATETIMEOFFSET() "
                 + "WHERE employee_profile_id = ? AND doc_kind = ?",
-                folderSegment, SharePointStatus.FOUND.name(), employeeProfileId, kind.name());
+                folderSegment, SharePointStatus.FOUND.name(), employeeProfileId, kind.code());
         if (updated == 0) {
             jdbc.update(
                     "INSERT INTO [dbo].[employee_sharepoint_folders] "
                     + "(employee_profile_id, doc_kind, folder_segment, source, status, resolved_at) "
                     + "VALUES (?, ?, ?, 'MANUAL', ?, SYSDATETIMEOFFSET())",
-                    employeeProfileId, kind.name(), folderSegment, SharePointStatus.FOUND.name());
+                    employeeProfileId, kind.code(), folderSegment, SharePointStatus.FOUND.name());
         }
         log.info("Dossier SharePoint {} / {} fixe manuellement sur '{}'",
                 employeeProfileId, kind, folderSegment);
@@ -146,17 +153,17 @@ public class EmployeeSharePointFolderStore {
      * that cannot be removed is a trap. The narrower "rediscover but keep my override" is what
      * a forced resolve does instead.
      */
-    public void clear(Long employeeProfileId, DocKind kind) {
+    public void clear(Long employeeProfileId, KindRef kind) {
         if (employeeProfileId == null || kind == null) return;
         jdbc.update("DELETE FROM [dbo].[employee_sharepoint_folders] "
                     + "WHERE employee_profile_id = ? AND doc_kind = ?",
-                employeeProfileId, kind.name());
+                employeeProfileId, kind.code());
     }
 
     private CachedFolder map(ResultSet rs) throws SQLException {
         return new CachedFolder(
                 rs.getLong("employee_profile_id"),
-                DocKind.from(rs.getString("doc_kind")).orElse(null),
+                rs.getString("doc_kind"),
                 rs.getString("folder_segment"),
                 parseSource(rs.getString("source")),
                 parseStatus(rs.getString("status")),
