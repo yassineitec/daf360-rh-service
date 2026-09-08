@@ -36,6 +36,25 @@ public class DashboardService {
     private static final List<String> REQUIRED_DOC_TYPES = List.of("CONTRACT", "ID_CARD", "RIB");
 
     /**
+     * L'EFFECTIF : les trois statuts qui veulent dire « cette personne fait partie de
+     * l'équipe ».
+     *
+     * <p>Les compteurs de cette page ne retenaient qu'{@code ACTIVE}, ce qui était sans
+     * conséquence tant qu'aucun code n'écrivait {@code ON_MISSION} ni {@code ON_LEAVE}.
+     * Depuis que {@code PresenceStatusJob} les pose chaque matin, un départ en mission
+     * faisait sortir la personne de l'effectif, des barres par pays et de la liste des
+     * documents manquants — alors qu'elle est simplement en déplacement.
+     *
+     * <p>Même ensemble que la liste des profils et l'annuaire, à un seul endroit : trois
+     * écrans qui répondent « combien sommes-nous ? » doivent répondre pareil.
+     */
+    private static final List<LifecycleStatus> IN_SERVICE = List.of(
+            LifecycleStatus.ACTIVE, LifecycleStatus.ON_LEAVE, LifecycleStatus.ON_MISSION);
+
+    /** Les mêmes trois statuts, en littéraux SQL, pour les requêtes JdbcTemplate. */
+    private static final String IN_SERVICE_SQL = "('ACTIVE','ON_LEAVE','ON_MISSION')";
+
+    /**
      * The onboarding wizard's data steps, mapped onto the {@code employee_profiles}
      * columns each step writes. Order matches the frontend's {@code STEPS}, so the
      * dashboard's per-section bars line up with what RH sees in the wizard.
@@ -120,13 +139,13 @@ public class DashboardService {
     public WorkforceStatsDto getWorkforceStats() {
         Long paysId = tenantService.getEffectivePaysId();
         long total = paysId != null
-                ? profileRepository.countByPaysIdAndLifecycleStatus(paysId, LifecycleStatus.ACTIVE)
-                : profileRepository.countByLifecycleStatus(LifecycleStatus.ACTIVE);
+                ? profileRepository.countByPaysIdAndLifecycleStatusIn(paysId, IN_SERVICE)
+                : profileRepository.countByLifecycleStatusIn(IN_SERVICE);
         if (total == 0) return new WorkforceStatsDto(0, 0, 0, 0, 0.0, 0.0, List.of());
 
         List<Object[]> genderRows = paysId != null
-                ? profileRepository.countByGenderAndLifecycleStatusAndPaysId(LifecycleStatus.ACTIVE, paysId)
-                : profileRepository.countByGenderAndLifecycleStatus(LifecycleStatus.ACTIVE);
+                ? profileRepository.countByGenderAndLifecycleStatusInAndPaysId(IN_SERVICE, paysId)
+                : profileRepository.countByGenderAndLifecycleStatusIn(IN_SERVICE);
 
         Map<String, Long> byGender = genderRows.stream()
                 .collect(Collectors.toMap(
@@ -158,7 +177,7 @@ public class DashboardService {
         String sql = "SELECT p.id AS pays_id, p.french_label AS pays_label, COUNT(*) AS cnt " +
                      "FROM [dbo].[employee_profiles] ep " +
                      "LEFT JOIN [dbo].[pays] p ON p.id = ep.pays_id " +
-                     "WHERE ep.lifecycle_status = 'ACTIVE' " +
+                     "WHERE ep.lifecycle_status IN " + IN_SERVICE_SQL + " " +
                      "  AND ep.deleted = 0 " +
                      (paysId != null ? "  AND ep.pays_id = ? " : "") +
                      "GROUP BY p.id, p.french_label " +
@@ -394,7 +413,9 @@ public class DashboardService {
                 "FROM [dbo].[employee_profiles] ep " +
                 "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
                 "CROSS JOIN (VALUES ('CONTRACT'),('ID_CARD'),('RIB')) AS req(doc_type) " +
-                "WHERE ep.lifecycle_status = 'ACTIVE' " +
+                // Même ensemble que l'effectif : un contrat manquant ne cesse pas de
+                // manquer parce que la personne est partie en mission ce matin.
+                "WHERE ep.lifecycle_status IN " + IN_SERVICE_SQL + " " +
                 "  AND ep.deleted = 0 " +
                 "  AND NOT EXISTS ( " +
                 "    SELECT 1 FROM [dbo].[employee_documents] ed " +

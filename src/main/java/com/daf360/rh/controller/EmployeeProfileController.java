@@ -62,6 +62,21 @@ public class EmployeeProfileController {
             @RequestParam(required = false) String grade,
             @RequestParam(required = false) String contract,
             @RequestParam(required = false) String search,
+            // Existaient dans ProfileFilterDto et étaient déjà envoyées par l'écran, mais
+            // n'étaient acceptées nulle part : régler une période de recrutement ne filtrait
+            // rien, sans le moindre signe.
+            @RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso =
+                org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+            java.time.LocalDate hireDateFrom,
+            @RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso =
+                org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+            java.time.LocalDate hireDateTo,
+            // Faux par défaut : la liste est l'effectif présent (ACTIVE / ON_LEAVE /
+            // ON_MISSION). Vrai rouvre les profils sortis — c'est la seule porte vers un
+            // TERMINATED ou un ARCHIVED depuis l'application.
+            @RequestParam(defaultValue = "false") boolean includeInactive,
             @PageableDefault(size = 20) Pageable pageable) {
 
         ProfileFilterDto filter = new ProfileFilterDto();
@@ -71,6 +86,9 @@ public class EmployeeProfileController {
         filter.setGrade(grade);
         filter.setContract(contract);
         filter.setSearch(search);
+        filter.setHireDateFrom(hireDateFrom);
+        filter.setHireDateTo(hireDateTo);
+        filter.setIncludeInactive(includeInactive);
 
         // Ask SharePoint what changed, at most once every 30s across the whole platform and
         // always on a background thread — no request waits for it. One Graph call covers every
@@ -176,6 +194,9 @@ public class EmployeeProfileController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hireDateFrom,
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hireDateTo,
+            // Faux par défaut : « les employés », ce sont ceux qui sont en service. Voir
+            // EmployeeProfileService.listAllEmployees pour les statuts retenus.
+            @RequestParam(defaultValue = "false") boolean includeInactive,
             // No `sort` here: the query is hand-written JDBC and owns its ORDER BY
             // (newest hire first). A Pageable sort would be silently ignored, so
             // advertising one only invites a caller to trust it.
@@ -191,6 +212,7 @@ public class EmployeeProfileController {
         filter.setContract(contract);
         filter.setHireDateFrom(hireDateFrom);
         filter.setHireDateTo(hireDateTo);
+        filter.setIncludeInactive(includeInactive);
 
         // Same background delta check as the paginated list above: this is the endpoint the
         // profiles grid and the annuaire actually call.

@@ -17,7 +17,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import jakarta.servlet.http.Cookie;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -106,6 +108,32 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     TenantContext.set(paysIdClaim.longValue());
                 }
 
+                /*
+                 * La PORTÉE PAYS du rôle (V74), au-delà du seul `paysId`.
+                 *
+                 * Le portail résout le mode du rôle (OWN / LIST / ALL) en un ensemble concret
+                 * au moment de signer, et l'émet dans `paysScopeAll` + `paysIds`. Ce filtre ne
+                 * lisait que `paysId`, donc un rôle en mode LIST couvrant TN + EG + AE était
+                 * écrasé sur un seul pays alors que le jeton portait les trois.
+                 *
+                 * Repli sur `paysId` seul quand les revendications sont absentes (jeton
+                 * antérieur à V74) : c'est le comportement d'avant, et non « tous les pays ».
+                 */
+                Boolean scopeAll = claims.get("paysScopeAll", Boolean.class);
+                @SuppressWarnings("unchecked")
+                List<Number> scopeIds = claims.get("paysIds", List.class);
+
+                Set<Long> allowed = new LinkedHashSet<>();
+                if (scopeIds != null) {
+                    scopeIds.stream().filter(java.util.Objects::nonNull)
+                            .forEach(n -> allowed.add(n.longValue()));
+                }
+                if (allowed.isEmpty() && paysIdClaim != null) {
+                    allowed.add(paysIdClaim.longValue());
+                }
+                PaysScopeContext.set(new PaysScopeContext.Scope(
+                        Boolean.TRUE.equals(scopeAll), allowed));
+
                 log.debug("JWT authenticated: sub={}, paysId={}, permissions={}",
                         claims.getSubject(), paysIdClaim, permissions);
             }
@@ -115,6 +143,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
         } finally {
             TenantContext.clear();
+            // Même raison que TenantContext : le thread sert la requête suivante, et une
+            // portée oubliée serait celle de l'utilisateur précédent.
+            PaysScopeContext.clear();
         }
     }
 }

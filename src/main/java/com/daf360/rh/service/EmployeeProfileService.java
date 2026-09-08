@@ -115,16 +115,33 @@ public class EmployeeProfileService {
         return toResponseDto(profile, auth);
     }
 
+    /**
+     * L'effectif visible par l'appelant.
+     *
+     * <p>La PORTÉE PAYS vient du jeton, plus d'un identifiant unique. L'ancienne version
+     * faisait {@code effectivePaysId != null ? effectivePaysId : filter.getPaysId()} : un
+     * seul pays, celui de l'utilisateur, et la liste déroulante « Pays » de l'écran n'avait
+     * d'effet que pour les administrateurs. Un rôle en mode LIST (V74) couvrant TN + EG + AE
+     * n'en voyait qu'un, alors que son jeton portait les trois.
+     *
+     * <p>Le filtre de l'écran RESTREINT à l'intérieur de la portée, il ne l'élargit jamais :
+     * il est passé en plus des pays autorisés, pas à leur place. Demander un pays hors
+     * portée ne renvoie donc rien, au lieu de le révéler.
+     */
     @Transactional(readOnly = true)
     public Page<EmployeeProfileSummaryDto> listProfiles(ProfileFilterDto filter, Pageable pageable) {
-        Long effectivePaysId = tenantService.getEffectivePaysId();
-        Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : filter.getPaysId();
+        com.daf360.rh.security.PaysScopeContext.Scope scope = tenantService.getPaysScope();
         return profileRepository.search(
-                resolvedPaysId,
+                filter.getPaysId(),
+                scope.unfiltered() ? 1 : 0,
+                scope.idsOrPlaceholder(),
                 filter.getStatus(),
+                filter.isIncludeInactive() ? 1 : 0,
                 filter.getDepartment(),
                 filter.getGrade(),
                 filter.getContract(),
+                filter.getHireDateFrom(),
+                filter.getHireDateTo(),
                 filter.getSearch(),
                 pageable
         ).map(mapper::toSummaryDto);
@@ -301,10 +318,23 @@ public class EmployeeProfileService {
         String search     = (filter.getSearch() != null && !filter.getSearch().isBlank())
                             ? filter.getSearch().trim() : null;
         String searchLike = search != null ? "%" + search + "%" : null;
-        Long   effectivePaysId = tenantService.getEffectivePaysId();
-        Long   paysId          = effectivePaysId != null ? effectivePaysId : filter.getPaysId();
+        // Portée pays du JETON (V74), et non plus le pays unique de l'utilisateur : voir
+        // la même bascule dans listProfiles. Le `pays` de l'écran vient EN PLUS de la
+        // portée, jamais à sa place — demander un pays hors portée ne renvoie rien.
+        com.daf360.rh.security.PaysScopeContext.Scope scope = tenantService.getPaysScope();
+        Long   paysId          = filter.getPaysId();
         String status     = (filter.getStatus() != null && !filter.getStatus().isBlank())
                             ? filter.getStatus() : null;
+        // Par défaut la liste ne montre que les personnes EN SERVICE. Les quatre autres
+        // statuts décrivent quelqu'un qui n'est pas (ou plus) à son poste :
+        // PRE_ONBOARDING n'a pas encore commencé, OFFBOARDING/TERMINATED/ARCHIVED sont
+        // partis. Ils restent atteignables en cochant « inclure les inactifs », ou en
+        // demandant le statut explicitement.
+        //
+        // `IS NULL` reste admis : la jointure sur employee_profiles est un LEFT JOIN, et
+        // 155 comptes actifs n'ont pas de fiche RH alors que ce sont de vraies personnes
+        // (voir UserScope). Les exclure ici viderait la moitié de l'annuaire.
+        boolean inServiceOnly = status == null && !filter.isIncludeInactive();
         String department = (filter.getDepartment() != null && !filter.getDepartment().isBlank())
                             ? filter.getDepartment().trim() : null;
         String grade      = (filter.getGrade() != null && !filter.getGrade().isBlank())
@@ -334,8 +364,11 @@ public class EmployeeProfileService {
             // (the DRH and the PDG among them) — see UserScope.
             "AND " + UserScope.realPeople("u") + " " +
             (searchLike != null ? "AND (u.fullName LIKE ? OR u.username LIKE ?) " : "") +
+            (scope.unfiltered() ? "" : "AND u.pays_id IN (" + placeholders(scope.paysIds().size()) + ") ") +
             (paysId     != null ? "AND u.pays_id = ? " : "") +
             (status     != null ? "AND ep.lifecycle_status = ? " : "") +
+            (inServiceOnly ? "AND (ep.lifecycle_status IS NULL OR ep.lifecycle_status IN "
+                             + "('ACTIVE','ON_LEAVE','ON_MISSION')) " : "") +
             (department != null ? "AND d.label_fr = ? " : "") +
             (grade      != null ? "AND g.label_fr = ? " : "") +
             (contract   != null ? "AND ep.contract_type = ? " : "") +
@@ -344,6 +377,9 @@ public class EmployeeProfileService {
 
         List<Object> args = new ArrayList<>();
         if (searchLike != null) { args.add(searchLike); args.add(searchLike); }
+        // Même ordre que les clauses ci-dessus : la requête est assemblée à la main, et
+        // un décalage ici filtrerait sur la mauvaise colonne sans lever d'erreur SQL.
+        if (!scope.unfiltered()) { args.addAll(scope.paysIds()); }
         if (paysId     != null) { args.add(paysId); }
         if (status     != null) { args.add(status); }
         if (department != null) { args.add(department); }
@@ -418,6 +454,11 @@ public class EmployeeProfileService {
     public com.daf360.rh.dto.profile.FilterOptionsDto getFilterOptions() {
         // Country: value is the numeric pays_id, because /employees filters on
         // `u.pays_id`. Returning the label as the value is what broke this filter.
+        //
+        // Restreinte à la portée du jeton, comme la liste elle-même : proposer un pays
+        // que l'utilisateur n'a pas le droit de voir donne un filtre qui ne renvoie
+        // jamais rien, et révèle au passage dans quelles entités le groupe est présent.
+        com.daf360.rh.security.PaysScopeContext.Scope scope = tenantService.getPaysScope();
         List<com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto> paysList =
             jdbcTemplate.query(
                 "SELECT DISTINCT p.id, p.french_label " +
@@ -426,9 +467,11 @@ public class EmployeeProfileService {
                 "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
                 "  AND " + UserScope.realPeople("u") + " " +
                 "  AND p.french_label IS NOT NULL " +
+                (scope.unfiltered() ? "" : "  AND p.id IN (" + placeholders(scope.paysIds().size()) + ") ") +
                 "ORDER BY p.french_label",
                 (rs, i) -> new com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto(
-                    String.valueOf(rs.getLong("id")), rs.getString("french_label")));
+                    String.valueOf(rs.getLong("id")), rs.getString("french_label")),
+                scope.unfiltered() ? new Object[0] : scope.paysIds().toArray());
 
         // Department / grade: value IS the label — /employees matches on label_fr,
         // since employee_profiles rows may predate the dimension FKs.
@@ -1198,6 +1241,18 @@ public class EmployeeProfileService {
     private String safeJson(Object obj) {
         try { return objectMapper.writeValueAsString(obj); }
         catch (JsonProcessingException e) { return "{}"; }
+    }
+
+    /**
+     * {@code ?, ?, ?} pour un {@code IN} de n valeurs.
+     *
+     * <p>Le nombre de pays est dérivé de la portée du jeton, jamais d'une entrée
+     * utilisateur, et seuls des {@code ?} sont concaténés — aucune valeur n'entre dans
+     * le SQL. Appelé uniquement avec {@code n >= 1} : la portée est testée par
+     * {@code unfiltered()} avant, et SQL Server refuse un {@code IN ()}.
+     */
+    private static String placeholders(int n) {
+        return String.join(", ", java.util.Collections.nCopies(n, "?"));
     }
 
     private Object[] buildArgs(String searchLike, Long paysId, String status,

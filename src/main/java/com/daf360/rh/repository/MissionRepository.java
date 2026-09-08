@@ -40,6 +40,29 @@ public interface MissionRepository extends JpaRepository<Mission, Long> {
                                           @Param("to") LocalDate to);
 
     /**
+     * Qui est en mission un jour donné, pour TOUT un ensemble d'employés — la question que
+     * pose {@code PresenceStatusJob} une fois par entité et par matin.
+     *
+     * <p>En lot, et non {@link #findApprovedOverlapping} appelée en boucle : la passe
+     * traite des centaines de profils, et une requête par personne ferait des centaines
+     * d'allers-retours pour répondre à une seule question.
+     *
+     * <p>Le statut est un paramètre plutôt qu'une constante dans le JPQL : la tâche dit
+     * explicitement qu'elle ne s'intéresse qu'aux missions APPROUVÉES, au lieu de le
+     * cacher ici. Une mission en attente d'approbation ne déplace personne.
+     */
+    @Query("""
+            SELECT m FROM Mission m
+            WHERE m.employeeUserId IN :userIds
+              AND m.status    = :status
+              AND m.startDate <= :day
+              AND m.endDate   >= :day
+            """)
+    List<Mission> findApprovedCovering(@Param("userIds") java.util.Collection<Long> userIds,
+                                       @Param("status") MissionStatus status,
+                                       @Param("day") LocalDate day);
+
+    /**
      * Overlapping missions for the SAME employee, used to refuse double-booking. Excludes
      * the mission being edited, and the terminal statuses — a rejected or cancelled mission
      * blocks nothing.
