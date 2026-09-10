@@ -981,10 +981,24 @@ public class EmployeeProfileService {
      */
     private GraphSharePointService.RemoteFile bestPortrait(
             java.util.List<GraphSharePointService.RemoteFile> files, String basePath) {
+        // DEUX passes, et l'ordre compte.
+        //
+        // "Le plus recent gagne, point final" a produit en production des avatars qui etaient
+        // des actes de naissance et des contrats : le dossier melange portraits et scans, le
+        // filtre ne juge que le NOM, et le dernier document depose l'emportait donc sur un
+        // portrait correct depose plus tot. Chaque nouveau scan detournait l'avatar.
+        //
+        // Un fichier qui se declare "photo" ou "portrait" est le seul cas ou les RH nous ont
+        // dit ce qu'est le fichier. Cette declaration doit primer sur la recence, sinon aucune
+        // liste noire ne suffira jamais : elle ne peut pas enumerer tous les documents qu'un
+        // dossier RH finira par contenir.
         GraphSharePointService.RemoteFile best = files.stream()
-                .filter(f -> isLikelyPortrait(f.name()))
+                .filter(f -> isDeclaredPortrait(f.name()))
                 .findFirst()
-                .orElse(null);
+                .orElseGet(() -> files.stream()
+                        .filter(f -> isLikelyPortrait(f.name()))
+                        .findFirst()
+                        .orElse(null));
 
         // Name what was actually there when nothing qualified. Without this the caller can
         // only log the FOLDER, so "empty folder", "rejected extension" and "Graph listing
@@ -1084,9 +1098,40 @@ public class EmployeeProfileService {
     private static final java.util.List<String> NON_PORTRAIT_HINTS = java.util.List.of(
             "cin", "carte", "passport", "passeport", "permit", "permis", "sejour", "séjour",
             "visa", "recto", "verso", "id_card", "id-card", "idcard", "diplome", "diplôme",
-            "contrat", "contract", "rib", "cnss", "scan");
+            "contrat", "contract", "rib", "cnss", "scan",
+            // Ajoutes apres avoir vu des actes de naissance et des contrats servis comme
+            // avatars en production : un profil masculin affichait la photo d'une femme,
+            // venue d'un document familial scanne dans le meme dossier. Aucun de ces mots
+            // n'etait filtre, et l'extension seule ne distingue pas un portrait d'un scan.
+            "naissance", "acte", "extrait", "birth", "certificat", "certificate", "attestation",
+            "avenant", "cdi", "cdd", "cv", "bulletin", "paie", "salaire", "fiche",
+            "medical", "visite", "aptitude", "famille", "familiale", "mariage",
+            "domicile", "residence", "résidence", "cheque", "chèque", "facture", "releve",
+            "relevé", "justificatif", "demande", "formulaire", "signe", "signé");
 
-    /** Whether a SharePoint file name plausibly names a portrait we can use as an avatar. */
+    /**
+     * Le fichier se DECLARE portrait : son nom contient "photo" ou "portrait".
+     *
+     * <p>Le seul signal fiable du dossier, parce qu'il est intentionnel. Verifie en premier
+     * dans {@link #bestPortrait}, avant toute consideration de date — voir le commentaire
+     * la-bas. Un "photo_cin.jpg" reste accepte : la mention explicite l'emporte, comme avant.
+     */
+    private boolean isDeclaredPortrait(String fileName) {
+        if (fileName == null) return false;
+        String lower = fileName.toLowerCase(java.util.Locale.ROOT);
+        if (PHOTO_EXTENSIONS.stream().noneMatch(lower::endsWith)) return false;
+        return lower.contains("photo") || lower.contains("portrait");
+    }
+
+    /**
+     * Whether a SharePoint file name plausibly names a portrait we can use as an avatar.
+     *
+     * <p>Repli quand aucun fichier ne se declare portrait. C'est une DEVINETTE sur le nom :
+     * la liste noire ne peut pas etre exhaustive, donc un document au nom inattendu
+     * (`Doc1.jpg`, `IMG_0421.jpg`) passera encore. Le vrai correctif est de nommer les
+     * portraits "Photo...", ou de pointer le `path_template` PHOTO vers un dossier qui ne
+     * contient que des portraits.
+     */
     private boolean isLikelyPortrait(String fileName) {
         if (fileName == null) return false;
         String lower = fileName.toLowerCase(java.util.Locale.ROOT);
