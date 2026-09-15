@@ -2,6 +2,7 @@ package com.daf360.rh.service;
 
 import com.daf360.rh.domain.enums.CandidateStatus;
 import com.daf360.rh.domain.enums.LifecycleStatus;
+import com.daf360.rh.common.GenderNormalizer;
 import com.daf360.rh.common.PreviewResponse;
 import com.daf360.rh.dto.dashboard.*;
 import com.daf360.rh.repository.CandidateRepository;
@@ -147,14 +148,27 @@ public class DashboardService {
                 ? profileRepository.countByGenderAndLifecycleStatusInAndPaysId(IN_SERVICE, paysId)
                 : profileRepository.countByGenderAndLifecycleStatusIn(IN_SERVICE);
 
+        /*
+         * La colonne `gender` est du texte libre, sans contrainte en base. Le write-side
+         * la normalise ({@link GenderNormalizer}), mais les lignes ecrites avant cette
+         * regle — ou par un script SQL — contiennent encore 'Homme', 'M', 'H', 'Masculin'.
+         * On applique donc le MEME normalisateur en lecture, et on ADDITIONNE les alias :
+         * l'ancien code prenait "MALE" ou, a defaut, "MASCULIN", ce qui affichait 0 %
+         * quand la base ne connaissait aucun de ces deux libelles, et perdait les lignes
+         * de l'alias non retenu quand les deux coexistaient.
+         */
         Map<String, Long> byGender = genderRows.stream()
                 .collect(Collectors.toMap(
-                        row -> row[0] != null ? row[0].toString().toUpperCase() : "NON_DEFINI",
+                        row -> {
+                            String code = GenderNormalizer.normalize(
+                                    row[0] != null ? row[0].toString() : null);
+                            return code != null ? code : "NON_DEFINI";
+                        },
                         row -> ((Number) row[1]).longValue(),
                         Long::sum));
 
-        long h = byGender.getOrDefault("MALE",   byGender.getOrDefault("MASCULIN", 0L));
-        long f = byGender.getOrDefault("FEMALE", byGender.getOrDefault("FEMININ",  0L));
+        long h = byGender.getOrDefault(GenderNormalizer.MALE,   0L);
+        long f = byGender.getOrDefault(GenderNormalizer.FEMALE, 0L);
         long n = Math.max(0L, total - h - f);
 
         return new WorkforceStatsDto(
