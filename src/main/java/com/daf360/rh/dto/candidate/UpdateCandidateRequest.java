@@ -63,6 +63,22 @@ public class UpdateCandidateRequest {
 
     private Long departmentId;
 
+    /**
+     * Contract type — an EMPLOYMENT_TYPE `configurable_list_values.id`, the same FK
+     * `CreateCandidateRequest` sets.
+     *
+     * Editable after creation because a candidature is regularly reshaped during the
+     * negotiation (a CDD offer that becomes a CDI, a stage that becomes a CIVP), and until
+     * now the only way to correct it was to recreate the candidate.
+     *
+     * Not a cosmetic label: {@code ContractTypeBridge} derives the lifecycle contract code
+     * from it at hire time, and {@code OnboardingService} reads it for the onboarding file.
+     * That is why {@code CandidateService.applyEmploymentType} validates the value and
+     * refuses the change once the candidate is HIRED — by then a contract has been written
+     * from it and the two would silently disagree.
+     */
+    private Long employmentTypeId;
+
     private LocalDate expectedStartDate;
 
     @Size(max = 1000)

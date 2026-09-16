@@ -86,6 +86,8 @@ public class CandidateService {
     private final DisciplineRepository            disciplineRepo;
     private final HrDepartmentRepository          departmentRepo;
     private final ConfigurableListValueRepository listValueRepo;
+    /** Only to resolve the EMPLOYMENT_TYPE list id — see applyEmploymentType. */
+    private final com.daf360.rh.lists.ConfigurableListTypeRepository listTypeRepo;
     /** Equipment ledger (V76) — seeded here too, see hireCandidate. */
     private final ItAssetAssignmentService        assetAssignmentService;
 
@@ -132,6 +134,7 @@ public class CandidateService {
         applyDimensionFks(candidate,
                 request.getNationalityId(), request.getAppliedGradeId(),
                 request.getAppliedDisciplineId(), request.getDepartmentId());
+        applyEmploymentType(candidate, request.getEmploymentTypeId());
         // Absent → left as it was; present (including null) → applied. That is what lets a
         // spontaneous application be attached to a vacancy later, or detached.
         if (request.isRecruitmentDemandProvided()) {
@@ -142,7 +145,8 @@ public class CandidateService {
 
         auditService.log(actorUserId.toString(), "UPDATE", "CANDIDATE", candidate.getId(),
                 before, "email=" + candidate.getEmailPersonal()
-                      + "; recruitmentDemandId=" + candidate.getRecruitmentDemandId());
+                      + "; recruitmentDemandId=" + candidate.getRecruitmentDemandId()
+                      + "; employmentTypeId=" + candidate.getEmploymentTypeId());
 
         return toFullResponse(candidate);
     }
@@ -690,6 +694,54 @@ public class CandidateService {
                     "La demande de recrutement appartient à une autre entité.");
         }
         candidate.setRecruitmentDemandId(demandId);
+    }
+
+    /**
+     * Sets the candidature's contract type — an EMPLOYMENT_TYPE `configurable_list_values.id`.
+     *
+     * Null means "leave it alone", like every other field on the update DTO. There is no
+     * "detach" here: a candidature without a contract type falls back to CDI everywhere
+     * downstream ({@link ContractTypeBridge#resolveContractTypeCode}), so clearing it would
+     * quietly turn a CDD offer into a CDI rather than leaving a blank.
+     *
+     * Validated rather than trusted — unlike creation, which writes the raw id straight
+     * through the mapper. The id must be an ACTIVE value of the EMPLOYMENT_TYPE list and
+     * either global (`pays_id IS NULL`) or the candidate's own entity; otherwise a typo, a
+     * stale dropdown or another entity's list would be persisted and only surface much later,
+     * as a wrong contract at hire time.
+     *
+     * Refused outright once the candidate is HIRED: the employee profile and the signed
+     * contract were derived from this field, so changing it afterwards makes the candidature
+     * disagree with the dossier it produced. The type moves through a new contract on
+     * `/rh/profiles/:id`, not here.
+     */
+    private void applyEmploymentType(Candidate candidate, Long employmentTypeId) {
+        if (employmentTypeId == null
+                || employmentTypeId.equals(candidate.getEmploymentTypeId())) {
+            return;
+        }
+        if (candidate.getStatus() == CandidateStatus.HIRED) {
+            throw new AppException(ErrorCode.CANDIDATE_STATUS_INVALID,
+                    "Le type de contrat d'un candidat déjà embauché ne peut plus être modifié — "
+                  + "passez par un nouveau contrat sur la fiche employé.");
+        }
+
+        Long listTypeId = listTypeRepo.findByCode("EMPLOYMENT_TYPE")
+                .map(com.daf360.rh.lists.ConfigurableListType::getId)
+                .orElseThrow(() -> new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                        "Liste EMPLOYMENT_TYPE introuvable."));
+
+        // The same query the dropdown is built from, so anything the user can pick is
+        // accepted and anything else is not.
+        boolean allowed = listValueRepo
+                .findActiveByListTypeAndPays(listTypeId, candidate.getPaysId())
+                .stream()
+                .anyMatch(v -> v.getId().equals(employmentTypeId));
+        if (!allowed) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Type de contrat invalide pour cette entité : id=" + employmentTypeId);
+        }
+        candidate.setEmploymentTypeId(employmentTypeId);
     }
 
     /** The vacancy's title for display — `jobExactTitle` when set, else the generic one. */

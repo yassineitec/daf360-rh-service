@@ -33,6 +33,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
@@ -75,9 +77,15 @@ public class OnboardingService {
      * Contract creation at completion (V69). Safe injection: EmployeeLifecycleService knows
      * nothing about onboarding, so there is no cycle.
      */
-    private final com.daf360.rh.lifecycle.EmployeeLifecycleService lifecycleService;
+    /** Still here for stageCandidateDocument; the onboarding-completion use moved to sideEffects. */
     private final EmployeeDocumentService                          documentService;
-    private final ItAssetAssignmentService                         assetAssignmentService;
+    /**
+     * The three optional steps of completeEmployeeProfile, each in its own transaction.
+     * They used to be called inline under a try/catch, which could not work: every one of
+     * them is @Transactional, so a failure marked THIS transaction rollback-only and the
+     * onboarding died at commit with UnexpectedRollbackException.
+     */
+    private final OnboardingSideEffects                            sideEffects;
 
     // ─── Valid statuses for the onboarding pending list ──────────────────────
     private static final Set<CandidateStatus> PENDING_STATUSES =
@@ -352,30 +360,8 @@ public class OnboardingService {
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidateRepo.save(candidate);
 
-        // STEP 2b — Create the lifecycle contract, carrying the agreed préavis.
-        //
-        // This used to be skipped entirely: onboarding wrote contract_type / hire_date onto the
-        // PROFILE and never created an employee_contracts row, so a wizard-completed employee
-        // had no contract, no state machine and nowhere for the préavis to live. Only the
-        // candidates-page hire flow created one.
-        createLifecycleContract(saved, candidate, dto, hrOfficerId);
-
-        // STEP 2c — Attach the signed contract PDF, staged against the candidate while the
-        // profile did not yet exist.
-        linkContractDocument(saved, dto, hrOfficerId);
-
-        // STEP 2d — Open the IT equipment ledger for this employee (V76).
-        //
-        // The other end of the same hook in ItProvisioningService.completeProvisioning: that
-        // one is a no-op when IT finishes BEFORE the profile exists, which is the usual
-        // order. Here the profile has just been created, so this is where those rows land.
-        // Idempotent on (provisioning, asset type) — running both is safe.
-        try {
-            assetAssignmentService.seedFromProvisioning(prov.getId(), hrOfficerId);
-        } catch (Exception ex) {
-            log.warn("IT asset ledger seeding failed for candidateId={}: {}",
-                    candidateId, ex.getMessage());
-        }
+        // STEPS 2b / 2c / 2d — the contract, the signed PDF and the IT ledger — no longer run
+        // here. They are deferred to after the commit; see the block below STEP 7.
 
         // STEP 3 — Delete onboarding draft
         jdbc.update("DELETE FROM [dbo].[onboarding_drafts] WHERE candidate_id = ?", candidateId);
@@ -400,8 +386,12 @@ public class OnboardingService {
         }
 
         // STEP 6 — In-app notification to new employee (non-fatal)
-        notificationRoutingService.resolveAndDispatch(
-            RoutingContext.builder()
+        //
+        // Dispatched AFTER COMMIT, not here. resolveAndDispatch is @Async, so it runs on its
+        // own thread outside this transaction and fires whatever the transaction goes on to
+        // do: when the completion rolled back, the new employee still received "bienvenue"
+        // for a profile that does not exist. The hook below is skipped entirely on rollback.
+        RoutingContext onboardingCompleted = RoutingContext.builder()
                 .eventCode("ONBOARDING_COMPLETED")
                 .paysId(candidate.getPaysId())
                 .subjectUserId(prov.getUserId())
@@ -412,8 +402,8 @@ public class OnboardingService {
                     "candidateName",  candidate.getFirstName() + " " + candidate.getLastName(),
                     "ms365Email",     prov.getMs365Email() != null ? prov.getMs365Email() : ""
                 ))
-                .build()
-        );
+                .build();
+        afterCommit(() -> notificationRoutingService.resolveAndDispatch(onboardingCompleted));
 
         // STEP 7 — Mark onboarding as COMPLETE and activate the profile
         saved.setOnboardingCompleted(true);
@@ -422,6 +412,36 @@ public class OnboardingService {
         saved.setUpdatedAt(OffsetDateTime.now());
         saved = profileRepo.save(saved);
         log.info("Onboarding completed: profileId={} userId={} now ACTIVE", saved.getId(), saved.getUserId());
+
+        /*
+         * STEPS 2b / 2c / 2d — the optional extras, AFTER the commit and each in its own
+         * transaction (OnboardingSideEffects).
+         *
+         *  • 2b — the lifecycle contract carrying the agreed préavis. Onboarding used to write
+         *         contract_type / hire_date onto the PROFILE and create no employee_contracts
+         *         row at all, so a wizard-completed employee had no contract and no state
+         *         machine; only the candidates-page hire flow created one.
+         *  • 2c — the signed contract PDF, staged against the candidate while the profile did
+         *         not yet exist.
+         *  • 2d — the IT equipment ledger (V76). The other end of the same hook lives in
+         *         ItProvisioningService.completeProvisioning, which no-ops when IT finishes
+         *         BEFORE the profile exists (the usual order). Idempotent on
+         *         (provisioning, asset type), so running both is safe.
+         *
+         * After the commit, and not merely in a nested transaction, for a concrete reason: all
+         * three READ the employee profile this method has just written — doCreateContract opens
+         * with findById and throws "Collaborateur introuvable" otherwise, seedFromProvisioning
+         * looks it up by candidate id. A REQUIRES_NEW transaction suspends this one while it is
+         * still uncommitted, so the profile row would be invisible to all three and they would
+         * fail or quietly seed nothing. Deferring past the commit is what makes the row visible
+         * AND keeps their failures off this transaction.
+         */
+        final EmployeeProfile onboarded = saved;
+        afterCommit(() -> {
+            createLifecycleContract(onboarded, candidate, dto, hrOfficerId);
+            linkContractDocument(onboarded, dto, hrOfficerId);
+            sideEffects.seedItAssets(prov.getId(), candidateId, hrOfficerId);
+        });
 
         // STEP 8 — Audit log (hrOfficerId is null when the request carries no valid JWT)
         auditService.log(
@@ -445,6 +465,24 @@ public class OnboardingService {
     // =========================================================================
     // Private helpers
     // =========================================================================
+
+    /**
+     * Runs {@code action} once this transaction has actually committed, or immediately when
+     * there is no transaction to wait for (a direct call outside the proxy, or a test).
+     *
+     * For work that must not happen on a rollback but must also not be able to fail the
+     * commit — the completion notification. {@code @Async} alone does not give that: it
+     * leaves the transaction immediately and fires regardless of the outcome.
+     */
+    private void afterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCommit() { action.run(); }
+        });
+    }
 
     private OnboardingListItem toListItem(Candidate c, ItProvisioning prov) {
         return OnboardingListItem.builder()
@@ -716,49 +754,37 @@ public class OnboardingService {
                     profile.getId(), profile.getCurrentContractId());
             return;
         }
-        try {
-            String contractTypeCode = contractTypeBridge.resolveContractTypeCode(
-                    candidate.getEmploymentTypeId());
-            if (contractTypeCode == null) {
-                log.warn("No contract type resolvable for candidate {} (employmentTypeId={}) — "
-                         + "no lifecycle contract created, so its préavis has nowhere to live.",
-                        candidate.getId(), candidate.getEmploymentTypeId());
-                return;
-            }
-
-            CreateContractRequest req = new CreateContractRequest();
-            req.setEmployeeProfileId(profile.getId());
-            req.setPaysId(candidate.getPaysId());
-            req.setContractTypeCode(contractTypeCode);
-            req.setDateDebut(dto.getHireDate());
-            req.setDateFinPrevue(dto.getContractEndDate());
-            // Null is fine and meaningful: doCreateContract then resolves the négociated figure
-            // from the offer, then the grade default, and records which one it used.
-            req.setNoticePeriodDays(dto.getNoticePeriodDays());
-
-            var created = lifecycleService.createContractFromBridge(req, hrOfficerId);
-            log.info("Onboarding created contract {} for profile {} — préavis {} j",
-                    created.getId(), profile.getId(), created.getNoticePeriodDays());
-        } catch (Exception ex) {
-            log.warn("Could not create the lifecycle contract for profile {} during onboarding: {}"
-                     + " — the profile is complete but has no contract row.",
-                    profile.getId(), ex.getMessage());
+        String contractTypeCode = contractTypeBridge.resolveContractTypeCode(
+                candidate.getEmploymentTypeId());
+        if (contractTypeCode == null) {
+            log.warn("No contract type resolvable for candidate {} (employmentTypeId={}) — "
+                     + "no lifecycle contract created, so its préavis has nowhere to live.",
+                    candidate.getId(), candidate.getEmploymentTypeId());
+            return;
         }
+
+        CreateContractRequest req = new CreateContractRequest();
+        req.setEmployeeProfileId(profile.getId());
+        req.setPaysId(candidate.getPaysId());
+        req.setContractTypeCode(contractTypeCode);
+        req.setDateDebut(dto.getHireDate());
+        req.setDateFinPrevue(dto.getContractEndDate());
+        // Null is fine and meaningful: doCreateContract then resolves the négociated figure
+        // from the offer, then the grade default, and records which one it used.
+        req.setNoticePeriodDays(dto.getNoticePeriodDays());
+
+        // The call and its catch moved to OnboardingSideEffects: createContractFromBridge is
+        // @Transactional, so a failure inside the onboarding's own transaction marked it
+        // rollback-only and the catch here could not undo that.
+        sideEffects.createContract(req, profile, hrOfficerId);
     }
 
     /** Turns the contract PDF staged against the candidate into a document on the profile. */
     private void linkContractDocument(EmployeeProfile profile, CompleteProfileRequest dto,
                                       Long hrOfficerId) {
         if (dto.getContractDocumentUrl() == null || dto.getContractDocumentUrl().isBlank()) return;
-        try {
-            documentService.registerStagedDocument(
-                    profile.getId(), dto.getContractDocumentUrl(), dto.getContractDocumentName(),
-                    "CONTRACT_SIGNED", hrOfficerId);
-        } catch (Exception ex) {
-            // The file is on disk either way; losing the row is recoverable by re-uploading.
-            log.warn("Could not attach the signed contract to profile {}: {}",
-                    profile.getId(), ex.getMessage());
-        }
+        sideEffects.linkContractDocument(profile.getId(), dto.getContractDocumentUrl(),
+                dto.getContractDocumentName(), hrOfficerId);
     }
 
     // ─── Section 2c — Contrat: the recruitment recap ─────────────────────────
