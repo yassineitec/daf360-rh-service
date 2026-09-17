@@ -89,8 +89,28 @@ public class EmployeeProfile {
     @Column(name = "personal_email", length = 255)
     private String personalEmail;
 
+    /**
+     * Professional line (office / company mobile). Empty for every row in prod: the
+     * column used to hold the personal number, which was moved to {@link #personalPhone}
+     * before this field was split out. RH fills it from the profile page once the
+     * employee is ACTIVE — the onboarding wizard never writes it.
+     */
     @Column(name = "phone", length = 50)
     private String phone;
+
+    /** Personal line, seeded from the candidate at onboarding. The only phone a
+     *  PRE_ONBOARDING profile carries. */
+    @Column(name = "personal_phone", length = 50)
+    private String personalPhone;
+
+    /**
+     * Payroll register number — zero-padded decimal, min width 2 ("01", "10", "206").
+     * Allocated once, at activation, by {@code PayrollMatriculeService}; never
+     * regenerated and never gap-filled, because departed employees' numbers stay
+     * referenced by historical payslips.
+     */
+    @Column(name = "payroll_matricule", length = 50, columnDefinition = "nvarchar(50)")
+    private String payrollMatricule;
 
     @Column(name = "personal_address", length = 500, columnDefinition = "nvarchar(500)")
     private String personalAddress;

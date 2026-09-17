@@ -75,7 +75,10 @@ public class DashboardService {
             new OnboardingSection("IDENTITY",  List.of("date_of_birth", "gender", "national_id")),
             new OnboardingSection("CONTRACT",  List.of("hire_date", "contract_type", "grade_id", "department_id")),
             new OnboardingSection("REGIME",    List.of("regime_template_id", "regime_start_date")),
-            new OnboardingSection("PERSONAL",  List.of("cnss_number", "marital_status", "personal_address", "phone")),
+            // personal_phone, not phone: the pro line is filled by RH after activation and
+            // is empty for every profile still onboarding — counting it would cap the
+            // PERSONAL bar at 3/4 for everyone, permanently.
+            new OnboardingSection("PERSONAL",  List.of("cnss_number", "marital_status", "personal_address", "personal_phone")),
             new OnboardingSection("BANK",      List.of("rib", "bank_account_number")),
             new OnboardingSection("EMERGENCY", List.of("emergency_contact_name", "emergency_contact_phone")));
 

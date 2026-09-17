@@ -44,6 +44,7 @@ public class EmployeeProfileService {
     private final EmployeeProfileRepository profileRepository;
     private final EmployeeProfileMapper     mapper;
     private final AuditService              auditService;
+    private final PayrollMatriculeService   payrollMatriculeService;
     private final JdbcTemplate              jdbcTemplate;
     private final ObjectMapper              objectMapper;
     private final com.daf360.rh.security.TenantService tenantService;
@@ -79,14 +80,10 @@ public class EmployeeProfileService {
                     "Un profil existe déjà pour cet utilisateur (userId=" + dto.getUserId() + ")");
         }
 
-        int existing = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM [dbo].[Users] WHERE employee_id = ?",
-                Integer.class, dto.getEmployeeId());
-        if (existing > 0) {
-            throw new AppException(
-                    com.daf360.rh.exception.ErrorCode.ALREADY_EXISTS,
-                    "L'identifiant employé " + dto.getEmployeeId() + " est déjà utilisé");
-        }
+        // The Users.employee_id uniqueness probe that stood here is gone with the column's
+        // role: it is NULL for every profile in prod, so the check passed unconditionally
+        // and guarded nothing. Uniqueness of the real matricule is enforced by
+        // PayrollMatriculeService's allocation lock plus the filtered unique index.
 
         EmployeeProfile profile = mapper.toEntity(dto);
         profile.setCreatedAt(OffsetDateTime.now(PARIS));
@@ -95,10 +92,14 @@ public class EmployeeProfileService {
         applyDimensionFks(profile, dto.getNationalityId(), dto.getGradeId(),
                 dto.getDisciplineId(), dto.getNogLevelId(), dto.getDepartmentId(), dto.getBankId());
 
-        EmployeeProfile saved = profileRepository.save(profile);
+        // No matricule here: the mapper forces every new profile to PRE_ONBOARDING, and a
+        // number is allocated on the transition to ACTIVE — so an abandoned file never
+        // burns one. Left as an explicit call rather than nothing, so a future change to
+        // that mapper default keeps allocating instead of silently producing ACTIVE
+        // profiles with no matricule.
+        ensurePayrollMatricule(profile, profile.getLifecycleStatus());
 
-        jdbcTemplate.update("UPDATE [dbo].[Users] SET employee_id = ? WHERE id = ?",
-                dto.getEmployeeId(), dto.getUserId());
+        EmployeeProfile saved = profileRepository.save(profile);
 
         auditService.log(actorId(auth), "CREATE_PROFILE", "EmployeeProfile", saved.getId(),
                 null, safeJson(saved));
@@ -248,6 +249,7 @@ public class EmployeeProfileService {
         if (next == LifecycleStatus.ARCHIVED) {
             pseudonymise(profile);
         }
+        ensurePayrollMatricule(profile, next);
 
         profile.setLifecycleStatus(next);
         profile.setUpdatedAt(OffsetDateTime.now(PARIS));
@@ -287,6 +289,7 @@ public class EmployeeProfileService {
         if (next == LifecycleStatus.ARCHIVED) {
             pseudonymise(profile);
         }
+        ensurePayrollMatricule(profile, next);
         profile.setLifecycleStatus(next);
         profile.setUpdatedAt(OffsetDateTime.now(PARIS));
         profileRepository.save(profile);
@@ -390,7 +393,10 @@ public class EmployeeProfileService {
 
         String listSql =
             "SELECT ep.id AS profile_id, u.id AS user_id, u.fullName AS full_name, " +
-            "COALESCE(u.email, u.username) AS email, u.employee_id AS employee_id, u.pays_id AS pays_id, " +
+            // Aliased employee_id, not payroll_matricule: the column name is the JSON field
+            // of EmployeeListItemDto, which daf360-payroll-frontend consumes as the
+            // matricule. Only the source moves; the contract is untouched.
+            "COALESCE(u.email, u.username) AS email, ep.payroll_matricule AS employee_id, u.pays_id AS pays_id, " +
             "p.french_label AS pays_label, u.role_id AS role_id, r.frenchName AS role_name, " +
             "ep.lifecycle_status AS lifecycle_status, ep.contract_type AS contract_type, " +
             "ep.hire_date AS hire_date, ep.photo_url AS photo_url, ep.gender AS gender, " +
@@ -1194,27 +1200,43 @@ public class EmployeeProfileService {
     // Both are now SharePointResolver.resolve(profileId, DocKind.PHOTO), which additionally
     // reports WHY it failed instead of returning a bare null.
 
+    /**
+     * Gives the profile a payroll matricule the first time it becomes ACTIVE.
+     *
+     * <p>Mirrors the allocation in OnboardingService STEP 7, for the profiles that reach
+     * ACTIVE without going through the wizard — a PRE_ONBOARDING row activated by hand,
+     * or a rehire. Idempotent: a profile that already has a number keeps it across every
+     * later ON_LEAVE / ON_MISSION / ACTIVE round trip.
+     */
+    private void ensurePayrollMatricule(EmployeeProfile profile, LifecycleStatus next) {
+        if (next == LifecycleStatus.ACTIVE && profile.getPayrollMatricule() == null) {
+            profile.setPayrollMatricule(payrollMatriculeService.allocate());
+            log.info("Allocated payroll matricule={} to profileId={} on transition to ACTIVE",
+                     profile.getPayrollMatricule(), profile.getId());
+        }
+    }
+
     private EmployeeProfile findOrThrow(Long id) {
         return profileRepository.findById(id).orElseThrow(() ->
                 new AppException(com.daf360.rh.exception.ErrorCode.EMPLOYEE_NOT_FOUND,
                         "Profil introuvable: id=" + id));
     }
 
-    private static final String USER_MATRICULE_SQL =
-        "SELECT employee_id, fullName FROM [dbo].[Users] WHERE id = ?";
+    private static final String USER_FULLNAME_SQL =
+        "SELECT fullName FROM [dbo].[Users] WHERE id = ?";
 
     private EmployeeProfileResponseDto toResponseDto(EmployeeProfile profile, Authentication auth) {
         EmployeeProfileResponseDto dto = mapper.toResponseDto(profile);
-        // Enrich with matricule + fullName from Users table
+        // The matricule is employee_profiles.payroll_matricule, mapped straight off the
+        // entity. It used to be read from Users.employee_id inside the try below, where a
+        // miss was swallowed — and since that column is NULL for every profile in prod,
+        // the detail page rendered a blank Matricule for all 158 of them, silently.
+        dto.setMatricule(profile.getPayrollMatricule());
         try {
-            jdbcTemplate.queryForObject(USER_MATRICULE_SQL,
-                (rs, n) -> {
-                    dto.setMatricule(rs.getString("employee_id"));
-                    dto.setFullName(rs.getString("fullName"));
-                    return null;
-                }, profile.getUserId());
+            dto.setFullName(jdbcTemplate.queryForObject(
+                    USER_FULLNAME_SQL, String.class, profile.getUserId()));
         } catch (Exception ignored) {
-            // If Users row not found, leave matricule/fullName null
+            // If Users row not found, leave fullName null
         }
         // Set outside the try: the label lookup can fail (missing pays row) but the id is
         // already on the entity, and the page needs it to create contracts.
@@ -1256,7 +1278,10 @@ public class EmployeeProfileService {
     private void pseudonymise(EmployeeProfile profile) {
         String token = "ARCHIVED_" + profile.getId();
         profile.setPersonalEmail(null);
-        profile.setPhone(null);
+        profile.setPersonalPhone(null);
+        // profile.setPhone(...) is deliberately left alone: the pro line is a company
+        // desk/mobile number, not personal data, and payroll/finance still reference it
+        // on archived files. Flip this if legal decides otherwise.
         profile.setPersonalAddress(null);
         profile.setDateOfBirth(null);
         profile.setGender(null);

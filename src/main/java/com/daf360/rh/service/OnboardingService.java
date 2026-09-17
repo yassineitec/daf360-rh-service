@@ -58,6 +58,7 @@ public class OnboardingService {
     private final EmployeeProfileRepository  profileRepo;
     private final WorkingTimeRegimeRepository regimeRepo;
     private final WorkflowInstanceService    workflowInstanceService;
+    private final PayrollMatriculeService    payrollMatriculeService;
     private final MailService                mailService;
     private final AuditService               auditService;
     private final AppProperties              appProperties;
@@ -331,8 +332,14 @@ public class OnboardingService {
         profile.setGender(GenderNormalizer.normalize(dto.getGender()));
         profile.setNationalId(dto.getNationalId());
         profile.setPassportNumber(dto.getPassportNumber());
-        // Contact
-        profile.setPhone(candidate.getPhone());
+        // Contact — personal line only. The pro line stays null until RH adds it on the
+        // profile page after activation; the wizard has no field for it.
+        // dto wins over the candidate record: before CompleteProfileRequest carried the
+        // field, a number corrected on the Personnel step was silently discarded here.
+        profile.setPersonalPhone(
+                dto.getPersonalPhone() != null && !dto.getPersonalPhone().isBlank()
+                        ? dto.getPersonalPhone()
+                        : candidate.getPhone());
         profile.setPersonalAddress(dto.getPersonalAddress());
         // Bank / RIB
         profile.setBankAccountNumber(dto.getBankAccountNumber());
@@ -409,6 +416,14 @@ public class OnboardingService {
         saved.setOnboardingCompleted(true);
         saved.setOnboardingCompletedAt(OffsetDateTime.now());
         saved.setLifecycleStatus(LifecycleStatus.ACTIVE);
+        // The payroll matricule is allocated here rather than at profile creation: an
+        // abandoned PRE_ONBOARDING draft would otherwise consume a register number for
+        // good. Guarded so re-running an incomplete onboarding keeps the first number.
+        if (saved.getPayrollMatricule() == null) {
+            saved.setPayrollMatricule(payrollMatriculeService.allocate());
+            log.info("Allocated payroll matricule={} to profileId={}",
+                     saved.getPayrollMatricule(), saved.getId());
+        }
         saved.setUpdatedAt(OffsetDateTime.now());
         saved = profileRepo.save(saved);
         log.info("Onboarding completed: profileId={} userId={} now ACTIVE", saved.getId(), saved.getUserId());
@@ -595,7 +610,10 @@ public class OnboardingService {
                 .firstName(c.getFirstName())
                 .lastName(c.getLastName())
                 .emailPersonal(c.getEmailPersonal())
-                .phone(c.getPhone())
+                // Profile value wins once onboarding has been attempted, so a number
+                // corrected on a previous run survives the re-open; candidate otherwise.
+                .personalPhone(hasProfile && existingProfile.getPersonalPhone() != null
+                             ? existingProfile.getPersonalPhone() : c.getPhone())
                 .dateOfBirth(hasDraft ? draft.getDateOfBirth()
                            : hasProfile ? existingProfile.getDateOfBirth() : c.getDateOfBirth())
                 .nationality(c.getNationality() != null ? c.getNationality().getLabelFr() : null)

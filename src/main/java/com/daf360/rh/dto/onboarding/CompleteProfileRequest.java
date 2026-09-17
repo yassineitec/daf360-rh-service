@@ -58,6 +58,11 @@ public class CompleteProfileRequest {
     private String gender;
     private String nationalId;
     private String passportNumber;
+    /** Personal line as RH confirmed it on the Personnel step. Until this field existed
+     *  the wizard's phone input was write-only decoration: the profile was seeded from
+     *  candidate.phone and any correction typed here was dropped. Falls back to the
+     *  candidate value when the wizard sends nothing. */
+    private String personalPhone;
     private String personalAddress;
 
     // Section 5 — Bank / RIB (mandatory)

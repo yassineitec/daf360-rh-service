@@ -38,7 +38,8 @@ public class EmployeeProfileUpdateDto {
     private String gender;  // valeur libre — ex: Homme, Femme, Autre, Non précisé
     private Long nationalityId;
     @Email @Size(max = 255) private String personalEmail;
-    @Size(max = 50)  private String phone;
+    @Size(max = 50)  private String phone;          // professionnel — RH only, once ACTIVE
+    @Size(max = 50)  private String personalPhone;
     @Size(max = 500) private String personalAddress;
     @Size(max = 500) private String photoUrl;
     @Size(max = 30)  private String maritalStatus;  // valeur libre — ex: Célibataire, Marié(e), Divorcé(e), Veuf(ve)

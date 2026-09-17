@@ -23,8 +23,11 @@ public class EmployeeProfileResponseDto {
     private String   paysLabel;
     private LifecycleStatus lifecycleStatus;
 
-    // ── Identité depuis Users ─────────────────────────────────────────────────
-    private String matricule;  // Users.employee_id — format [NOM3][PRE3][userId]
+    // ── Identité ──────────────────────────────────────────────────────────────
+    /** employee_profiles.payroll_matricule. Was Users.employee_id, which is NULL for
+     *  every row in prod — the field rendered blank on the detail page for all 158
+     *  profiles. Kept under the name `matricule` so the frontend binding is unchanged. */
+    private String matricule;
     private String fullName;   // Users.fullName
 
     // ── Contract ──────────────────────────────────────────────────────────
@@ -55,7 +58,8 @@ public class EmployeeProfileResponseDto {
     private Long      nationalityId;
     private String    nationality;
     private String    personalEmail;
-    private String    phone;
+    private String    phone;          // professionnel
+    private String    personalPhone;  // personnel
     private String    personalAddress;
     private String    photoUrl;
 
