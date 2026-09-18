@@ -108,7 +108,23 @@ public class PipelineService {
                  ORDER BY ci.scheduled_at ASC
              ) ni
              LEFT JOIN [dbo].[interview_types] itp ON itp.id = ni.interview_type_id
-             LEFT JOIN [dbo].[job_offers] jo ON jo.candidate_id = c.id
+             -- The candidate's CURRENT offer round (V98), not a plain join.
+             --
+             -- job_offers used to hold one row per candidate, so a LEFT JOIN was safe. It now
+             -- holds one row per negotiation round, and that same join would multiply the
+             -- candidate: a card per round, the same person three times in one kanban column.
+             -- OUTER APPLY keeps it at one row, the same shape the next-interview lookup above
+             -- already uses.
+             --
+             -- `superseded_at IS NULL` is the current round; the ORDER BY is a belt-and-braces
+             -- tiebreak, since nothing should ever leave two rounds unsuperseded.
+             OUTER APPLY (
+                 SELECT TOP 1 jo2.asked_salary, jo2.proposed_salary, jo2.expiry_date,
+                        jo2.status, jo2.notice_period_days
+                 FROM [dbo].[job_offers] jo2
+                 WHERE jo2.candidate_id = c.id AND jo2.superseded_at IS NULL
+                 ORDER BY jo2.round_number DESC, jo2.id DESC
+             ) jo
              LEFT JOIN [dbo].[grades] g ON g.id = c.applied_grade_id
             """;
 

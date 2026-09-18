@@ -13,6 +13,18 @@ public interface CandidateCostApprovalRepository extends JpaRepository<Candidate
 
     List<CandidateCostApproval> findByCandidateIdOrderBySubmittedAtDesc(Long candidateId);
 
+    /**
+     * Has this offer round cleared the budget gate? Read by {@code OfferService.sendOffer}.
+     *
+     * <p>Per round rather than per candidate: an approval belongs to the figure it reviewed,
+     * so a revised salary is a new round that goes back through the queue instead of
+     * inheriting the previous decision.
+     */
+    boolean existsByJobOfferIdAndStatus(Long jobOfferId, String status);
+
+    /** Every decision on one round, newest first — the offer section's approval trail. */
+    List<CandidateCostApproval> findByJobOfferIdOrderBySubmittedAtDesc(Long jobOfferId);
+
     /** Returns one row per candidate that has at least one approval record for the given pays. */
     @Query("""
             SELECT a.candidateId,

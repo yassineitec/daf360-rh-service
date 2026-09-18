@@ -121,29 +121,51 @@ public class CandidateController {
     }
 
     // ── Offer / negotiation stage ───────────────────────────────────────────
-    /** Current job offer for a candidate (404 if none was sent). */
+    /** The candidate's CURRENT offer round (404 if none was ever drafted). */
     @GetMapping("/{id}/offer")
     public OfferResponse getOffer(@PathVariable Long id) {
         return offerService.getByCandidate(id);
     }
 
-    /** Send an offer to an ACCEPTED candidate → status OFFER_SENT. */
+    /** Every round, newest first — the negotiation history (V98). */
+    @GetMapping("/{id}/offer/rounds")
+    public List<OfferResponse> getOfferRounds(@PathVariable Long id) {
+        return offerService.getRounds(id);
+    }
+
+    /**
+     * Draft an offer round — the first one, or a renegotiation superseding the current one.
+     *
+     * <p>Sends nothing to the candidate: the round is created DRAFT and goes to the finance
+     * approval queue. Was `sendOffer`, and the rename is the point — an offer is now costed
+     * and approved before anyone hears about it.
+     */
     @PostMapping("/{id}/offer")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasPermission(null, 'RH_HIRE_CANDIDATE')")
-    public OfferResponse sendOffer(@PathVariable Long id,
-                                   @Valid @RequestBody CreateOfferRequest request,
-                                   Authentication auth) {
-        return offerService.sendOffer(id, request, actorId(auth));
+    public OfferResponse draftOffer(@PathVariable Long id,
+                                    @Valid @RequestBody CreateOfferRequest request,
+                                    Authentication auth) {
+        return offerService.draftOffer(id, request, actorId(auth));
     }
 
-    /** Renegotiate a still-open offer (revise salary/terms, keeps it SENT). */
+    /**
+     * Renegotiate — same thing as drafting, since a revision IS a new round. Kept as PUT so
+     * the existing frontend call site stays valid.
+     */
     @PutMapping("/{id}/offer")
     @PreAuthorize("hasPermission(null, 'RH_HIRE_CANDIDATE')")
     public OfferResponse renegotiateOffer(@PathVariable Long id,
                                           @Valid @RequestBody CreateOfferRequest request,
                                           Authentication auth) {
-        return offerService.renegotiateOffer(id, request, actorId(auth));
+        return offerService.draftOffer(id, request, actorId(auth));
+    }
+
+    /** Extend the approved DRAFT round to the candidate → candidate OFFER_SENT. */
+    @PostMapping("/{id}/offer/send")
+    @PreAuthorize("hasPermission(null, 'RH_HIRE_CANDIDATE')")
+    public OfferResponse sendOffer(@PathVariable Long id, Authentication auth) {
+        return offerService.sendOffer(id, actorId(auth));
     }
 
     /** Candidate accepts the offer → begins IT provisioning. */

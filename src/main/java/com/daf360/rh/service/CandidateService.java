@@ -449,11 +449,24 @@ public class CandidateService {
         Double offerAcceptanceRate = null;
         if (firstLong("SELECT COUNT(*) FROM sys.tables WHERE name = 'job_offers'", new Object[]{}) > 0) {
             String offerScope = paysId != null ? " AND c.pays_id = ?" : "";
+            // One row PER CANDIDATE, not per offer row.
+            //
+            // Since V98 job_offers holds a row per negotiation round, and the old query
+            // counted them all: a candidate renegotiated three times before accepting
+            // contributed three decisions instead of one, so the rate measured how often we
+            // renegotiate rather than how often offers are accepted. The inner OUTER APPLY
+            // picks each candidate's decided round — accepted first, else the last refusal.
             offerAcceptanceRate = firstDouble(
-                    "SELECT CASE WHEN SUM(CASE WHEN jo.status IN ('ACCEPTED','REJECTED') THEN 1 ELSE 0 END) = 0 THEN NULL " +
-                    "  ELSE 100.0 * SUM(CASE WHEN jo.status = 'ACCEPTED' THEN 1 ELSE 0 END) " +
-                    "       / SUM(CASE WHEN jo.status IN ('ACCEPTED','REJECTED') THEN 1 ELSE 0 END) END " +
-                    "FROM [dbo].[job_offers] jo JOIN [dbo].[candidates] c ON c.id = jo.candidate_id " +
+                    "SELECT CASE WHEN COUNT(d.status) = 0 THEN NULL " +
+                    "  ELSE 100.0 * SUM(CASE WHEN d.status = 'ACCEPTED' THEN 1 ELSE 0 END) " +
+                    "       / COUNT(d.status) END " +
+                    "FROM [dbo].[candidates] c " +
+                    "CROSS APPLY ( " +
+                    "    SELECT TOP 1 jo.status " +
+                    "    FROM [dbo].[job_offers] jo " +
+                    "    WHERE jo.candidate_id = c.id AND jo.status IN ('ACCEPTED','REJECTED') " +
+                    "    ORDER BY CASE WHEN jo.status = 'ACCEPTED' THEN 0 ELSE 1 END, jo.id DESC " +
+                    ") d " +
                     "WHERE 1=1" + offerScope, args);
         }
 

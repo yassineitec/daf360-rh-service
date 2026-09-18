@@ -22,6 +22,26 @@ public class CandidateCostApproval {
     @Column(name = "candidate_id", nullable = false)
     private Long candidateId;
 
+    /**
+     * The offer round this decision gates (V98), or null.
+     *
+     * <p>Null is the ordinary case for a budget PRE-VALIDATION — a simulation submitted from
+     * the creation wizard, for a candidate who has no offer yet and could not have one (an
+     * offer needs status ACCEPTED and a passed interview). Those rows inform the finance
+     * queue but gate nothing. A non-null value means no salary reaches the candidate on this
+     * round until this row reads APPROVED.
+     */
+    @Column(name = "job_offer_id")
+    private Long jobOfferId;
+
+    /**
+     * The figure actually offered on that round. Distinct from {@link #salaireNetRh}, which
+     * is the budget line: the two diverge the moment finance counter-proposes, and the record
+     * has to keep what was put in front of the approver.
+     */
+    @Column(name = "proposed_salary", precision = 18, scale = 4)
+    private BigDecimal proposedSalary;
+
     @Column(name = "pays_id", nullable = false)
     private Long paysId;
 

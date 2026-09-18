@@ -10,6 +10,10 @@ public class CandidateCostApprovalDto {
 
     private Long            id;
     private Long            candidateId;
+    /** The offer round this decision gates, or null for a standalone budget pre-validation. */
+    private Long            jobOfferId;
+    /** The figure offered on that round — null on a pre-validation, which offers nothing yet. */
+    private BigDecimal      proposedSalary;
     private String          candidateFirstName;
     private String          candidateLastName;
     private String          appliedPosition;

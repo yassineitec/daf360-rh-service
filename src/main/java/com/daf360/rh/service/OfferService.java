@@ -31,6 +31,20 @@ import java.time.OffsetDateTime;
  * {@code OFFER_SENT → (reject) REJECTED}. It deliberately does NOT alter the
  * existing provisioning row created at {@code acceptCandidate} time, so the IT
  * provisioning / onboarding chain stays untouched.
+ *
+ * <p><b>Rounds and the budget gate (V98).</b> Drafting and sending used to be one step, and
+ * a renegotiation overwrote the single offer row in place. Now:
+ *
+ * <pre>
+ *   draft  → a NEW round, status DRAFT, costed, submitted to the finance queue
+ *   approve (finance, elsewhere) → the round becomes sendable
+ *   send   → status SENT, candidate OFFER_SENT
+ *   renegotiate → another DRAFT round, superseding the current one
+ * </pre>
+ *
+ * Two consequences worth stating. No salary reaches a candidate without a recorded employer
+ * cost and an explicit finance decision on that exact figure. And every round survives: the
+ * negotiation history is the rows, not an audit-log line that only ever kept the last one.
  */
 @Slf4j
 @Service
@@ -41,34 +55,87 @@ public class OfferService {
     private final JobOfferRepository offerRepo;
     private final CandidateRepository candidateRepo;
     private final CandidateInterviewRepository interviewRepo;
+    private final CandidateCostApprovalService costApprovalService;
     private final AuditService auditService;
 
+    /** Statuses of a round that is still live — one of these blocks drafting another. */
+    private static final List<OfferStatus> OPEN_STATUSES =
+            List.of(OfferStatus.DRAFT, OfferStatus.SENT);
+
+    /** The candidate's current round, whatever its state. 404 when none was ever drafted. */
     @Transactional(readOnly = true)
     public OfferResponse getByCandidate(Long candidateId) {
-        return OfferResponse.from(findOfferOrThrow(candidateId));
+        return OfferResponse.from(findCurrentOrThrow(candidateId));
     }
 
-    /** Extend an offer to an ACCEPTED candidate → status OFFER_SENT. */
-    public OfferResponse sendOffer(Long candidateId, CreateOfferRequest req, Long actorUserId) {
+    /** Every round, newest first — the negotiation history shown on the offer section. */
+    @Transactional(readOnly = true)
+    public List<OfferResponse> getRounds(Long candidateId) {
+        return offerRepo.findByCandidateIdOrderByRoundNumberDesc(candidateId)
+                .stream().map(OfferResponse::from).toList();
+    }
+
+    /**
+     * Draft a round — the first offer, or a renegotiation that supersedes the current one.
+     *
+     * <p>Nothing reaches the candidate here. The round is created DRAFT and its simulation
+     * goes to the finance approval queue in the same transaction, so a costed round and its
+     * pending decision either both exist or neither does.
+     *
+     * <p>The entry gate depends on whether a negotiation is already under way:
+     * a FIRST round needs the candidate ACCEPTED and past the interview gate; a LATER one
+     * needs them at OFFER_SENT, i.e. a live offer to replace. Either way an open round
+     * (DRAFT awaiting finance, or SENT and with the candidate) blocks a second.
+     */
+    public OfferResponse draftOffer(Long candidateId, CreateOfferRequest req, Long actorUserId) {
         Candidate candidate = findCandidateOrThrow(candidateId);
 
-        if (candidate.getStatus() != CandidateStatus.ACCEPTED) {
+        if (req.getSimulationSnapshot() == null || req.getSimulationSnapshot().isBlank()) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Une offre doit être chiffrée avant d'être proposée : lancez la simulation de coût.");
+        }
+        if (req.getProposedSalary() == null) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Le salaire proposé est obligatoire — c'est le montant soumis à la validation budgétaire.");
+        }
+        if (offerRepo.existsByCandidateIdAndStatusIn(candidateId, OPEN_STATUSES)) {
+            throw new AppException(ErrorCode.OFFER_ALREADY_EXISTS,
+                    "Une offre est déjà en cours pour ce candidat — elle doit être décidée "
+                  + "ou renégociée avant d'en créer une autre.");
+        }
+
+        JobOffer previous = offerRepo
+                .findFirstByCandidateIdAndSupersededAtIsNullOrderByRoundNumberDesc(candidateId)
+                .orElse(null);
+
+        if (previous == null) {
+            if (candidate.getStatus() != CandidateStatus.ACCEPTED) {
+                throw new AppException(ErrorCode.CANDIDATE_STATUS_INVALID,
+                        "Une offre ne peut être préparée que pour un candidat au statut ACCEPTED.");
+            }
+            requireApprovedInterviews(candidateId);
+        } else if (candidate.getStatus() != CandidateStatus.OFFER_SENT) {
             throw new AppException(ErrorCode.CANDIDATE_STATUS_INVALID,
-                    "Une offre ne peut être envoyée qu'à un candidat au statut ACCEPTED.");
+                    "Le candidat n'est pas au statut OFFER_SENT : la candidature est close.");
         }
-        if (offerRepo.existsByCandidateId(candidateId)) {
-            throw new AppException(ErrorCode.OFFER_ALREADY_EXISTS);
-        }
-        requireApprovedInterviews(candidateId);
 
         OffsetDateTime now = OffsetDateTime.now();
+        Integer maxRound = offerRepo.findMaxRoundNumber(candidateId);
+        int roundNumber = maxRound != null ? maxRound + 1 : 1;
+
         // The préavis is negotiated here, starting from the grade's default (V64). An
-        // explicit value in the request always wins — including a deliberate 0.
+        // explicit value in the request always wins — including a deliberate 0. On a later
+        // round an absent value carries the previous round's figure forward rather than
+        // silently falling back to the grade default, which would undo a negotiated
+        // derogation nobody meant to revisit.
         Integer noticeDays = req.getNoticePeriodDays() != null
                 ? req.getNoticePeriodDays()
-                : gradeNoticeDefault(candidate);
-        JobOffer offer = JobOffer.builder()
+                : (previous != null ? previous.getNoticePeriodDays() : gradeNoticeDefault(candidate));
+
+        JobOffer round = JobOffer.builder()
                 .candidateId(candidateId)
+                .roundNumber(roundNumber)
+                .supersedesOfferId(previous != null ? previous.getId() : null)
                 .askedSalary(req.getAskedSalary())
                 .proposedSalary(req.getProposedSalary())
                 .salaryNote(req.getSalaryNote())
@@ -76,65 +143,78 @@ public class OfferService {
                 .noticePeriodNote(req.getNoticePeriodNote())
                 .expectedHireDate(req.getExpectedHireDate())
                 .expiryDate(req.getExpiryDate())
-                .sentAt(now)
-                .status(OfferStatus.SENT)
+                .status(OfferStatus.DRAFT)
                 .createdBy(actorUserId)
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
-        offer = offerRepo.save(offer);
+        round = offerRepo.save(round);
 
+        if (previous != null) {
+            previous.setSupersededAt(now);
+            previous.setUpdatedAt(now);
+            offerRepo.save(previous);
+        }
+
+        // Same transaction: a DRAFT round with no pending decision would be invisible to
+        // finance and unsendable forever.
+        costApprovalService.submitForOffer(round, candidate, req.getSimulationSnapshot(),
+                req.getFiscalYear(), actorUserId);
+
+        auditService.log(actorUserId != null ? actorUserId.toString() : "SYSTEM",
+                "DRAFT_OFFER", "CANDIDATE", candidateId,
+                previous != null
+                        ? "round=" + previous.getRoundNumber() + "; proposedSalary=" + previous.getProposedSalary()
+                        : null,
+                "round=" + roundNumber + "; proposedSalary=" + round.getProposedSalary()
+                        + "; noticePeriodDays=" + noticeDays + "; status=DRAFT");
+
+        return OfferResponse.from(round);
+    }
+
+    /**
+     * Extend an approved round to the candidate → offer SENT, candidate OFFER_SENT.
+     *
+     * <p>The budget gate: refused unless finance has APPROVED this exact round. Approval is
+     * per round, so a figure that cleared review cannot be edited and sent — a revision is a
+     * new round, which goes back through the queue.
+     */
+    public OfferResponse sendOffer(Long candidateId, Long actorUserId) {
+        Candidate candidate = findCandidateOrThrow(candidateId);
+        JobOffer round = findCurrentOrThrow(candidateId);
+
+        if (round.getStatus() != OfferStatus.DRAFT) {
+            throw new AppException(ErrorCode.OFFER_STATUS_INVALID,
+                    "Seule une offre au statut DRAFT peut être envoyée au candidat.");
+        }
+        if (!costApprovalService.isOfferApproved(round.getId())) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Cette offre n'a pas encore été validée par le contrôle budgétaire.");
+        }
+
+        OffsetDateTime now = OffsetDateTime.now();
+        round.setStatus(OfferStatus.SENT);
+        round.setSentAt(now);
+        round.setUpdatedAt(now);
+        offerRepo.save(round);
+
+        CandidateStatus before = candidate.getStatus();
         candidate.setStatus(CandidateStatus.OFFER_SENT);
         candidate.setUpdatedAt(now);
         candidateRepo.save(candidate);
 
         auditService.log(actorUserId != null ? actorUserId.toString() : "SYSTEM",
                 "SEND_OFFER", "CANDIDATE", candidateId,
-                "status=ACCEPTED",
-                "status=OFFER_SENT; proposedSalary=" + req.getProposedSalary()
-                        + "; noticePeriodDays=" + noticeDays);
+                "status=" + before,
+                "status=OFFER_SENT; round=" + round.getRoundNumber()
+                        + "; proposedSalary=" + round.getProposedSalary());
 
-        return OfferResponse.from(offer);
-    }
-
-    /**
-     * Renegotiate a still-open offer — revise the proposed salary / terms and keep
-     * it SENT. Allowed only while the candidate is OFFER_SENT (i.e. the candidature
-     * is not closed: not accepted, hired or rejected).
-     */
-    public OfferResponse renegotiateOffer(Long candidateId, CreateOfferRequest req, Long actorUserId) {
-        JobOffer offer = findOfferOrThrow(candidateId);
-        Candidate candidate = findCandidateOrThrow(candidateId);
-        assertPending(offer, candidate); // SENT + candidate OFFER_SENT
-
-        OffsetDateTime now = OffsetDateTime.now();
-        // job_offers is mutated in place, so this audit line is the ONLY record of what the
-        // previous round offered. Both negotiated figures belong in it.
-        String before = "proposedSalary=" + offer.getProposedSalary()
-                + "; noticePeriodDays=" + offer.getNoticePeriodDays();
-        if (req.getAskedSalary() != null)      offer.setAskedSalary(req.getAskedSalary());
-        if (req.getProposedSalary() != null)   offer.setProposedSalary(req.getProposedSalary());
-        if (req.getSalaryNote() != null)        offer.setSalaryNote(req.getSalaryNote());
-        if (req.getNoticePeriodDays() != null)  offer.setNoticePeriodDays(req.getNoticePeriodDays());
-        if (req.getNoticePeriodNote() != null)  offer.setNoticePeriodNote(req.getNoticePeriodNote());
-        if (req.getExpectedHireDate() != null)  offer.setExpectedHireDate(req.getExpectedHireDate());
-        if (req.getExpiryDate() != null)        offer.setExpiryDate(req.getExpiryDate());
-        offer.setSentAt(now);        // re-issued
-        offer.setStatus(OfferStatus.SENT);
-        offer.setUpdatedAt(now);
-        offerRepo.save(offer);
-
-        auditService.log(actorUserId != null ? actorUserId.toString() : "SYSTEM",
-                "RENEGOTIATE_OFFER", "CANDIDATE", candidateId,
-                before, "proposedSalary=" + offer.getProposedSalary()
-                        + "; noticePeriodDays=" + offer.getNoticePeriodDays());
-
-        return OfferResponse.from(offer);
+        return OfferResponse.from(round);
     }
 
     /** Candidate accepts the offer → offer ACCEPTED, candidate enters IT provisioning. */
     public OfferResponse acceptOffer(Long candidateId, Long actorUserId) {
-        JobOffer offer = findOfferOrThrow(candidateId);
+        JobOffer offer = findCurrentOrThrow(candidateId);
         Candidate candidate = findCandidateOrThrow(candidateId);
         assertPending(offer, candidate);
 
@@ -159,7 +239,7 @@ public class OfferService {
 
     /** Candidate declines (or RH withdraws) the offer → offer REJECTED, candidate REJECTED. */
     public OfferResponse rejectOffer(Long candidateId, RejectOfferRequest req, Long actorUserId) {
-        JobOffer offer = findOfferOrThrow(candidateId);
+        JobOffer offer = findCurrentOrThrow(candidateId);
         Candidate candidate = findCandidateOrThrow(candidateId);
         assertPending(offer, candidate);
 
@@ -229,8 +309,15 @@ public class OfferService {
         }
     }
 
-    private JobOffer findOfferOrThrow(Long candidateId) {
-        return offerRepo.findByCandidateId(candidateId)
+    /**
+     * The candidate's current round — the one no later round has superseded.
+     *
+     * <p>Replaces a {@code findByCandidateId} returning an Optional, which since V98 throws
+     * {@code NonUniqueResultException} the moment a candidate has been renegotiated: there
+     * is a row per round now, and "the offer" has to name which one.
+     */
+    private JobOffer findCurrentOrThrow(Long candidateId) {
+        return offerRepo.findFirstByCandidateIdAndSupersededAtIsNullOrderByRoundNumberDesc(candidateId)
                 .orElseThrow(() -> new AppException(ErrorCode.OFFER_NOT_FOUND));
     }
 

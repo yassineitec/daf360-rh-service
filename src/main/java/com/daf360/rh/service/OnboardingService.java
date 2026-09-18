@@ -807,10 +807,25 @@ public class OnboardingService {
 
     // ─── Section 2c — Contrat: the recruitment recap ─────────────────────────
 
+    /**
+     * The offer round to show in the recap: the one the candidate ACCEPTED, else the current
+     * one.
+     *
+     * Since V98 there can be several rounds per candidate, and this query took `rows.get(0)`
+     * from an unordered result — so which round the recap displayed was down to whatever the
+     * server returned first. The recap sits next to a field RH is about to confirm, so it has
+     * to show the round that was actually agreed.
+     *
+     * ORDER BY puts an ACCEPTED round first, then the current (unsuperseded) one, then the
+     * newest. TOP 1 makes the choice explicit rather than leaving it to rows.get(0).
+     */
     private static final String OFFER_SQL =
-            "SELECT asked_salary, proposed_salary, salary_note, notice_period_days, " +
+            "SELECT TOP 1 asked_salary, proposed_salary, salary_note, notice_period_days, " +
             "       notice_period_note, expected_hire_date, expiry_date, status, sent_at, decided_at " +
-            "FROM [dbo].[job_offers] WHERE candidate_id = ?";
+            "FROM [dbo].[job_offers] WHERE candidate_id = ? " +
+            "ORDER BY CASE WHEN status = 'ACCEPTED' THEN 0 " +
+            "              WHEN superseded_at IS NULL THEN 1 ELSE 2 END, " +
+            "         round_number DESC, id DESC";
 
     private static final String COST_APPROVAL_SQL =
             "SELECT status, salaire_net_rh, salaire_net_candidat, contre_prop_salaire, " +
@@ -923,8 +938,14 @@ public class OnboardingService {
                     profile.getCurrentContractId());
             if (fromContract != null) return fromContract;
         }
+        // TOP 1 + the same round precedence as OFFER_SQL (accepted → current → newest).
+        // Without it this threw once a candidate had a second round: queryInteger expects
+        // one row, and V98 lets job_offers hold one per negotiation round.
         Integer fromOffer = queryInteger(
-                "SELECT notice_period_days FROM [dbo].[job_offers] WHERE candidate_id = ?", c.getId());
+                "SELECT TOP 1 notice_period_days FROM [dbo].[job_offers] WHERE candidate_id = ? " +
+                "ORDER BY CASE WHEN status = 'ACCEPTED' THEN 0 " +
+                "              WHEN superseded_at IS NULL THEN 1 ELSE 2 END, " +
+                "         round_number DESC, id DESC", c.getId());
         if (fromOffer != null) return fromOffer;
         try {
             return c.getAppliedGrade() != null ? c.getAppliedGrade().getNoticePeriodDays() : null;
@@ -936,8 +957,13 @@ public class OnboardingService {
     /** The salary actually offered — the figure that used to have to be retyped. */
     private BigDecimal resolveOfferSalary(Candidate c) {
         try {
+            // Same round precedence as OFFER_SQL — the accepted round is what the candidate
+            // agreed to, and it is this figure RH confirms as agreedNetSalary two fields away.
             List<BigDecimal> rows = jdbc.queryForList(
-                    "SELECT proposed_salary FROM [dbo].[job_offers] WHERE candidate_id = ?",
+                    "SELECT TOP 1 proposed_salary FROM [dbo].[job_offers] WHERE candidate_id = ? " +
+                    "ORDER BY CASE WHEN status = 'ACCEPTED' THEN 0 " +
+                    "              WHEN superseded_at IS NULL THEN 1 ELSE 2 END, " +
+                    "         round_number DESC, id DESC",
                     BigDecimal.class, c.getId());
             if (!rows.isEmpty() && rows.get(0) != null) return rows.get(0);
         } catch (Exception ex) {
