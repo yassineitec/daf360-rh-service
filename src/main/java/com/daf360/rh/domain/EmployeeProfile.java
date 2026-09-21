@@ -72,15 +72,6 @@ public class EmployeeProfile {
     @Column(name = "national_id", length = 100)
     private String nationalId;
 
-    /** The EXTERNAL payroll software's own employee number (printed as "Matricule" on its
-     * payslip PDFs) — distinct from {@code Users.employee_id} (this app's own auto-generated
-     * "matricule", format [NOM3][PRE3][userId], see EmployeeIdGeneratorService). The two are
-     * unrelated numbering systems; do not confuse them. Used by PayslipBatchService to match
-     * each page of a monthly payslip PDF to its employee. Nullable: only set once an employee
-     * has appeared on at least one processed payslip batch. */
-    @Column(name = "payroll_matricule", length = 50)
-    private String payrollMatricule;
-
     @Column(name = "passport_number", length = 100)
     private String passportNumber;
 
@@ -116,7 +107,11 @@ public class EmployeeProfile {
      * Payroll register number — zero-padded decimal, min width 2 ("01", "10", "206").
      * Allocated once, at activation, by {@code PayrollMatriculeService}; never
      * regenerated and never gap-filled, because departed employees' numbers stay
-     * referenced by historical payslips.
+     * referenced by historical payslips. Distinct from {@code Users.employee_id}
+     * (this app's own auto-generated "matricule", format [NOM3][PRE3][userId], see
+     * EmployeeIdGeneratorService) — the two are unrelated numbering systems, do not
+     * confuse them. Also the field {@code PayslipBatchService} matches against to find
+     * which employee a monthly external payroll PDF page belongs to.
      */
     @Column(name = "payroll_matricule", length = 50, columnDefinition = "nvarchar(50)")
     private String payrollMatricule;
