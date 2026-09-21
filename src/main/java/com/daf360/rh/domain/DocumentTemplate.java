@@ -24,6 +24,13 @@ public class DocumentTemplate {
     @Column(name = "category", nullable = false, length = 50)
     private String category;
 
+    /** "fr" or "en" — same (pays_id, name) pair may have one row per language so a
+     * document can be generated in either, selected at generation time (see
+     * DocumentTemplateService.renderByName()). */
+    @Column(name = "lang", nullable = false, length = 5)
+    @Builder.Default
+    private String lang = "fr";
+
     @Column(name = "name", nullable = false, length = 200)
     private String name;
 

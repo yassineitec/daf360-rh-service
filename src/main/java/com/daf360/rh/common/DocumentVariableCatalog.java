@@ -29,8 +29,13 @@ public final class DocumentVariableCatalog {
         new VariableDef("employee.contractType",               "Type de contrat (code)",            "Employé"),
         new VariableDef("employee.contractDuration",           "Durée du contrat (libellé)",        "Employé"),
         new VariableDef("employee.salary",                     "Salaire net mensuel",               "Employé"),
-        new VariableDef("employee.salaireBrutAnnuel",          "Salaire brut annuel",               "Employé"),
-        new VariableDef("employee.salaireBrutAnnuelEnLettres", "Salaire brut annuel (en lettres)",  "Employé"),
+        // "Brut" en apparence seulement : aucune donnee de salaire brut n'existe en base
+        // (V24 a retire les tables de simulation paie), donc cette valeur EST le salaire
+        // net annuel (salaire_net_rh x 12) -- ne pas l'utiliser pour afficher un montant
+        // "brut" dans un nouveau modele. Preferer employee.salaireNetAnnuel.
+        new VariableDef("employee.salaireBrutAnnuel",          "Salaire annuel estime (= net, historique)", "Employé"),
+        new VariableDef("employee.salaireBrutAnnuelEnLettres", "Salaire annuel estimé (en lettres)", "Employé"),
+        new VariableDef("employee.salaireNetAnnuel",           "Salaire net annuel",                "Employé"),
         new VariableDef("employee.bank",                       "Banque",                            "Employé"),
         new VariableDef("employee.rib",                        "RIB",                               "Employé"),
         new VariableDef("employee.iban",                       "IBAN",                              "Employé"),

@@ -179,6 +179,15 @@ public class PdfDocumentService {
     public GeneratedDocumentResponse generateAttestationTravailPdf(Long employeeProfileId,
                                                                     Long requestId,
                                                                     Long generatedBy) {
+        return generateAttestationTravailPdf(employeeProfileId, requestId, generatedBy, "fr");
+    }
+
+    /** @param lang "fr" or "en" — which language's active template (see V99 migration) to
+     * render; falls back to French if this pays has no template in the requested language. */
+    public GeneratedDocumentResponse generateAttestationTravailPdf(Long employeeProfileId,
+                                                                    Long requestId,
+                                                                    Long generatedBy,
+                                                                    String lang) {
         EmployeeDataDto emp    = loadEmployeeData(employeeProfileId);
         String          docRef = generateDocumentRef("RH-ATT-115", emp.getPaysId());
         String          verCode = generateVerificationCode();
@@ -186,7 +195,7 @@ public class PdfDocumentService {
                 .getSharepointLocation("Attestation de Travail", emp.getPaysId()).orElse(null);
 
         Optional<byte[]> dbPdf = documentTemplateService.renderByName(
-            "Attestation de Travail", emp.getPaysId(), employeeProfileId,
+            "Attestation de Travail", emp.getPaysId(), employeeProfileId, lang,
             Map.of("document.ref", docRef, "document.verificationCode", verCode));
         if (dbPdf.isPresent()) {
             return saveGeneratedDocument(requestId, "ATTESTATION_TRAVAIL", dbPdf.get(), verCode, generatedBy,
@@ -207,6 +216,13 @@ public class PdfDocumentService {
     public GeneratedDocumentResponse generateAttestationSalairePdf(Long employeeProfileId,
                                                                     Long requestId,
                                                                     Long generatedBy) {
+        return generateAttestationSalairePdf(employeeProfileId, requestId, generatedBy, "fr");
+    }
+
+    public GeneratedDocumentResponse generateAttestationSalairePdf(Long employeeProfileId,
+                                                                    Long requestId,
+                                                                    Long generatedBy,
+                                                                    String lang) {
         EmployeeDataDto emp    = loadEmployeeData(employeeProfileId);
         String          docRef = generateDocumentRef("RH-ATT-SAL", emp.getPaysId());
         String          verCode = generateVerificationCode();
@@ -214,7 +230,7 @@ public class PdfDocumentService {
                 .getSharepointLocation("Attestation de Salaire", emp.getPaysId()).orElse(null);
 
         Optional<byte[]> dbPdf = documentTemplateService.renderByName(
-            "Attestation de Salaire", emp.getPaysId(), employeeProfileId,
+            "Attestation de Salaire", emp.getPaysId(), employeeProfileId, lang,
             Map.of("document.ref", docRef, "document.verificationCode", verCode));
         if (dbPdf.isPresent()) {
             return saveGeneratedDocument(requestId, "ATTESTATION_SALAIRE", dbPdf.get(), verCode, generatedBy,
@@ -244,6 +260,13 @@ public class PdfDocumentService {
     public GeneratedDocumentResponse generateAttestationNonBeneficePretPdf(Long employeeProfileId,
                                                                             Long requestId,
                                                                             Long generatedBy) {
+        return generateAttestationNonBeneficePretPdf(employeeProfileId, requestId, generatedBy, "fr");
+    }
+
+    public GeneratedDocumentResponse generateAttestationNonBeneficePretPdf(Long employeeProfileId,
+                                                                            Long requestId,
+                                                                            Long generatedBy,
+                                                                            String lang) {
         EmployeeDataDto emp    = loadEmployeeData(employeeProfileId);
         String          docRef = generateDocumentRef("RH-ATT-PRET", emp.getPaysId());
         String          verCode = generateVerificationCode();
@@ -251,7 +274,7 @@ public class PdfDocumentService {
                 .getSharepointLocation("Attestation de Non-Benefice de Pret", emp.getPaysId()).orElse(null);
 
         Optional<byte[]> dbPdf = documentTemplateService.renderByName(
-            "Attestation de Non-Benefice de Pret", emp.getPaysId(), employeeProfileId,
+            "Attestation de Non-Benefice de Pret", emp.getPaysId(), employeeProfileId, lang,
             Map.of("document.ref", docRef, "document.verificationCode", verCode));
         if (dbPdf.isPresent()) {
             return saveGeneratedDocument(requestId, "ATTESTATION_NON_BENEFICE_PRET", dbPdf.get(), verCode, generatedBy,
@@ -269,6 +292,13 @@ public class PdfDocumentService {
     public GeneratedDocumentResponse generateAttestationTitularisationPdf(Long employeeProfileId,
                                                                            Long requestId,
                                                                            Long generatedBy) {
+        return generateAttestationTitularisationPdf(employeeProfileId, requestId, generatedBy, "fr");
+    }
+
+    public GeneratedDocumentResponse generateAttestationTitularisationPdf(Long employeeProfileId,
+                                                                           Long requestId,
+                                                                           Long generatedBy,
+                                                                           String lang) {
         EmployeeDataDto emp = loadEmployeeData(employeeProfileId);
 
         if (emp.getContractType() == null || !"PERMANENT".equalsIgnoreCase(emp.getContractType())) {
@@ -282,7 +312,7 @@ public class PdfDocumentService {
                 .getSharepointLocation("Attestation de Titularisation", emp.getPaysId()).orElse(null);
 
         Optional<byte[]> dbPdf = documentTemplateService.renderByName(
-            "Attestation de Titularisation", emp.getPaysId(), employeeProfileId,
+            "Attestation de Titularisation", emp.getPaysId(), employeeProfileId, lang,
             Map.of("document.ref", docRef, "document.verificationCode", verCode));
         if (dbPdf.isPresent()) {
             return saveGeneratedDocument(requestId, "ATTESTATION_TITULARISATION", dbPdf.get(), verCode, generatedBy,
@@ -304,6 +334,14 @@ public class PdfDocumentService {
                                                                    Long requestId,
                                                                    Long generatedBy,
                                                                    Map<String, Object> extra) {
+        return generateLettreInvitationPdf(employeeProfileId, requestId, generatedBy, extra, "fr");
+    }
+
+    public GeneratedDocumentResponse generateLettreInvitationPdf(Long employeeProfileId,
+                                                                   Long requestId,
+                                                                   Long generatedBy,
+                                                                   Map<String, Object> extra,
+                                                                   String lang) {
         EmployeeDataDto emp     = loadEmployeeData(employeeProfileId);
         String          docRef  = generateDocumentRef("RH-LTR-INV", emp.getPaysId());
         String          verCode = generateVerificationCode();
@@ -325,7 +363,7 @@ public class PdfDocumentService {
         extraCtx.put("trip.hotel",                str(extra, "hotel"));
 
         Optional<byte[]> dbPdf = documentTemplateService.renderByName(
-            "Lettre d'Invitation ARX France", emp.getPaysId(), employeeProfileId, extraCtx);
+            "Lettre d'Invitation ARX France", emp.getPaysId(), employeeProfileId, lang, extraCtx);
         if (dbPdf.isPresent()) {
             return saveGeneratedDocument(requestId, "LETTRE_INVITATION_ARX_FRANCE",
                     dbPdf.get(), verCode, generatedBy, emp.getFullName(), sharepointLocation, emp.getPaysId());
@@ -358,6 +396,13 @@ public class PdfDocumentService {
     public GeneratedDocumentResponse generateAttestationDomiciliationSalairePdf(Long employeeProfileId,
                                                                                  Long requestId,
                                                                                  Long generatedBy) {
+        return generateAttestationDomiciliationSalairePdf(employeeProfileId, requestId, generatedBy, "fr");
+    }
+
+    public GeneratedDocumentResponse generateAttestationDomiciliationSalairePdf(Long employeeProfileId,
+                                                                                 Long requestId,
+                                                                                 Long generatedBy,
+                                                                                 String lang) {
         EmployeeDataDto emp = loadEmployeeData(employeeProfileId);
 
         if (emp.getBankName() == null || emp.getRib() == null) {
@@ -372,7 +417,7 @@ public class PdfDocumentService {
                 .getSharepointLocation("Attestation de Domiciliation de Salaire", emp.getPaysId()).orElse(null);
 
         Optional<byte[]> dbPdf = documentTemplateService.renderByName(
-            "Attestation de Domiciliation de Salaire", emp.getPaysId(), employeeProfileId,
+            "Attestation de Domiciliation de Salaire", emp.getPaysId(), employeeProfileId, lang,
             Map.of("document.ref", docRef, "document.verificationCode", verCode));
         if (dbPdf.isPresent()) {
             return saveGeneratedDocument(requestId, "ATTESTATION_DOMICILIATION_SALAIRE", dbPdf.get(), verCode, generatedBy,

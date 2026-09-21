@@ -13,6 +13,9 @@ public class SaveDocumentTemplateDto {
     @NotBlank
     private String category;
 
+    /** "fr" or "en" — defaults to "fr" when omitted (pre-existing admin callers). */
+    private String lang = "fr";
+
     @NotBlank
     private String name;
 

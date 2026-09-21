@@ -74,8 +74,9 @@ public class PdfDocumentController {
         Long employeeProfileId = toLong(body.get("employeeProfileId"));
         Long requestId         = toLong(body.get("requestId"));
         Long actorId           = actorId(auth);
+        String lang            = lang(body);
         return generateAndReturn(() ->
-                pdfService.generateAttestationTravailPdf(employeeProfileId, requestId, actorId));
+                pdfService.generateAttestationTravailPdf(employeeProfileId, requestId, actorId, lang));
     }
 
     @PostMapping("/attestation-salaire")
@@ -86,8 +87,9 @@ public class PdfDocumentController {
         Long employeeProfileId = toLong(body.get("employeeProfileId"));
         Long requestId         = toLong(body.get("requestId"));
         Long actorId           = actorId(auth);
+        String lang            = lang(body);
         return generateAndReturn(() ->
-                pdfService.generateAttestationSalairePdf(employeeProfileId, requestId, actorId));
+                pdfService.generateAttestationSalairePdf(employeeProfileId, requestId, actorId, lang));
     }
 
     @PostMapping("/attestation-non-benefice-pret")
@@ -98,8 +100,9 @@ public class PdfDocumentController {
         Long employeeProfileId = toLong(body.get("employeeProfileId"));
         Long requestId         = toLong(body.get("requestId"));
         Long actorId           = actorId(auth);
+        String lang            = lang(body);
         return generateAndReturn(() ->
-                pdfService.generateAttestationNonBeneficePretPdf(employeeProfileId, requestId, actorId));
+                pdfService.generateAttestationNonBeneficePretPdf(employeeProfileId, requestId, actorId, lang));
     }
 
     @PostMapping("/attestation-titularisation")
@@ -110,8 +113,9 @@ public class PdfDocumentController {
         Long employeeProfileId = toLong(body.get("employeeProfileId"));
         Long requestId         = toLong(body.get("requestId"));
         Long actorId           = actorId(auth);
+        String lang            = lang(body);
         return generateAndReturn(() ->
-                pdfService.generateAttestationTitularisationPdf(employeeProfileId, requestId, actorId));
+                pdfService.generateAttestationTitularisationPdf(employeeProfileId, requestId, actorId, lang));
     }
 
     @PostMapping("/attestation-domiciliation-salaire")
@@ -122,8 +126,9 @@ public class PdfDocumentController {
         Long employeeProfileId = toLong(body.get("employeeProfileId"));
         Long requestId         = toLong(body.get("requestId"));
         Long actorId           = actorId(auth);
+        String lang            = lang(body);
         return generateAndReturn(() ->
-                pdfService.generateAttestationDomiciliationSalairePdf(employeeProfileId, requestId, actorId));
+                pdfService.generateAttestationDomiciliationSalairePdf(employeeProfileId, requestId, actorId, lang));
     }
 
     @PostMapping("/lettre-invitation-arx-france")
@@ -134,6 +139,7 @@ public class PdfDocumentController {
         Long employeeProfileId = toLong(body.get("employeeProfileId"));
         Long requestId         = toLong(body.get("requestId"));
         Long actorId           = actorId(auth);
+        String lang            = lang(body);
 
         Map<String, Object> extra = new HashMap<>();
         for (String field : new String[]{
@@ -144,7 +150,7 @@ public class PdfDocumentController {
         }
 
         return generateAndReturn(() ->
-                pdfService.generateLettreInvitationPdf(employeeProfileId, requestId, actorId, extra));
+                pdfService.generateLettreInvitationPdf(employeeProfileId, requestId, actorId, extra, lang));
     }
 
     @GetMapping("/by-request/{requestId}")
@@ -189,6 +195,14 @@ public class PdfDocumentController {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    /** "fr" (default) or "en" — which language to generate the document in, see
+     * DocumentTemplateService.renderByName(). Absent from every caller that predates this
+     * feature, hence the default rather than a required field. */
+    private String lang(Map<String, Object> body) {
+        Object v = body.get("lang");
+        return v != null ? v.toString() : "fr";
     }
 
     private Long toLong(Object v) {

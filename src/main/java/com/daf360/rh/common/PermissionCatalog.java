@@ -66,6 +66,11 @@ public final class PermissionCatalog {
     public static final String EDIT_CANDIDATE          = "EDIT_CANDIDATE";
     public static final String ACCEPT_REJECT_CANDIDATE = "ACCEPT_REJECT_CANDIDATE";
     public static final String RH_HIRE_CANDIDATE       = "RH_HIRE_CANDIDATE";
+    /** Upload the monthly multi-page payslip PDF, match each page to an employee by the
+     * external payroll software's matricule, and file the split-out single-page PDFs into
+     * SharePoint (see PayslipBatchService). Separate from HR_UPDATE_PROFILE: touches every
+     * employee's salary document in one action, not one profile at a time. */
+    public static final String RH_MANAGE_PAYSLIPS      = "RH_MANAGE_PAYSLIPS";
     public static final String RH_VIEW_RECRUITMENT_DEMAND   = "RH_VIEW_RECRUITMENT_DEMAND";
     public static final String RH_CREATE_RECRUITMENT_DEMAND = "RH_CREATE_RECRUITMENT_DEMAND";
     public static final String RH_APPROVE_RECRUITMENT_DEMAND= "RH_APPROVE_RECRUITMENT_DEMAND";
@@ -172,7 +177,7 @@ public final class PermissionCatalog {
         new PermGroup("Congés",              List.of(GET_LEAVES, ADD_LEAVE, RESPONSE_LEAVE, GET_GLOBAL_LEAVES, SETTLE_LEAVES)),
         new PermGroup("Catégories",          List.of(GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY)),
         new PermGroup("Timesheets",          List.of(GET_TSR, CREATE_TSR, RESPOND_TSR, GET_GLOBAL_TSR)),
-        new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND, RH_HIRE_CANDIDATE, APPROVE_HIRING_COST)),
+        new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND, RH_HIRE_CANDIDATE, APPROVE_HIRING_COST, RH_MANAGE_PAYSLIPS)),
         new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS, RH_MANAGE_OFFBOARDING, RH_VALIDATE_OFFBOARDING, RH_COMPLETE_OFFBOARDING_TASK, RH_CONDUCT_EXIT_INTERVIEW, RH_OFFBOARDING_STAGE_HANDOVER, RH_OFFBOARDING_STAGE_IT, RH_OFFBOARDING_STAGE_PAYROLL, RH_SUSPEND_PROFILE)),
         new PermGroup("Entretiens",          List.of(RH_ADMIN_INTERVIEW_TYPES, RH_MANAGE_INTERVIEWS)),
         // FACT_APPROVE_MISSION_COST is the third code of this process but it is NOT listed

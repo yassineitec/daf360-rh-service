@@ -12,6 +12,7 @@ public class DocumentTemplateDto {
     private Long            id;
     private Long            paysId;
     private String          category;
+    private String          lang;
     private String          name;
     private String          description;
     private String          htmlContent;

@@ -23,6 +23,10 @@ public interface EmployeeProfileRepository
 
     Optional<EmployeeProfile> findByCandidateId(Long candidateId);
 
+    /** Scoped by pays: the external payroll software's own matricule is only unique within
+     * one country's payroll run, not globally (see EmployeeProfile.payrollMatricule). */
+    Optional<EmployeeProfile> findByPaysIdAndPayrollMatricule(Long paysId, String payrollMatricule);
+
     boolean existsByUserId(Long userId);
 
     Page<EmployeeProfile> findByPaysId(Long paysId, Pageable pageable);

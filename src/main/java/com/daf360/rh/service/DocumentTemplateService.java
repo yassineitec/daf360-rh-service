@@ -8,6 +8,7 @@ import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.repository.DocumentTemplateRepository;
 import com.daf360.rh.security.TenantContext;
 import com.daf360.rh.security.TenantService;
+import com.daf360.rh.service.pdf.NumberToWordsEn;
 import com.daf360.rh.service.pdf.NumberToWordsFr;
 import com.daf360.rh.service.pdf.PdfClientService;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -55,6 +56,12 @@ public class DocumentTemplateService {
         "juillet","aout","septembre","octobre","novembre","decembre"
     };
 
+    // English month labels — used for both date.monthLabel and long-form dates when lang="en".
+    private static final String[] MONTH_LABELS_EN = {
+        "January","February","March","April","May","June",
+        "July","August","September","October","November","December"
+    };
+
     // ── SQL ───────────────────────────────────────────────────────────────────
 
     private static final String EMPLOYEE_CTX_SQL =
@@ -70,7 +77,7 @@ public class DocumentTemplateService {
         "FROM [dbo].[employee_profiles] ep " +
         "JOIN [dbo].[Users]       u ON u.id = ep.user_id " +
         "JOIN [dbo].[pays]        p ON p.id = ep.pays_id " +
-        "JOIN [dbo].[candidates]  c ON c.id = ep.candidate_id " +
+        "LEFT JOIN [dbo].[candidates]  c ON c.id = ep.candidate_id " +
         "LEFT JOIN [dbo].[grades]       g ON g.id = ep.grade_id " +
         "LEFT JOIN [dbo].[disciplines]  d ON d.id = ep.discipline_id " +
         "LEFT JOIN [dbo].[banks]        b ON b.id = ep.bank_id " +
@@ -117,13 +124,15 @@ public class DocumentTemplateService {
 
     public DocumentTemplateDto create(SaveDocumentTemplateDto dto, Long actorId) {
         Long effectivePaysId = tenantService.isAdmin() ? dto.getPaysId() : TenantContext.get();
-        if (repo.existsByPaysIdAndName(effectivePaysId, dto.getName())) {
+        String effectiveLang = dto.getLang() != null ? dto.getLang().trim().toLowerCase() : "fr";
+        if (repo.existsByPaysIdAndNameAndLang(effectivePaysId, dto.getName(), effectiveLang)) {
             throw new AppException(ErrorCode.ALREADY_EXISTS,
-                "Une maquette nommée \"" + dto.getName() + "\" existe déjà pour ce pays.");
+                "Une maquette nommée \"" + dto.getName() + "\" existe déjà pour ce pays dans cette langue.");
         }
         DocumentTemplate tmpl = DocumentTemplate.builder()
             .paysId(effectivePaysId)
             .category(dto.getCategory())
+            .lang(effectiveLang)
             .name(dto.getName().trim())
             .description(dto.getDescription())
             .htmlContent(dto.getHtmlContent())
@@ -140,11 +149,13 @@ public class DocumentTemplateService {
     public DocumentTemplateDto update(Long id, SaveDocumentTemplateDto dto) {
         DocumentTemplate tmpl = findOrThrow(id);
         assertPaysOwnership(tmpl);
-        if (repo.existsByPaysIdAndNameAndIdNot(tmpl.getPaysId(), dto.getName(), id)) {
+        String effectiveLang = dto.getLang() != null ? dto.getLang().trim().toLowerCase() : "fr";
+        if (repo.existsByPaysIdAndNameAndLangAndIdNot(tmpl.getPaysId(), dto.getName(), effectiveLang, id)) {
             throw new AppException(ErrorCode.ALREADY_EXISTS,
-                "Une maquette nommée \"" + dto.getName() + "\" existe déjà pour ce pays.");
+                "Une maquette nommée \"" + dto.getName() + "\" existe déjà pour ce pays dans cette langue.");
         }
         tmpl.setCategory(dto.getCategory());
+        tmpl.setLang(effectiveLang);
         tmpl.setName(dto.getName().trim());
         tmpl.setDescription(dto.getDescription());
         tmpl.setHtmlContent(dto.getHtmlContent());
@@ -173,38 +184,48 @@ public class DocumentTemplateService {
 
     // ── Render ────────────────────────────────────────────────────────────────
 
-    /** Admin preview — renders by template ID, uses placeholder context when profileId is null. */
+    /** Admin preview — renders by template ID, uses placeholder context when profileId is null.
+     * Uses the template's OWN stored language (not the caller's) so dates/amounts-in-words
+     * match the language the template body is actually written in. */
     public byte[] render(Long templateId, Long employeeProfileId) {
         DocumentTemplate tmpl = findOrThrow(templateId);
         assertPaysOwnership(tmpl);
-        Map<String, String> ctx = resolveContext(employeeProfileId, tmpl.getPaysId());
+        Map<String, String> ctx = resolveContext(employeeProfileId, tmpl.getPaysId(), tmpl.getLang());
         String resolved = replaceVariables(tmpl.getHtmlContent(), ctx);
         return pdfClient.generatePdfFromHtml(resolved, sanitizeFilename(tmpl.getName()) + ".pdf");
     }
 
     /** Admin raw-HTML preview — renders arbitrary HTML without saving. */
-    public byte[] previewRaw(String htmlContent, Long paysId, Long employeeProfileId) {
+    public byte[] previewRaw(String htmlContent, Long paysId, Long employeeProfileId, String lang) {
         Long effectivePaysId = tenantService.isAdmin() ? paysId : TenantContext.get();
-        Map<String, String> ctx = resolveContext(employeeProfileId, effectivePaysId);
+        Map<String, String> ctx = resolveContext(employeeProfileId, effectivePaysId, lang);
         String resolved = replaceVariables(htmlContent, ctx);
         return pdfClient.generatePdfFromHtml(resolved, "apercu.pdf");
     }
 
     /**
-     * Production render by template name.
+     * Production render by template name, in the requested language.
      * Called by PdfDocumentService with pre-generated document.ref / document.verificationCode
      * in extraCtx, so those are not overwritten by the generic resolveContext().
-     * Returns Optional.empty() if no active template with that name exists for the given pays.
+     * Falls back to the French row when the pays has no active template in the requested
+     * language yet (e.g. a country onboarded before its English translation was authored),
+     * and resolves variables using the ACTUAL row's language, never the requested one, so a
+     * French fallback body never gets English dates/amounts mixed into it.
+     * Returns Optional.empty() only if neither language has an active row for this pays.
      */
-    public Optional<byte[]> renderByName(String name, Long paysId, Long profileId,
+    public Optional<byte[]> renderByName(String name, Long paysId, Long profileId, String lang,
                                           Map<String, String> extraCtx) {
-        return repo.findFirstByPaysIdAndNameAndIsActiveTrue(paysId, name)
-            .map(tmpl -> {
-                Map<String, String> ctx = resolveContext(profileId, paysId);
-                if (extraCtx != null) ctx.putAll(extraCtx);
-                String resolved = replaceVariables(tmpl.getHtmlContent(), ctx);
-                return pdfClient.generatePdfFromHtml(resolved, sanitizeFilename(tmpl.getName()) + ".pdf");
-            });
+        String requestedLang = lang != null ? lang.trim().toLowerCase() : "fr";
+        Optional<DocumentTemplate> tmplOpt = repo.findFirstByPaysIdAndNameAndLangAndIsActiveTrue(paysId, name, requestedLang);
+        if (tmplOpt.isEmpty() && !"fr".equals(requestedLang)) {
+            tmplOpt = repo.findFirstByPaysIdAndNameAndLangAndIsActiveTrue(paysId, name, "fr");
+        }
+        return tmplOpt.map(tmpl -> {
+            Map<String, String> ctx = resolveContext(profileId, paysId, tmpl.getLang());
+            if (extraCtx != null) ctx.putAll(extraCtx);
+            String resolved = replaceVariables(tmpl.getHtmlContent(), ctx);
+            return pdfClient.generatePdfFromHtml(resolved, sanitizeFilename(tmpl.getName()) + ".pdf");
+        });
     }
 
     /** Emplacement SharePoint configuré pour la maquette active de ce nom/pays — indépendant de
@@ -248,6 +269,7 @@ public class DocumentTemplateService {
             .id(t.getId())
             .paysId(t.getPaysId())
             .category(t.getCategory())
+            .lang(t.getLang())
             .name(t.getName())
             .description(t.getDescription())
             .htmlContent(t.getHtmlContent())
@@ -285,12 +307,17 @@ public class DocumentTemplateService {
     }
 
     /**
-     * Builds the full variable context map for a given employee profile and pays.
+     * Builds the full variable context map for a given employee profile and pays, in the
+     * given language ("fr"/"en" — anything else falls back to "fr"). Every value that is
+     * language-sensitive (dates, civilité, contract-duration label, amount-in-words) is
+     * picked here so the template body itself never needs an {{#if}}-style branch — it just
+     * references the same {{employee.xxx}}/{{document.xxx}} tokens regardless of language.
      * When profileId is null, every employee variable gets a labeled placeholder for preview.
      * document.ref and document.verificationCode default to "PREVIEW" — callers that need
      * real values must override them via the extraCtx parameter of renderByName().
      */
-    private Map<String, String> resolveContext(Long profileId, Long paysId) {
+    private Map<String, String> resolveContext(Long profileId, Long paysId, String lang) {
+        boolean isEnglish = "en".equalsIgnoreCase(lang);
         Map<String, String> ctx = new HashMap<>();
 
         // ── Date ──────────────────────────────────────────────────────────────
@@ -298,15 +325,24 @@ public class DocumentTemplateService {
         ctx.put("date.today",      today.format(DATE_FR));
         ctx.put("date.day",        String.valueOf(today.getDayOfMonth()));
         ctx.put("date.month",      String.valueOf(today.getMonthValue()));
-        ctx.put("date.monthLabel", MONTH_LABELS_FR[today.getMonthValue() - 1]);
+        ctx.put("date.monthLabel", isEnglish ? MONTH_LABELS_EN[today.getMonthValue() - 1] : MONTH_LABELS_FR[today.getMonthValue() - 1]);
         ctx.put("date.year",       String.valueOf(today.getYear()));
 
         // ── Document defaults (overridden by extraCtx in production renders) ──
-        ctx.put("document.date",             formatDateLongFr(today));
+        ctx.put("document.date",             formatDateLong(today, isEnglish));
         ctx.put("document.ref",              "PREVIEW");
         ctx.put("document.verificationCode", "PREVIEW");
 
         // ── Company / DG parameters ───────────────────────────────────────────
+        // "________" fallback mirrors PdfDocumentService.loadDgParameters() -- these
+        // parameter_sets rows are only seeded for Tunisia (V19 migration), so any other
+        // pays (e.g. Egypt, ~94 employees, zero rows) would otherwise leave the raw
+        // "{{company.dgXxx}}" placeholder unresolved in the rendered document.
+        ctx.put("company.dgName",    "________");
+        ctx.put("company.dgCin",     "________");
+        ctx.put("company.dgCinDate", "________");
+        ctx.put("company.dgCinCity", "________");
+        ctx.put("company.dgTitle",   "________");
         if (paysId != null) {
             try {
                 List<Map<String, Object>> dgRows = jdbc.queryForList(DG_CTX_SQL, paysId);
@@ -329,30 +365,57 @@ public class DocumentTemplateService {
 
         // ── Employee data ─────────────────────────────────────────────────────
         if (profileId == null) {
-            ctx.put("employee.fullName",                   "[NOM COMPLET]");
-            ctx.put("employee.firstName",                  "[PRÉNOM]");
-            ctx.put("employee.lastName",                   "[NOM]");
-            ctx.put("employee.civilite",                   "M.");
-            ctx.put("employee.cin",                        "[N° CIN]");
-            ctx.put("employee.cinCity",                    "[VILLE CIN]");
-            ctx.put("employee.cinDate",                    "[DATE CIN]");
-            ctx.put("employee.grade",                      "[GRADE]");
-            ctx.put("employee.position",                   "[POSTE]");
-            ctx.put("employee.startDate",                  "[DATE EMBAUCHE]");
-            ctx.put("employee.startDateMoisAn",            "[MOIS EMBAUCHE]");
-            ctx.put("employee.titularisationDate",         "[DATE TITULARISATION]");
-            ctx.put("employee.contractType",               "[TYPE CONTRAT]");
-            ctx.put("employee.contractDuration",           "[DURÉE CONTRAT]");
-            ctx.put("employee.salary",                     "[SALAIRE NET]");
-            ctx.put("employee.salaireBrutAnnuel",          "[SALAIRE BRUT ANNUEL]");
-            ctx.put("employee.salaireBrutAnnuelEnLettres", "[SALAIRE EN LETTRES]");
-            ctx.put("employee.salaireNetAnnuel",           "[SALAIRE NET ANNUEL]");
-            ctx.put("employee.bank",                       "[BANQUE]");
-            ctx.put("employee.rib",                        "[RIB]");
-            ctx.put("employee.iban",                       "[IBAN]");
-            ctx.put("employee.city",                       "[VILLE]");
-            ctx.put("employee.email",                      "[EMAIL]");
-            ctx.putIfAbsent("company.name",                "[ENTREPRISE]");
+            if (isEnglish) {
+                ctx.put("employee.fullName",                   "[FULL NAME]");
+                ctx.put("employee.firstName",                  "[FIRST NAME]");
+                ctx.put("employee.lastName",                   "[LAST NAME]");
+                ctx.put("employee.civilite",                   "Mr");
+                ctx.put("employee.cin",                        "[ID NO.]");
+                ctx.put("employee.cinCity",                    "[ID ISSUE CITY]");
+                ctx.put("employee.cinDate",                    "[ID ISSUE DATE]");
+                ctx.put("employee.grade",                      "[GRADE]");
+                ctx.put("employee.position",                   "[POSITION]");
+                ctx.put("employee.startDate",                  "[HIRE DATE]");
+                ctx.put("employee.startDateMoisAn",            "[HIRE MONTH]");
+                ctx.put("employee.titularisationDate",         "[TENURE DATE]");
+                ctx.put("employee.contractType",               "[CONTRACT TYPE]");
+                ctx.put("employee.contractDuration",           "[CONTRACT DURATION]");
+                ctx.put("employee.salary",                     "[NET SALARY]");
+                ctx.put("employee.salaireBrutAnnuel",          "[ANNUAL SALARY]");
+                ctx.put("employee.salaireBrutAnnuelEnLettres", "[SALARY IN WORDS]");
+                ctx.put("employee.salaireNetAnnuel",           "[ANNUAL NET SALARY]");
+                ctx.put("employee.bank",                       "[BANK]");
+                ctx.put("employee.rib",                        "[ACCOUNT NO.]");
+                ctx.put("employee.iban",                       "[IBAN]");
+                ctx.put("employee.city",                       "[CITY]");
+                ctx.put("employee.email",                      "[EMAIL]");
+                ctx.putIfAbsent("company.name",                "[COMPANY]");
+            } else {
+                ctx.put("employee.fullName",                   "[NOM COMPLET]");
+                ctx.put("employee.firstName",                  "[PRÉNOM]");
+                ctx.put("employee.lastName",                   "[NOM]");
+                ctx.put("employee.civilite",                   "M.");
+                ctx.put("employee.cin",                        "[N° CIN]");
+                ctx.put("employee.cinCity",                    "[VILLE CIN]");
+                ctx.put("employee.cinDate",                    "[DATE CIN]");
+                ctx.put("employee.grade",                      "[GRADE]");
+                ctx.put("employee.position",                   "[POSTE]");
+                ctx.put("employee.startDate",                  "[DATE EMBAUCHE]");
+                ctx.put("employee.startDateMoisAn",            "[MOIS EMBAUCHE]");
+                ctx.put("employee.titularisationDate",         "[DATE TITULARISATION]");
+                ctx.put("employee.contractType",               "[TYPE CONTRAT]");
+                ctx.put("employee.contractDuration",           "[DURÉE CONTRAT]");
+                ctx.put("employee.salary",                     "[SALAIRE NET]");
+                ctx.put("employee.salaireBrutAnnuel",          "[SALAIRE BRUT ANNUEL]");
+                ctx.put("employee.salaireBrutAnnuelEnLettres", "[SALAIRE EN LETTRES]");
+                ctx.put("employee.salaireNetAnnuel",           "[SALAIRE NET ANNUEL]");
+                ctx.put("employee.bank",                       "[BANQUE]");
+                ctx.put("employee.rib",                        "[RIB]");
+                ctx.put("employee.iban",                       "[IBAN]");
+                ctx.put("employee.city",                       "[VILLE]");
+                ctx.put("employee.email",                      "[EMAIL]");
+                ctx.putIfAbsent("company.name",                "[ENTREPRISE]");
+            }
             return ctx;
         }
 
@@ -376,22 +439,22 @@ public class DocumentTemplateService {
             ctx.put("employee.fullName",  fullName != null ? fullName : (firstName + " " + lastName));
             ctx.put("employee.firstName", nvl(firstName));
             ctx.put("employee.lastName",  nvl(lastName));
-            ctx.put("employee.civilite",  "FEMALE".equalsIgnoreCase(gender) ? "Mme" : "M.");
+            ctx.put("employee.civilite",  "FEMALE".equalsIgnoreCase(gender) ? (isEnglish ? "Ms" : "Mme") : (isEnglish ? "Mr" : "M."));
             ctx.put("employee.cin",       nvl((String) r.get("national_id")));
             ctx.put("employee.cinCity",   nvl((String) r.get("cin_city")));
             ctx.put("employee.cinDate",   nvl((String) r.get("cin_date")));
             ctx.put("employee.grade",     nvl(grade));
             ctx.put("employee.position",  (grade != null && !grade.isEmpty()) ? grade : nvl(discipline));
             ctx.put("employee.email",     nvl((String) r.get("ms365_email")));
-            ctx.put("employee.city",      deriveCity(isoCode, paysLabel));
+            ctx.put("employee.city",      deriveCity(isoCode, paysLabel, isEnglish));
             ctx.putIfAbsent("company.name", nvl(paysLabel));
 
             // Hire date — two formats
             Object hireDateObj = r.get("hire_date");
             if (hireDateObj instanceof java.sql.Date sd) {
                 LocalDate hd = sd.toLocalDate();
-                ctx.put("employee.startDate",       formatDateLongFr(hd));
-                ctx.put("employee.startDateMoisAn", formatMoisAnFr(hd));
+                ctx.put("employee.startDate",       formatDateLong(hd, isEnglish));
+                ctx.put("employee.startDateMoisAn", formatMoisAn(hd, isEnglish));
             } else {
                 ctx.put("employee.startDate",       "________");
                 ctx.put("employee.startDateMoisAn", "________");
@@ -400,9 +463,9 @@ public class DocumentTemplateService {
             // Titularisation date (probation end date, fallback to hire date)
             Object probEndObj = r.get("probation_end_date");
             if (probEndObj instanceof java.sql.Date pd) {
-                ctx.put("employee.titularisationDate", formatDateLongFr(pd.toLocalDate()));
+                ctx.put("employee.titularisationDate", formatDateLong(pd.toLocalDate(), isEnglish));
             } else if (hireDateObj instanceof java.sql.Date sd) {
-                ctx.put("employee.titularisationDate", formatDateLongFr(sd.toLocalDate()));
+                ctx.put("employee.titularisationDate", formatDateLong(sd.toLocalDate(), isEnglish));
             } else {
                 ctx.put("employee.titularisationDate", "________");
             }
@@ -410,7 +473,7 @@ public class DocumentTemplateService {
             // Contract
             String contractType = (String) r.get("contract_type");
             ctx.put("employee.contractType",     nvl(contractType));
-            ctx.put("employee.contractDuration", deriveContractDuration(contractType));
+            ctx.put("employee.contractDuration", deriveContractDuration(contractType, isEnglish));
 
             // Salary
             Object salaryObj = r.get("salaire_net_rh");
@@ -418,12 +481,12 @@ public class DocumentTemplateService {
                 ctx.put("employee.salary", formatAmount(net));
                 BigDecimal annuel = net.multiply(BigDecimal.valueOf(12));
                 ctx.put("employee.salaireBrutAnnuel",          formatAmount(annuel));
-                ctx.put("employee.salaireBrutAnnuelEnLettres", NumberToWordsFr.convert(annuel));
+                ctx.put("employee.salaireBrutAnnuelEnLettres", isEnglish ? NumberToWordsEn.convert(annuel) : NumberToWordsFr.convert(annuel));
                 ctx.put("employee.salaireNetAnnuel",           formatAmount(annuel));
             } else {
                 ctx.put("employee.salary",                     "0");
                 ctx.put("employee.salaireBrutAnnuel",          "0");
-                ctx.put("employee.salaireBrutAnnuelEnLettres", "zéro");
+                ctx.put("employee.salaireBrutAnnuelEnLettres", isEnglish ? "zero" : "zéro");
                 ctx.put("employee.salaireNetAnnuel",           "0");
             }
 
@@ -441,29 +504,40 @@ public class DocumentTemplateService {
 
     // ── Format helpers ────────────────────────────────────────────────────────
 
-    /** "15 janvier 2024" — no accent in month, matches PdfDocumentService.formatDateFr(). */
-    private String formatDateLongFr(LocalDate d) {
+    /** "15 janvier 2024" / "15 January 2024" — French has no accent in month, matching
+     * PdfDocumentService.formatDateFr(); English mirrors the same day-month-year order. */
+    private String formatDateLong(LocalDate d, boolean isEnglish) {
         if (d == null) return "________";
-        return d.getDayOfMonth() + " " + MOIS_FR[d.getMonthValue() - 1] + " " + d.getYear();
+        String month = isEnglish ? MONTH_LABELS_EN[d.getMonthValue() - 1] : MOIS_FR[d.getMonthValue() - 1];
+        return d.getDayOfMonth() + " " + month + " " + d.getYear();
     }
 
-    /** "janvier 2024" — matches PdfDocumentService.formatMoisAnFr(). */
-    private String formatMoisAnFr(LocalDate d) {
+    /** "janvier 2024" / "January 2024" — matches PdfDocumentService.formatMoisAnFr(). */
+    private String formatMoisAn(LocalDate d, boolean isEnglish) {
         if (d == null) return "________";
-        return MOIS_FR[d.getMonthValue() - 1] + " " + d.getYear();
+        String month = isEnglish ? MONTH_LABELS_EN[d.getMonthValue() - 1] : MOIS_FR[d.getMonthValue() - 1];
+        return month + " " + d.getYear();
     }
 
-    private String deriveCity(String iso, String label) {
+    private String deriveCity(String iso, String label, boolean isEnglish) {
         if (iso == null) return label != null ? label : "________";
         return switch (iso.toUpperCase()) {
             case "TN" -> "Tunis";
-            case "EG" -> "Le Caire";
+            case "EG" -> isEnglish ? "Cairo" : "Le Caire";
             default   -> label != null ? label : "________";
         };
     }
 
-    private String deriveContractDuration(String ct) {
-        if (ct == null) return "indeterminee";
+    private String deriveContractDuration(String ct, boolean isEnglish) {
+        if (ct == null) return isEnglish ? "indefinite" : "indeterminee";
+        if (isEnglish) {
+            return switch (ct.toUpperCase()) {
+                case "PERMANENT"  -> "indefinite (permanent)";
+                case "FIXED_TERM" -> "fixed";
+                case "INTERN"     -> "internship";
+                default           -> "indefinite";
+            };
+        }
         return switch (ct.toUpperCase()) {
             case "PERMANENT"  -> "indeterminee (titulaire)";
             case "FIXED_TERM" -> "determinee";

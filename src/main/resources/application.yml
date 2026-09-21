@@ -38,8 +38,12 @@ spring:
 
   servlet:
     multipart:
-      max-file-size: 10MB
-      max-request-size: 11MB
+      # 50MB/55MB rather than the previous 10MB/11MB: the monthly payslip batch PDF (one page
+      # per employee, see PayslipBatchController) can run to 100+ pages and easily exceed 10MB
+      # on a company this size. Every other multipart upload in this app (profile documents,
+      # photos) stays well under this new ceiling, so raising it does not relax anything there.
+      max-file-size: 50MB
+      max-request-size: 55MB
 
   # Jackson date/time serialization is configured in JacksonConfig.java
   # (write-dates-as-timestamps was removed from Jackson 3.x SerializationFeature)

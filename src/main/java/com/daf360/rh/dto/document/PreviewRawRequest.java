@@ -10,4 +10,6 @@ public class PreviewRawRequest {
     @NotBlank private String htmlContent;
     /** Optional: if provided, real employee data is injected. */
     private Long employeeProfileId;
+    /** Optional: "fr" or "en", defaults to "fr" in the service when omitted. */
+    private String lang;
 }

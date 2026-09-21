@@ -34,5 +34,13 @@ public interface DocumentTemplateRepository extends JpaRepository<DocumentTempla
 
     boolean existsByPaysIdAndName(Long paysId, String name);
 
+    boolean existsByPaysIdAndNameAndLangAndIdNot(Long paysId, String name, String lang, Long excludeId);
+
+    boolean existsByPaysIdAndNameAndLang(Long paysId, String name, String lang);
+
     Optional<DocumentTemplate> findFirstByPaysIdAndNameAndIsActiveTrue(Long paysId, String name);
+
+    /** Production render lookup — one row per (pays, name, lang) so a document can be
+     * generated in either language (see DocumentTemplateService.renderByName()). */
+    Optional<DocumentTemplate> findFirstByPaysIdAndNameAndLangAndIsActiveTrue(Long paysId, String name, String lang);
 }

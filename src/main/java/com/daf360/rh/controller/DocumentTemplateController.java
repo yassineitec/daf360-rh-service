@@ -92,7 +92,7 @@ public class DocumentTemplateController {
     @PostMapping("/api/hr/admin/document-templates/preview-raw")
     public ResponseEntity<byte[]> previewRaw(@RequestBody @Valid PreviewRawRequest req) {
         try {
-            byte[] pdf = svc.previewRaw(req.getHtmlContent(), req.getPaysId(), req.getEmployeeProfileId());
+            byte[] pdf = svc.previewRaw(req.getHtmlContent(), req.getPaysId(), req.getEmployeeProfileId(), req.getLang());
             return pdfResponse(pdf, "apercu.pdf");
         } catch (PdfGenerationException ex) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
