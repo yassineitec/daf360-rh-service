@@ -445,11 +445,25 @@ public class EmployeeLifecycleService {
         static final ResolvedNotice UNKNOWN = new ResolvedNotice(null, null);
     }
 
+    /**
+     * The préavis from the offer the candidate ACCEPTED — not the latest round.
+     *
+     * Since V98 job_offers holds one row per negotiation round, so this needed a rule for
+     * which round to read, and "the most recent" is the wrong one: a round drafted or
+     * renegotiated after acceptance would retroactively change the préavis frozen onto a
+     * signed contract. The accepted round is the one the candidate actually agreed to, and
+     * it is immutable once decided.
+     *
+     * A candidate hired without going through an offer (the direct-hire path) matches
+     * nothing here and falls through to the grade default below, exactly as before.
+     */
     private static final String OFFER_NOTICE_SQL =
         "SELECT TOP 1 jo.notice_period_days " +
         "FROM [dbo].[employee_profiles] ep " +
         "JOIN [dbo].[job_offers] jo ON jo.candidate_id = ep.candidate_id " +
-        "WHERE ep.id = ? AND jo.notice_period_days IS NOT NULL";
+        "WHERE ep.id = ? AND jo.notice_period_days IS NOT NULL " +
+        "  AND jo.status = 'ACCEPTED' " +
+        "ORDER BY jo.decided_at DESC, jo.id DESC";
 
     private static final String GRADE_NOTICE_SQL =
         "SELECT g.notice_period_days " +

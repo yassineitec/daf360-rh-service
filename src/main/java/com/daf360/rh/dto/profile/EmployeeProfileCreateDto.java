@@ -1,6 +1,5 @@
 package com.daf360.rh.dto.profile;
 
-import com.daf360.rh.validator.ValidEmployeeId;
 import com.daf360.rh.validator.ValidFixedTermContract;
 import jakarta.validation.constraints.*;
 import lombok.Data;
@@ -19,9 +18,13 @@ public class EmployeeProfileCreateDto {
     @NotNull(message = "paysId est obligatoire")
     private Long paysId;
 
-    /** Formatted employee ID stored in Users.employee_id — format: <ENTITY>-<YY>-<NNNN> */
-    @NotBlank(message = "employeeId est obligatoire")
-    @ValidEmployeeId
+    /**
+     * @deprecated Legacy Users.employee_id. Ignored: the matricule is now allocated by
+     * {@code PayrollMatriculeService} into employee_profiles.payroll_matricule. Kept on
+     * the DTO — without the @NotBlank/@ValidEmployeeId it used to carry — so existing
+     * callers posting it do not start failing validation. Nothing reads it.
+     */
+    @Deprecated
     private String employeeId;
 
     @NotNull(message = "La date d'embauche est obligatoire")
@@ -57,7 +60,8 @@ public class EmployeeProfileCreateDto {
 
     @Email @Size(max = 255) private String personalEmail;
 
-    @Size(max = 50) private String phone;
+    @Size(max = 50) private String phone;          // professionnel
+    @Size(max = 50) private String personalPhone;
 
     @Size(max = 500) private String personalAddress;
 

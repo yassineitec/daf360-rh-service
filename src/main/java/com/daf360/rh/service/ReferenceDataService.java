@@ -10,9 +10,22 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * The HR dimension lists — grades, disciplines, NOG levels, departments, banks.
+ *
+ * <p>Every getter takes the pays the CALLER is allowed to see, as a collection, and `null`
+ * means "no filter". They used to take a single nullable `paysId` that came straight off the
+ * query string, so a client that simply omitted it got every entity's lists: the scoping was
+ * whatever the caller asked for, which is not scoping. {@code ReferenceDataController} now
+ * resolves the collection from the token's pays scope before calling in here.
+ *
+ * <p>A collection rather than one id because a V74 role in LIST mode legitimately covers
+ * several entities, and a single id silently keeps one of them.
+ */
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -29,9 +42,9 @@ public class ReferenceDataService {
     // ── Grades ────────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<RefDataItemDto> getGrades(Long paysId) {
-        var list = (paysId != null)
-                ? gradeRepo.findByPaysIdAndIsActiveTrueOrderBySortOrderAsc(paysId)
+    public List<RefDataItemDto> getGrades(Collection<Long> paysIds) {
+        var list = (paysIds != null)
+                ? gradeRepo.findByPaysIdInAndIsActiveTrueOrderBySortOrderAsc(paysIds)
                 : gradeRepo.findByIsActiveTrueOrderBySortOrderAsc();
         return list.stream().map(this::toDto).collect(Collectors.toList());
     }
@@ -78,9 +91,9 @@ public class ReferenceDataService {
     // ── Disciplines ───────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<RefDataItemDto> getDisciplines(Long paysId) {
-        var list = (paysId != null)
-                ? disciplineRepo.findByPaysIdAndIsActiveTrueOrderBySortOrderAsc(paysId)
+    public List<RefDataItemDto> getDisciplines(Collection<Long> paysIds) {
+        var list = (paysIds != null)
+                ? disciplineRepo.findByPaysIdInAndIsActiveTrueOrderBySortOrderAsc(paysIds)
                 : disciplineRepo.findByIsActiveTrueOrderBySortOrderAsc();
         return list.stream().map(this::toDto).collect(Collectors.toList());
     }
@@ -103,9 +116,9 @@ public class ReferenceDataService {
     // ── NogLevels ─────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<RefDataItemDto> getNogLevels(Long paysId) {
-        var list = (paysId != null)
-                ? nogLevelRepo.findByPaysIdAndIsActiveTrueOrderByLevelOrderAsc(paysId)
+    public List<RefDataItemDto> getNogLevels(Collection<Long> paysIds) {
+        var list = (paysIds != null)
+                ? nogLevelRepo.findByPaysIdInAndIsActiveTrueOrderByLevelOrderAsc(paysIds)
                 : nogLevelRepo.findByIsActiveTrueOrderByLevelOrderAsc();
         return list.stream().map(this::toNogDto).collect(Collectors.toList());
     }
@@ -128,9 +141,9 @@ public class ReferenceDataService {
     // ── Departments ───────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<RefDataItemDto> getDepartments(Long paysId) {
-        var list = (paysId != null)
-                ? deptRepo.findByPaysIdAndIsActiveTrueOrderByLabelFrAsc(paysId)
+    public List<RefDataItemDto> getDepartments(Collection<Long> paysIds) {
+        var list = (paysIds != null)
+                ? deptRepo.findByPaysIdInAndIsActiveTrueOrderByLabelFrAsc(paysIds)
                 : deptRepo.findByIsActiveTrueOrderByLabelFrAsc();
         return list.stream().map(this::toDeptDto).collect(Collectors.toList());
     }
@@ -153,9 +166,9 @@ public class ReferenceDataService {
     // ── Banks ─────────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<RefDataItemDto> getBanks(Long paysId) {
-        var list = (paysId != null)
-                ? bankRepo.findByPaysIdAndIsActiveTrueOrderByLabelFrAsc(paysId)
+    public List<RefDataItemDto> getBanks(Collection<Long> paysIds) {
+        var list = (paysIds != null)
+                ? bankRepo.findByPaysIdInAndIsActiveTrueOrderByLabelFrAsc(paysIds)
                 : bankRepo.findByIsActiveTrueOrderByLabelFrAsc();
         return list.stream().map(this::toBankDto).collect(Collectors.toList());
     }

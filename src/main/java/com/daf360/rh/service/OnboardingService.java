@@ -33,6 +33,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
@@ -56,6 +58,7 @@ public class OnboardingService {
     private final EmployeeProfileRepository  profileRepo;
     private final WorkingTimeRegimeRepository regimeRepo;
     private final WorkflowInstanceService    workflowInstanceService;
+    private final PayrollMatriculeService    payrollMatriculeService;
     private final MailService                mailService;
     private final AuditService               auditService;
     private final AppProperties              appProperties;
@@ -75,9 +78,15 @@ public class OnboardingService {
      * Contract creation at completion (V69). Safe injection: EmployeeLifecycleService knows
      * nothing about onboarding, so there is no cycle.
      */
-    private final com.daf360.rh.lifecycle.EmployeeLifecycleService lifecycleService;
+    /** Still here for stageCandidateDocument; the onboarding-completion use moved to sideEffects. */
     private final EmployeeDocumentService                          documentService;
-    private final ItAssetAssignmentService                         assetAssignmentService;
+    /**
+     * The three optional steps of completeEmployeeProfile, each in its own transaction.
+     * They used to be called inline under a try/catch, which could not work: every one of
+     * them is @Transactional, so a failure marked THIS transaction rollback-only and the
+     * onboarding died at commit with UnexpectedRollbackException.
+     */
+    private final OnboardingSideEffects                            sideEffects;
 
     // ─── Valid statuses for the onboarding pending list ──────────────────────
     private static final Set<CandidateStatus> PENDING_STATUSES =
@@ -323,8 +332,14 @@ public class OnboardingService {
         profile.setGender(GenderNormalizer.normalize(dto.getGender()));
         profile.setNationalId(dto.getNationalId());
         profile.setPassportNumber(dto.getPassportNumber());
-        // Contact
-        profile.setPhone(candidate.getPhone());
+        // Contact — personal line only. The pro line stays null until RH adds it on the
+        // profile page after activation; the wizard has no field for it.
+        // dto wins over the candidate record: before CompleteProfileRequest carried the
+        // field, a number corrected on the Personnel step was silently discarded here.
+        profile.setPersonalPhone(
+                dto.getPersonalPhone() != null && !dto.getPersonalPhone().isBlank()
+                        ? dto.getPersonalPhone()
+                        : candidate.getPhone());
         profile.setPersonalAddress(dto.getPersonalAddress());
         // Bank / RIB
         profile.setBankAccountNumber(dto.getBankAccountNumber());
@@ -352,30 +367,8 @@ public class OnboardingService {
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidateRepo.save(candidate);
 
-        // STEP 2b — Create the lifecycle contract, carrying the agreed préavis.
-        //
-        // This used to be skipped entirely: onboarding wrote contract_type / hire_date onto the
-        // PROFILE and never created an employee_contracts row, so a wizard-completed employee
-        // had no contract, no state machine and nowhere for the préavis to live. Only the
-        // candidates-page hire flow created one.
-        createLifecycleContract(saved, candidate, dto, hrOfficerId);
-
-        // STEP 2c — Attach the signed contract PDF, staged against the candidate while the
-        // profile did not yet exist.
-        linkContractDocument(saved, dto, hrOfficerId);
-
-        // STEP 2d — Open the IT equipment ledger for this employee (V76).
-        //
-        // The other end of the same hook in ItProvisioningService.completeProvisioning: that
-        // one is a no-op when IT finishes BEFORE the profile exists, which is the usual
-        // order. Here the profile has just been created, so this is where those rows land.
-        // Idempotent on (provisioning, asset type) — running both is safe.
-        try {
-            assetAssignmentService.seedFromProvisioning(prov.getId(), hrOfficerId);
-        } catch (Exception ex) {
-            log.warn("IT asset ledger seeding failed for candidateId={}: {}",
-                    candidateId, ex.getMessage());
-        }
+        // STEPS 2b / 2c / 2d — the contract, the signed PDF and the IT ledger — no longer run
+        // here. They are deferred to after the commit; see the block below STEP 7.
 
         // STEP 3 — Delete onboarding draft
         jdbc.update("DELETE FROM [dbo].[onboarding_drafts] WHERE candidate_id = ?", candidateId);
@@ -400,8 +393,12 @@ public class OnboardingService {
         }
 
         // STEP 6 — In-app notification to new employee (non-fatal)
-        notificationRoutingService.resolveAndDispatch(
-            RoutingContext.builder()
+        //
+        // Dispatched AFTER COMMIT, not here. resolveAndDispatch is @Async, so it runs on its
+        // own thread outside this transaction and fires whatever the transaction goes on to
+        // do: when the completion rolled back, the new employee still received "bienvenue"
+        // for a profile that does not exist. The hook below is skipped entirely on rollback.
+        RoutingContext onboardingCompleted = RoutingContext.builder()
                 .eventCode("ONBOARDING_COMPLETED")
                 .paysId(candidate.getPaysId())
                 .subjectUserId(prov.getUserId())
@@ -412,16 +409,54 @@ public class OnboardingService {
                     "candidateName",  candidate.getFirstName() + " " + candidate.getLastName(),
                     "ms365Email",     prov.getMs365Email() != null ? prov.getMs365Email() : ""
                 ))
-                .build()
-        );
+                .build();
+        afterCommit(() -> notificationRoutingService.resolveAndDispatch(onboardingCompleted));
 
         // STEP 7 — Mark onboarding as COMPLETE and activate the profile
         saved.setOnboardingCompleted(true);
         saved.setOnboardingCompletedAt(OffsetDateTime.now());
         saved.setLifecycleStatus(LifecycleStatus.ACTIVE);
+        // The payroll matricule is allocated here rather than at profile creation: an
+        // abandoned PRE_ONBOARDING draft would otherwise consume a register number for
+        // good. Guarded so re-running an incomplete onboarding keeps the first number.
+        if (saved.getPayrollMatricule() == null) {
+            saved.setPayrollMatricule(payrollMatriculeService.allocate());
+            log.info("Allocated payroll matricule={} to profileId={}",
+                     saved.getPayrollMatricule(), saved.getId());
+        }
         saved.setUpdatedAt(OffsetDateTime.now());
         saved = profileRepo.save(saved);
         log.info("Onboarding completed: profileId={} userId={} now ACTIVE", saved.getId(), saved.getUserId());
+
+        /*
+         * STEPS 2b / 2c / 2d — the optional extras, AFTER the commit and each in its own
+         * transaction (OnboardingSideEffects).
+         *
+         *  • 2b — the lifecycle contract carrying the agreed préavis. Onboarding used to write
+         *         contract_type / hire_date onto the PROFILE and create no employee_contracts
+         *         row at all, so a wizard-completed employee had no contract and no state
+         *         machine; only the candidates-page hire flow created one.
+         *  • 2c — the signed contract PDF, staged against the candidate while the profile did
+         *         not yet exist.
+         *  • 2d — the IT equipment ledger (V76). The other end of the same hook lives in
+         *         ItProvisioningService.completeProvisioning, which no-ops when IT finishes
+         *         BEFORE the profile exists (the usual order). Idempotent on
+         *         (provisioning, asset type), so running both is safe.
+         *
+         * After the commit, and not merely in a nested transaction, for a concrete reason: all
+         * three READ the employee profile this method has just written — doCreateContract opens
+         * with findById and throws "Collaborateur introuvable" otherwise, seedFromProvisioning
+         * looks it up by candidate id. A REQUIRES_NEW transaction suspends this one while it is
+         * still uncommitted, so the profile row would be invisible to all three and they would
+         * fail or quietly seed nothing. Deferring past the commit is what makes the row visible
+         * AND keeps their failures off this transaction.
+         */
+        final EmployeeProfile onboarded = saved;
+        afterCommit(() -> {
+            createLifecycleContract(onboarded, candidate, dto, hrOfficerId);
+            linkContractDocument(onboarded, dto, hrOfficerId);
+            sideEffects.seedItAssets(prov.getId(), candidateId, hrOfficerId);
+        });
 
         // STEP 8 — Audit log (hrOfficerId is null when the request carries no valid JWT)
         auditService.log(
@@ -445,6 +480,24 @@ public class OnboardingService {
     // =========================================================================
     // Private helpers
     // =========================================================================
+
+    /**
+     * Runs {@code action} once this transaction has actually committed, or immediately when
+     * there is no transaction to wait for (a direct call outside the proxy, or a test).
+     *
+     * For work that must not happen on a rollback but must also not be able to fail the
+     * commit — the completion notification. {@code @Async} alone does not give that: it
+     * leaves the transaction immediately and fires regardless of the outcome.
+     */
+    private void afterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCommit() { action.run(); }
+        });
+    }
 
     private OnboardingListItem toListItem(Candidate c, ItProvisioning prov) {
         return OnboardingListItem.builder()
@@ -557,7 +610,10 @@ public class OnboardingService {
                 .firstName(c.getFirstName())
                 .lastName(c.getLastName())
                 .emailPersonal(c.getEmailPersonal())
-                .phone(c.getPhone())
+                // Profile value wins once onboarding has been attempted, so a number
+                // corrected on a previous run survives the re-open; candidate otherwise.
+                .personalPhone(hasProfile && existingProfile.getPersonalPhone() != null
+                             ? existingProfile.getPersonalPhone() : c.getPhone())
                 .dateOfBirth(hasDraft ? draft.getDateOfBirth()
                            : hasProfile ? existingProfile.getDateOfBirth() : c.getDateOfBirth())
                 .nationality(c.getNationality() != null ? c.getNationality().getLabelFr() : null)
@@ -716,57 +772,60 @@ public class OnboardingService {
                     profile.getId(), profile.getCurrentContractId());
             return;
         }
-        try {
-            String contractTypeCode = contractTypeBridge.resolveContractTypeCode(
-                    candidate.getEmploymentTypeId());
-            if (contractTypeCode == null) {
-                log.warn("No contract type resolvable for candidate {} (employmentTypeId={}) — "
-                         + "no lifecycle contract created, so its préavis has nowhere to live.",
-                        candidate.getId(), candidate.getEmploymentTypeId());
-                return;
-            }
-
-            CreateContractRequest req = new CreateContractRequest();
-            req.setEmployeeProfileId(profile.getId());
-            req.setPaysId(candidate.getPaysId());
-            req.setContractTypeCode(contractTypeCode);
-            req.setDateDebut(dto.getHireDate());
-            req.setDateFinPrevue(dto.getContractEndDate());
-            // Null is fine and meaningful: doCreateContract then resolves the négociated figure
-            // from the offer, then the grade default, and records which one it used.
-            req.setNoticePeriodDays(dto.getNoticePeriodDays());
-
-            var created = lifecycleService.createContractFromBridge(req, hrOfficerId);
-            log.info("Onboarding created contract {} for profile {} — préavis {} j",
-                    created.getId(), profile.getId(), created.getNoticePeriodDays());
-        } catch (Exception ex) {
-            log.warn("Could not create the lifecycle contract for profile {} during onboarding: {}"
-                     + " — the profile is complete but has no contract row.",
-                    profile.getId(), ex.getMessage());
+        String contractTypeCode = contractTypeBridge.resolveContractTypeCode(
+                candidate.getEmploymentTypeId());
+        if (contractTypeCode == null) {
+            log.warn("No contract type resolvable for candidate {} (employmentTypeId={}) — "
+                     + "no lifecycle contract created, so its préavis has nowhere to live.",
+                    candidate.getId(), candidate.getEmploymentTypeId());
+            return;
         }
+
+        CreateContractRequest req = new CreateContractRequest();
+        req.setEmployeeProfileId(profile.getId());
+        req.setPaysId(candidate.getPaysId());
+        req.setContractTypeCode(contractTypeCode);
+        req.setDateDebut(dto.getHireDate());
+        req.setDateFinPrevue(dto.getContractEndDate());
+        // Null is fine and meaningful: doCreateContract then resolves the négociated figure
+        // from the offer, then the grade default, and records which one it used.
+        req.setNoticePeriodDays(dto.getNoticePeriodDays());
+
+        // The call and its catch moved to OnboardingSideEffects: createContractFromBridge is
+        // @Transactional, so a failure inside the onboarding's own transaction marked it
+        // rollback-only and the catch here could not undo that.
+        sideEffects.createContract(req, profile, hrOfficerId);
     }
 
     /** Turns the contract PDF staged against the candidate into a document on the profile. */
     private void linkContractDocument(EmployeeProfile profile, CompleteProfileRequest dto,
                                       Long hrOfficerId) {
         if (dto.getContractDocumentUrl() == null || dto.getContractDocumentUrl().isBlank()) return;
-        try {
-            documentService.registerStagedDocument(
-                    profile.getId(), dto.getContractDocumentUrl(), dto.getContractDocumentName(),
-                    "CONTRACT_SIGNED", hrOfficerId);
-        } catch (Exception ex) {
-            // The file is on disk either way; losing the row is recoverable by re-uploading.
-            log.warn("Could not attach the signed contract to profile {}: {}",
-                    profile.getId(), ex.getMessage());
-        }
+        sideEffects.linkContractDocument(profile.getId(), dto.getContractDocumentUrl(),
+                dto.getContractDocumentName(), hrOfficerId);
     }
 
     // ─── Section 2c — Contrat: the recruitment recap ─────────────────────────
 
+    /**
+     * The offer round to show in the recap: the one the candidate ACCEPTED, else the current
+     * one.
+     *
+     * Since V98 there can be several rounds per candidate, and this query took `rows.get(0)`
+     * from an unordered result — so which round the recap displayed was down to whatever the
+     * server returned first. The recap sits next to a field RH is about to confirm, so it has
+     * to show the round that was actually agreed.
+     *
+     * ORDER BY puts an ACCEPTED round first, then the current (unsuperseded) one, then the
+     * newest. TOP 1 makes the choice explicit rather than leaving it to rows.get(0).
+     */
     private static final String OFFER_SQL =
-            "SELECT asked_salary, proposed_salary, salary_note, notice_period_days, " +
+            "SELECT TOP 1 asked_salary, proposed_salary, salary_note, notice_period_days, " +
             "       notice_period_note, expected_hire_date, expiry_date, status, sent_at, decided_at " +
-            "FROM [dbo].[job_offers] WHERE candidate_id = ?";
+            "FROM [dbo].[job_offers] WHERE candidate_id = ? " +
+            "ORDER BY CASE WHEN status = 'ACCEPTED' THEN 0 " +
+            "              WHEN superseded_at IS NULL THEN 1 ELSE 2 END, " +
+            "         round_number DESC, id DESC";
 
     private static final String COST_APPROVAL_SQL =
             "SELECT status, salaire_net_rh, salaire_net_candidat, contre_prop_salaire, " +
@@ -879,8 +938,14 @@ public class OnboardingService {
                     profile.getCurrentContractId());
             if (fromContract != null) return fromContract;
         }
+        // TOP 1 + the same round precedence as OFFER_SQL (accepted → current → newest).
+        // Without it this threw once a candidate had a second round: queryInteger expects
+        // one row, and V98 lets job_offers hold one per negotiation round.
         Integer fromOffer = queryInteger(
-                "SELECT notice_period_days FROM [dbo].[job_offers] WHERE candidate_id = ?", c.getId());
+                "SELECT TOP 1 notice_period_days FROM [dbo].[job_offers] WHERE candidate_id = ? " +
+                "ORDER BY CASE WHEN status = 'ACCEPTED' THEN 0 " +
+                "              WHEN superseded_at IS NULL THEN 1 ELSE 2 END, " +
+                "         round_number DESC, id DESC", c.getId());
         if (fromOffer != null) return fromOffer;
         try {
             return c.getAppliedGrade() != null ? c.getAppliedGrade().getNoticePeriodDays() : null;
@@ -892,8 +957,13 @@ public class OnboardingService {
     /** The salary actually offered — the figure that used to have to be retyped. */
     private BigDecimal resolveOfferSalary(Candidate c) {
         try {
+            // Same round precedence as OFFER_SQL — the accepted round is what the candidate
+            // agreed to, and it is this figure RH confirms as agreedNetSalary two fields away.
             List<BigDecimal> rows = jdbc.queryForList(
-                    "SELECT proposed_salary FROM [dbo].[job_offers] WHERE candidate_id = ?",
+                    "SELECT TOP 1 proposed_salary FROM [dbo].[job_offers] WHERE candidate_id = ? " +
+                    "ORDER BY CASE WHEN status = 'ACCEPTED' THEN 0 " +
+                    "              WHEN superseded_at IS NULL THEN 1 ELSE 2 END, " +
+                    "         round_number DESC, id DESC",
                     BigDecimal.class, c.getId());
             if (!rows.isEmpty() && rows.get(0) != null) return rows.get(0);
         } catch (Exception ex) {

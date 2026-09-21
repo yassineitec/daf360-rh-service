@@ -17,7 +17,7 @@ public class OnboardingFormResponse {
     private String firstName;
     private String lastName;
     private String emailPersonal;
-    private String phone;
+    private String personalPhone;   // candidate.phone — the wizard has no pro field
     private LocalDate dateOfBirth;
     private String nationality;
     private String nationalId;

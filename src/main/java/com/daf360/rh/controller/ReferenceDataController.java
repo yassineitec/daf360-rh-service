@@ -7,6 +7,8 @@ import com.daf360.rh.dto.ref.TimezoneOptionDto;
 import com.daf360.rh.dto.ref.UpdateGradeNoticePeriodRequest;
 import com.daf360.rh.dto.ref.UpdatePaysTimezoneRequest;
 import com.daf360.rh.service.PaysTimezoneService;
+import com.daf360.rh.security.PaysScopeContext;
+import com.daf360.rh.security.TenantService;
 import com.daf360.rh.service.ReferenceDataService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -15,6 +17,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,14 +29,53 @@ public class ReferenceDataController {
 
     private final ReferenceDataService refService;
     private final PaysTimezoneService  paysTimezoneService;
+    private final TenantService        tenantService;
     private final JdbcTemplate         jdbc;
+
+    /**
+     * The entities whose dimension lists this caller may read, as
+     * {@link ReferenceDataService} wants them: a collection, or {@code null} for no filter.
+     *
+     * <p>These endpoints used to hand {@code paysId} straight from the query string to the
+     * service, and the service returned EVERYTHING when it was absent. So the country
+     * scoping was whatever the client chose to ask for, and any caller that simply omitted
+     * the parameter — the create-candidate wizard did — saw every entity's grades,
+     * disciplines and departments. That is not a filter, it is a suggestion.
+     *
+     * <p>{@code getPaysScope()}, not {@code getEffectivePaysId()}: a V74 role in LIST mode
+     * covers several entities, and the single-id form keeps only one of them.
+     *
+     * <p>A requested {@code paysId} outside the scope is IGNORED rather than refused, and
+     * the caller gets its own scope instead. These lists are structural reference data that
+     * anyone in the company may read within their perimeter, so an out-of-perimeter ask is
+     * a mis-wired screen, not an attack — and answering it with a 403 error page or an empty
+     * dropdown hides the mistake rather than degrading past it.
+     */
+    private Collection<Long> readableP(Long requestedPaysId) {
+        PaysScopeContext.Scope scope = tenantService.getPaysScope();
+        // Global admin: honour an explicit pick (the ref-data admin screen manages one
+        // entity at a time), otherwise no filter at all — today's behaviour for them.
+        if (scope.all()) {
+            return requestedPaysId != null ? List.of(requestedPaysId) : null;
+        }
+        // Unresolved scope — a token with no pays claim, an internal call. Deliberately
+        // permissive, exactly as TenantService documents: emptying every dropdown for an
+        // incomplete token is a louder failure than showing structural reference data.
+        if (scope.paysIds().isEmpty()) {
+            return requestedPaysId != null ? List.of(requestedPaysId) : null;
+        }
+        if (requestedPaysId != null && scope.paysIds().contains(requestedPaysId)) {
+            return List.of(requestedPaysId);
+        }
+        return scope.paysIds();
+    }
 
     // ── Grades ────────────────────────────────────────────────────────────────
 
     @GetMapping("/grades")
     @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getGrades(@RequestParam(required = false) Long paysId) {
-        return refService.getGrades(paysId);
+        return refService.getGrades(readableP(paysId));
     }
 
     @PostMapping("/grades")
@@ -68,7 +110,7 @@ public class ReferenceDataController {
     @GetMapping("/disciplines")
     @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getDisciplines(@RequestParam(required = false) Long paysId) {
-        return refService.getDisciplines(paysId);
+        return refService.getDisciplines(readableP(paysId));
     }
 
     @PostMapping("/disciplines")
@@ -89,7 +131,7 @@ public class ReferenceDataController {
     @GetMapping("/nog-levels")
     @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getNogLevels(@RequestParam(required = false) Long paysId) {
-        return refService.getNogLevels(paysId);
+        return refService.getNogLevels(readableP(paysId));
     }
 
     @PostMapping("/nog-levels")
@@ -110,7 +152,7 @@ public class ReferenceDataController {
     @GetMapping("/departments")
     @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getDepartments(@RequestParam(required = false) Long paysId) {
-        return refService.getDepartments(paysId);
+        return refService.getDepartments(readableP(paysId));
     }
 
     @PostMapping("/departments")
@@ -131,7 +173,7 @@ public class ReferenceDataController {
     @GetMapping("/banks")
     @PreAuthorize("isAuthenticated()")
     public List<RefDataItemDto> getBanks(@RequestParam(required = false) Long paysId) {
-        return refService.getBanks(paysId);
+        return refService.getBanks(readableP(paysId));
     }
 
     @PostMapping("/banks")

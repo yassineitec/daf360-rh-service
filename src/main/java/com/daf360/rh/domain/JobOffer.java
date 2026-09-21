@@ -9,13 +9,23 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
 /**
- * Maps [dbo].[job_offers] in DAF360_HR (V41) — one offer per candidate.
+ * Maps [dbo].[job_offers] in DAF360_HR — one row per NEGOTIATION ROUND (V98).
  *
  * Captures the offer/negotiation stage of recruitment: the salary the candidate
  * asked for, the salary RH proposes, the validity window, and the candidate's
  * decision. Drives the "Offre" Kanban column.
  *
- * CK_JobOffer_Status: SENT | ACCEPTED | REJECTED | EXPIRED
+ * <p><b>It was one row per candidate until V98</b> (V41's UQ_JobOffer_Candidate), and
+ * renegotiation overwrote it in place — so what round 2 offered survived only as an
+ * audit-log line, and no round could carry its own budget approval. Each renegotiation
+ * now INSERTS a round and stamps {@code supersededAt} on the one it replaces.
+ *
+ * <p>Reads must therefore say which round they mean. "The candidate's offer" is the round
+ * with {@code supersededAt == null}; what a signed contract inherits is the ACCEPTED round,
+ * which never moves again. See {@code JobOfferRepository}.
+ *
+ * CK_JobOffer_Status: DRAFT | SENT | ACCEPTED | REJECTED | EXPIRED
+ * — DRAFT is costed and awaiting the finance decision, not yet with the candidate.
  */
 @Entity
 @Table(name = "job_offers")
@@ -30,8 +40,22 @@ public class JobOffer {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "candidate_id", nullable = false, unique = true)
+    /** No longer unique — one row per round since V98. */
+    @Column(name = "candidate_id", nullable = false)
     private Long candidateId;
+
+    /** 1-based round of the negotiation. Shown to the user, so stored rather than derived. */
+    @Column(name = "round_number", nullable = false)
+    @Builder.Default
+    private Integer roundNumber = 1;
+
+    /** Set when a later round replaces this one. Null ⇒ this is the candidate's current offer. */
+    @Column(name = "superseded_at", columnDefinition = "datetimeoffset(6)")
+    private OffsetDateTime supersededAt;
+
+    /** The round this one replaced — the negotiation chain, readable without arithmetic. */
+    @Column(name = "supersedes_offer_id")
+    private Long supersedesOfferId;
 
     /** Net salary the candidate asked for (negotiation input). */
     @Column(name = "asked_salary", precision = 12, scale = 3)
