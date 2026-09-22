@@ -221,6 +221,30 @@ public class EmployeeProfileController {
     }
 
     /**
+     * GET /api/hr/profiles/employees/{userId}
+     *
+     * <p>One row of {@code /employees}, by user id — including a user with no HR profile,
+     * which is the case this exists for. The directory lists such people (155 active users
+     * have no file, see UserScope), and the "create this person's dossier" screen needs
+     * their name, entity and role to open on a direct URL or a refresh, where no list
+     * result is at hand.
+     *
+     * <p>Only authentication is required, like {@code /employees} itself: this returns
+     * strictly what the directory already shows for the same row. Creating the profile is
+     * what is gated, by {@code HR_CREATE_PROFILE} on POST above.
+     *
+     * <p>404 when the user is unknown, inactive, not a real person, or outside the caller's
+     * pays scope — the four are deliberately indistinguishable from here.
+     */
+    @GetMapping("/employees/{userId}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<EmployeeListItemDto> getEmployee(@PathVariable Long userId) {
+        return profileService.findEmployeeByUserId(userId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /**
      * GET /api/hr/profiles/filter-options
      * Returns distinct filter values for the profile list dropdowns.
      */

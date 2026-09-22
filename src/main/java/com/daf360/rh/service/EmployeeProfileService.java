@@ -314,6 +314,102 @@ public class EmployeeProfileService {
     // Filtering is by their French label because that is what filter-options
     // hands the client for those two fields; `pays` filters by numeric id.
 
+    /**
+     * The projection and the joins behind {@link EmployeeListItemDto}, shared by the paged
+     * list and the single-user lookup below.
+     *
+     * <p>Shared on purpose: the two answer the same question about the same row, and the
+     * lookup exists precisely to feed a screen (profile creation) that the list sent the
+     * user to — so a column drifting between them would show one thing in the grid and
+     * another on the page it opens.
+     */
+    private static final String EMPLOYEE_ROW_SELECT =
+        "SELECT ep.id AS profile_id, u.id AS user_id, u.fullName AS full_name, " +
+        // Aliased employee_id, not payroll_matricule: the column name is the JSON field
+        // of EmployeeListItemDto, which daf360-payroll-frontend consumes as the
+        // matricule. Only the source moves; the contract is untouched.
+        "COALESCE(u.email, u.username) AS email, ep.payroll_matricule AS employee_id, u.pays_id AS pays_id, " +
+        "p.french_label AS pays_label, u.role_id AS role_id, r.frenchName AS role_name, " +
+        "ep.lifecycle_status AS lifecycle_status, ep.contract_type AS contract_type, " +
+        "ep.hire_date AS hire_date, ep.photo_url AS photo_url, ep.gender AS gender, " +
+        "d.label_fr AS department, g.label_fr AS grade, " +
+        "disc.label_fr AS discipline, nog.label_fr AS nog_level ";
+
+    private static final String EMPLOYEE_ROW_FROM =
+        "FROM [dbo].[Users] u " +
+        "LEFT JOIN [dbo].[pays] p ON p.id = u.pays_id " +
+        "LEFT JOIN [dbo].[Roles] r ON r.id = u.role_id AND (r.deleted = 0 OR r.deleted IS NULL) " +
+        "LEFT JOIN [dbo].[employee_profiles] ep ON ep.user_id = u.id AND ep.deleted = 0 " +
+        "LEFT JOIN [dbo].[departments] d ON d.id = ep.department_id " +
+        "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
+        "LEFT JOIN [dbo].[disciplines] disc ON disc.id = ep.discipline_id " +
+        "LEFT JOIN [dbo].[nog_levels] nog ON nog.id = ep.nog_level_id ";
+
+    private static final org.springframework.jdbc.core.RowMapper<EmployeeListItemDto>
+            EMPLOYEE_ROW_MAPPER = (rs, rowNum) -> {
+        java.sql.Date sqlDate = rs.getDate("hire_date");
+        return EmployeeListItemDto.builder()
+            .profileId(rs.getObject("profile_id") != null ? rs.getLong("profile_id") : null)
+            .userId(rs.getLong("user_id"))
+            .fullName(rs.getString("full_name"))
+            .email(rs.getString("email"))
+            .employeeId(rs.getString("employee_id"))
+            .paysId(rs.getObject("pays_id") != null ? rs.getLong("pays_id") : null)
+            .paysLabel(rs.getString("pays_label"))
+            .roleId(rs.getObject("role_id") != null ? rs.getLong("role_id") : null)
+            .roleName(rs.getString("role_name"))
+            .lifecycleStatus(rs.getString("lifecycle_status"))
+            .contractType(rs.getString("contract_type"))
+            .department(rs.getString("department"))
+            .grade(rs.getString("grade"))
+            .discipline(rs.getString("discipline"))
+            .nogLevel(rs.getString("nog_level"))
+            .hireDate(sqlDate != null ? sqlDate.toLocalDate() : null)
+            .photoUrl(rs.getString("photo_url"))
+            .gender(rs.getString("gender"))
+            .hasProfile(rs.getObject("profile_id") != null)
+            .build();
+    };
+
+    /**
+     * One row of {@link #listAllEmployees}, by user id — including the users who have no
+     * HR profile at all.
+     *
+     * <p>Exists for the "this person has no dossier yet" screen: opening it needs the
+     * person's name, entity and role, and every other way in either demands a full profile
+     * (which is the thing missing) or the {@code GET_USERS} admin permission, which the
+     * profiles directory does not require of its readers.
+     *
+     * <p>Scoped to the token's pays like the list itself — a user outside the caller's scope
+     * is reported as absent rather than disclosed. No {@code lifecycle_status} filter: the
+     * point is to reach someone the default list may not be showing.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<EmployeeListItemDto> findEmployeeByUserId(Long userId) {
+        if (userId == null) return java.util.Optional.empty();
+        com.daf360.rh.security.PaysScopeContext.Scope scope = tenantService.getPaysScope();
+
+        String sql = EMPLOYEE_ROW_SELECT + EMPLOYEE_ROW_FROM +
+            "WHERE u.id = ? " +
+            // Same two gates as the list: an inactive account or a service/test login is
+            // not someone an HR dossier gets opened for, and reaching one by URL should
+            // read the same as reaching a user who does not exist.
+            "AND (u.isActive = 1 OR u.isActive IS NULL) " +
+            "AND " + UserScope.realPeople("u") + " " +
+            (scope.unfiltered() ? "" : "AND u.pays_id IN (" + placeholders(scope.paysIds().size()) + ") ") +
+            // The employee_profiles join is a LEFT JOIN on user_id with no uniqueness
+            // guarantee, so a user carrying two rows would otherwise answer with whichever
+            // one the engine happened to return first.
+            "ORDER BY ep.id";
+
+        List<Object> args = new ArrayList<>();
+        args.add(userId);
+        if (!scope.unfiltered()) args.addAll(scope.paysIds());
+
+        List<EmployeeListItemDto> rows = jdbcTemplate.query(sql, EMPLOYEE_ROW_MAPPER, args.toArray());
+        return rows.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(rows.get(0));
+    }
+
     @Transactional(readOnly = true)
     public org.springframework.data.domain.Page<EmployeeListItemDto> listAllEmployees(
             ProfileFilterDto filter, Pageable pageable) {
@@ -350,15 +446,7 @@ public class EmployeeProfileService {
         int offset   = (int) pageable.getOffset();
         int pageSize = pageable.getPageSize();
 
-        String baseFrom  =
-            "FROM [dbo].[Users] u " +
-            "LEFT JOIN [dbo].[pays] p ON p.id = u.pays_id " +
-            "LEFT JOIN [dbo].[Roles] r ON r.id = u.role_id AND (r.deleted = 0 OR r.deleted IS NULL) " +
-            "LEFT JOIN [dbo].[employee_profiles] ep ON ep.user_id = u.id AND ep.deleted = 0 " +
-            "LEFT JOIN [dbo].[departments] d ON d.id = ep.department_id " +
-            "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
-            "LEFT JOIN [dbo].[disciplines] disc ON disc.id = ep.discipline_id " +
-            "LEFT JOIN [dbo].[nog_levels] nog ON nog.id = ep.nog_level_id ";
+        String baseFrom  = EMPLOYEE_ROW_FROM;
 
         String baseWhere =
             "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
@@ -392,16 +480,7 @@ public class EmployeeProfileService {
         if (hireTo     != null) { args.add(java.sql.Date.valueOf(hireTo)); }
 
         String listSql =
-            "SELECT ep.id AS profile_id, u.id AS user_id, u.fullName AS full_name, " +
-            // Aliased employee_id, not payroll_matricule: the column name is the JSON field
-            // of EmployeeListItemDto, which daf360-payroll-frontend consumes as the
-            // matricule. Only the source moves; the contract is untouched.
-            "COALESCE(u.email, u.username) AS email, ep.payroll_matricule AS employee_id, u.pays_id AS pays_id, " +
-            "p.french_label AS pays_label, u.role_id AS role_id, r.frenchName AS role_name, " +
-            "ep.lifecycle_status AS lifecycle_status, ep.contract_type AS contract_type, " +
-            "ep.hire_date AS hire_date, ep.photo_url AS photo_url, ep.gender AS gender, " +
-            "d.label_fr AS department, g.label_fr AS grade, " +
-            "disc.label_fr AS discipline, nog.label_fr AS nog_level " +
+            EMPLOYEE_ROW_SELECT +
             baseFrom + baseWhere +
             // Newest hire first: the list answers "who joined recently". A user with
             // no profile — or a profile with no hire_date — has nothing to date, and
@@ -417,33 +496,7 @@ public class EmployeeProfileService {
             "ep.hire_date DESC, u.fullName, u.id, ep.id " +
             "OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";
 
-        List<EmployeeListItemDto> rows = jdbcTemplate.query(
-            listSql,
-            (rs, rowNum) -> {
-                java.sql.Date sqlDate = rs.getDate("hire_date");
-                return EmployeeListItemDto.builder()
-                    .profileId(rs.getObject("profile_id") != null ? rs.getLong("profile_id") : null)
-                    .userId(rs.getLong("user_id"))
-                    .fullName(rs.getString("full_name"))
-                    .email(rs.getString("email"))
-                    .employeeId(rs.getString("employee_id"))
-                    .paysId(rs.getObject("pays_id") != null ? rs.getLong("pays_id") : null)
-                    .paysLabel(rs.getString("pays_label"))
-                    .roleId(rs.getObject("role_id") != null ? rs.getLong("role_id") : null)
-                    .roleName(rs.getString("role_name"))
-                    .lifecycleStatus(rs.getString("lifecycle_status"))
-                    .contractType(rs.getString("contract_type"))
-                    .department(rs.getString("department"))
-                    .grade(rs.getString("grade"))
-                    .discipline(rs.getString("discipline"))
-                    .nogLevel(rs.getString("nog_level"))
-                    .hireDate(sqlDate != null ? sqlDate.toLocalDate() : null)
-                    .photoUrl(rs.getString("photo_url"))
-                    .gender(rs.getString("gender"))
-                    .hasProfile(rs.getObject("profile_id") != null)
-                    .build();
-            },
-            args.toArray());
+        List<EmployeeListItemDto> rows = jdbcTemplate.query(listSql, EMPLOYEE_ROW_MAPPER, args.toArray());
 
         Integer count = jdbcTemplate.queryForObject(
             "SELECT COUNT(*) " + baseFrom + baseWhere,
