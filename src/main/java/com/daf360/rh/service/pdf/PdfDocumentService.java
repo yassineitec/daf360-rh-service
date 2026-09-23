@@ -176,6 +176,12 @@ public class PdfDocumentService {
         return saveGeneratedDocument(null, "DECHARGE_RESPONSABILITE", bytes, verCode, generatedBy, fullName);
     }
 
+    // The 3-arg attestation overloads are what EmployeeRequestService calls from inside the
+    // approval transaction, wrapped in try/catch. REQUIRES_NEW for the same reason as the
+    // offboarding methods below: joining the caller's transaction, any failure here marked it
+    // rollback-only and the approval's commit then failed with UnexpectedRollbackException (500),
+    // despite the catch.
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public GeneratedDocumentResponse generateAttestationTravailPdf(Long employeeProfileId,
                                                                     Long requestId,
                                                                     Long generatedBy) {
@@ -213,6 +219,7 @@ public class PdfDocumentService {
                 emp.getFullName(), sharepointLocation, emp.getPaysId());
     }
 
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public GeneratedDocumentResponse generateAttestationSalairePdf(Long employeeProfileId,
                                                                     Long requestId,
                                                                     Long generatedBy) {
@@ -257,6 +264,7 @@ public class PdfDocumentService {
                 emp.getFullName(), sharepointLocation, emp.getPaysId());
     }
 
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public GeneratedDocumentResponse generateAttestationNonBeneficePretPdf(Long employeeProfileId,
                                                                             Long requestId,
                                                                             Long generatedBy) {
@@ -289,6 +297,7 @@ public class PdfDocumentService {
                 emp.getFullName(), sharepointLocation, emp.getPaysId());
     }
 
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public GeneratedDocumentResponse generateAttestationTitularisationPdf(Long employeeProfileId,
                                                                            Long requestId,
                                                                            Long generatedBy) {
@@ -393,6 +402,7 @@ public class PdfDocumentService {
                 bytes, verCode, generatedBy, emp.getFullName(), sharepointLocation, emp.getPaysId());
     }
 
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public GeneratedDocumentResponse generateAttestationDomiciliationSalairePdf(Long employeeProfileId,
                                                                                  Long requestId,
                                                                                  Long generatedBy) {
