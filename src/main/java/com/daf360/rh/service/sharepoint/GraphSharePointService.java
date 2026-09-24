@@ -611,6 +611,174 @@ public class GraphSharePointService {
         return items;
     }
 
+    // ── Tree walk: an employee's whole folder ─────────────────────────────────
+
+    /**
+     * One file found under a walked root.
+     *
+     * @param id         the drive item id — the only handle {@link #downloadItem} accepts
+     * @param folderPath the folder holding the file, RELATIVE to the walked root ({@code ""} when
+     *                   the file sits in the root itself), segments as SharePoint spells them
+     * @param createdBy  display name of whoever put the file there, null when Graph did not say
+     */
+    public record TreeFile(String id, String name, String folderPath,
+                           String createdAt, String lastModified,
+                           String createdBy, String modifiedBy,
+                           Long sizeBytes, String webUrl) {}
+
+    /**
+     * @param resolvedRoot the root as SharePoint really spells it (after lenient resolution)
+     * @param truncated    true when {@code maxItems} or {@code maxDepth} cut the walk short — the
+     *                     caller must say so, or a capped list reads as "this is everything"
+     */
+    public record TreeListing(String resolvedRoot, java.util.List<TreeFile> files, boolean truncated) {}
+
+    /**
+     * Every file under {@code rootPath}, down to {@code maxDepth} folder levels.
+     *
+     * <p>Breadth-first, one Graph call per folder. There is no cheaper way on a SharePoint
+     * document library: {@code /delta} is only offered at the drive root, and search is
+     * eventually consistent and drops recently filed items. The caller is expected to cache the
+     * result — an employee folder is typically 10–25 folders.
+     *
+     * <p>Same posture as {@link #listFilesOrFail}: {@code Optional.empty()} means "could not
+     * look" (unconfigured, root missing, Graph failure), an empty listing means "looked, nothing
+     * there".
+     */
+    public java.util.Optional<TreeListing> listTree(String rootPath, int maxDepth, int maxItems) {
+        if (!isConfigured() || rootPath == null || rootPath.isBlank()) return java.util.Optional.empty();
+        try {
+            String token  = getAccessToken();
+            String siteId = getSiteId(token);
+            String root = resolveLeniently(token, siteId, rootPath);
+            if (!folderExists(token, siteId, root)) return java.util.Optional.empty();
+
+            java.util.List<TreeFile> files = new java.util.ArrayList<>();
+            java.util.ArrayDeque<String[]> queue = new java.util.ArrayDeque<>(); // {relative, depth}
+            queue.add(new String[] { "", "0" });
+            boolean truncated = false;
+
+            while (!queue.isEmpty()) {
+                String[] next = queue.poll();
+                String relative = next[0];
+                int depth = Integer.parseInt(next[1]);
+                String absolute = relative.isEmpty() ? root : root + "/" + relative;
+
+                for (TreeChild child : listTreeChildren(token, siteId, absolute)) {
+                    if (child.name() == null) continue;
+                    String childRelative = relative.isEmpty() ? child.name() : relative + "/" + child.name();
+                    if (child.folder() != null) {
+                        if (depth + 1 < maxDepth) {
+                            queue.add(new String[] { childRelative, String.valueOf(depth + 1) });
+                        } else {
+                            truncated = true;
+                        }
+                        continue;
+                    }
+                    if (files.size() >= maxItems) {
+                        truncated = true;
+                        break;
+                    }
+                    files.add(new TreeFile(child.id(), child.name(), relative,
+                            child.createdDateTime(), child.lastModifiedDateTime(),
+                            displayName(child.createdBy()), displayName(child.lastModifiedBy()),
+                            child.size(), child.webUrl()));
+                }
+                if (files.size() >= maxItems) {
+                    truncated = truncated || !queue.isEmpty();
+                    break;
+                }
+            }
+            if (truncated) {
+                log.info("Parcours SharePoint de {} tronque ({} fichiers, profondeur max {})",
+                        root, files.size(), maxDepth);
+            }
+            return java.util.Optional.of(new TreeListing(root, files, truncated));
+        } catch (Exception e) {
+            log.warn("Echec du parcours SharePoint de {}: {}", rootPath, e.getMessage());
+            return java.util.Optional.empty();
+        }
+    }
+
+    /**
+     * Bytes of one drive item, addressed by id.
+     *
+     * <p><b>Performs no authorisation.</b> An item id reaches any file on the site, so the caller
+     * must first prove the id belongs to a listing it built itself for the right employee —
+     * {@code DocumentHistoryService} does exactly that. Never pass a client-supplied id here
+     * unchecked.
+     */
+    public java.util.Optional<byte[]> downloadItem(String itemId) {
+        if (!isConfigured() || itemId == null || !itemId.matches("[A-Za-z0-9!_\\-]{1,200}")) {
+            return java.util.Optional.empty();
+        }
+        try {
+            String token  = getAccessToken();
+            String siteId = getSiteId(token);
+            return java.util.Optional.ofNullable(restClient.get()
+                    .uri(URI.create(GRAPH_BASE + "/sites/" + siteId + "/drive/items/"
+                                    + UriUtils.encodePathSegment(itemId, StandardCharsets.UTF_8)
+                                    + "/content"))
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(byte[].class));
+        } catch (Exception e) {
+            log.warn("Echec du telechargement SharePoint de l'element {}: {}", itemId, e.getMessage());
+            return java.util.Optional.empty();
+        }
+    }
+
+    /**
+     * {@link #listChildren} with the extra fields the history needs (id, creation, authors).
+     * A separate method rather than a wider {@code $select} on the shared one: every other
+     * caller of {@code listChildren} runs on hot paths (avatars, uploads) that do not need them.
+     */
+    private java.util.List<TreeChild> listTreeChildren(String token, String siteId, String parentPath) {
+        String select = "?$select=id,name,folder,createdDateTime,lastModifiedDateTime,size,webUrl,"
+                        + "createdBy,lastModifiedBy&$top=200";
+        URI url = parentPath.isEmpty()
+                ? URI.create(GRAPH_BASE + "/sites/" + siteId + "/drive/root/children" + select)
+                : driveUri(siteId, parentPath, ":/children" + select);
+        java.util.List<TreeChild> items = new java.util.ArrayList<>();
+        while (url != null) {
+            TreeChildrenResponse page;
+            try {
+                page = restClient.get()
+                        .uri(url)
+                        .header("Authorization", "Bearer " + token)
+                        .retrieve()
+                        .body(TreeChildrenResponse.class);
+            } catch (HttpClientErrorException.NotFound missing) {
+                return items;
+            }
+            if (page == null || page.value() == null) break;
+            items.addAll(page.value());
+            url = page.nextLink() == null ? null : URI.create(page.nextLink());
+        }
+        return items;
+    }
+
+    private static String displayName(IdentitySet set) {
+        return set == null || set.user() == null ? null : set.user().displayName();
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record TreeChildrenResponse(
+            java.util.List<TreeChild> value,
+            @JsonProperty("@odata.nextLink") String nextLink) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record TreeChild(String id, String name, Map<String, Object> folder,
+                             String createdDateTime, String lastModifiedDateTime,
+                             Long size, String webUrl,
+                             IdentitySet createdBy, IdentitySet lastModifiedBy) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record IdentitySet(Identity user) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record Identity(String displayName) {}
+
     // ── URL building ──────────────────────────────────────────────────────────
     //
     // Every drive call in this class addresses an item by path: `/drive/root:/{path}:/children`.
