@@ -38,6 +38,7 @@ public class ReferenceDataService {
     private final BankRepository         bankRepo;
     private final NationalityRepository  natRepo;
     private final ItAssetTypeRepository  assetTypeRepo;
+    private final ContractTypeRepository contractTypeRepo;
 
     // ── Grades ────────────────────────────────────────────────────────────────
 
@@ -251,6 +252,24 @@ public class ReferenceDataService {
                 .id(a.getId()).code(a.getCode())
                 .labelFr(a.getLabelFr()).labelEn(a.getLabelEn())
                 .sortOrder(a.getSortOrder()).isActive(a.getIsActive())
+                .build();
+    }
+
+    // ── Contract Types (per-country; read-only — no admin UI yet, seeded via migration) ──
+
+    @Transactional(readOnly = true)
+    public List<RefDataItemDto> getContractTypes(Collection<Long> paysIds) {
+        var list = (paysIds != null)
+                ? contractTypeRepo.findByPaysIdInAndIsActiveTrueOrderByDisplayOrderAsc(paysIds)
+                : contractTypeRepo.findByIsActiveTrueOrderByDisplayOrderAsc();
+        return list.stream().map(this::toContractTypeDto).collect(Collectors.toList());
+    }
+
+    private RefDataItemDto toContractTypeDto(ContractType c) {
+        return RefDataItemDto.builder()
+                .id(c.getId()).paysId(c.getPaysId())
+                .code(c.getCode()).labelFr(c.getLabelFr()).labelEn(c.getLabelEn())
+                .sortOrder(c.getDisplayOrder()).isActive(c.getIsActive())
                 .build();
     }
 

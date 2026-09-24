@@ -231,6 +231,14 @@ public class ReferenceDataController {
         return ResponseEntity.noContent().build();
     }
 
+    // ── Contract Types (per-country; read-only — no admin UI yet) ────────────
+
+    @GetMapping("/contract-types")
+    @PreAuthorize("isAuthenticated()")
+    public List<RefDataItemDto> getContractTypes(@RequestParam(required = false) Long paysId) {
+        return refService.getContractTypes(readableP(paysId));
+    }
+
     // ── Entity (pays) timezones ───────────────────────────────────────────────
     //
     // The clock an entity's employees work on. Everything in the pointage module compares
