@@ -105,6 +105,13 @@ app:
   ms-graph-client-secret: ${MS_GRAPH_CLIENT_SECRET:}
   sharepoint-site-hostname: ${SHAREPOINT_SITE_HOSTNAME:pinigroup.sharepoint.com}
   sharepoint-site-path: ${SHAREPOINT_SITE_PATH:/sites/pini-tunisia}
+  # Profile page "Historique documents" tab (DocumentHistoryService): walks every employee root
+  # (contracts tree + payroll tree), one Graph call per folder, cached per profile.
+  sharepoint:
+    history:
+      max-depth: ${SHAREPOINT_HISTORY_MAX_DEPTH:4}
+      max-items: ${SHAREPOINT_HISTORY_MAX_ITEMS:1000}
+      cache-ttl-minutes: ${SHAREPOINT_HISTORY_CACHE_TTL_MINUTES:10}
 
 mail:
   enabled: ${MAIL_ENABLED:false}
