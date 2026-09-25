@@ -68,6 +68,19 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /**
+     * A controller that throws {@code ResponseStatusException} chose its own status — the
+     * internal endpoints' 403 on a wrong X-Internal-Key, for one. Without this it fell into
+     * the generic handler below and came out as a 500, which made a key mismatch between
+     * services look like an RH crash.
+     */
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ProblemDetail handleResponseStatus(org.springframework.web.server.ResponseStatusException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(ex.getStatusCode(), ex.getReason());
+        pd.setProperty("code", "HTTP_" + ex.getStatusCode().value());
+        return pd;
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGeneric(Exception ex) {
         log.error("Unexpected error", ex);
