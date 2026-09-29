@@ -16,7 +16,9 @@ import com.daf360.rh.service.pdf.PdfDocumentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -235,21 +237,32 @@ public class EmployeeRequestService {
     @Transactional(readOnly = true)
     public Page<RequestResponseDto> listRequests(RequestFilterDto filter, Pageable pageable) {
         if (filter.getProfileId() != null && filter.getStatus() != null) {
-            return requestRepo.findByEmployeeProfileIdAndStatusOrderByCreatedAtDesc(
-                    filter.getProfileId(), filter.getStatus(), pageable)
+            return requestRepo.findByEmployeeProfileIdAndStatus(
+                    filter.getProfileId(), filter.getStatus(), withDefaultSort(pageable))
                     .map(r -> toDto(r, safeType(r.getRequestTypeId())));
         }
         if (filter.getProfileId() != null) {
-            return requestRepo.findByEmployeeProfileIdOrderByCreatedAtDesc(
-                    filter.getProfileId(), pageable)
+            return requestRepo.findByEmployeeProfileId(
+                    filter.getProfileId(), withDefaultSort(pageable))
                     .map(r -> toDto(r, safeType(r.getRequestTypeId())));
         }
         if (filter.getPaysId() != null && filter.getStatus() != null) {
-            return requestRepo.findByPaysIdAndStatusOrderByCreatedAtDesc(
-                    filter.getPaysId(), filter.getStatus(), pageable)
+            return requestRepo.findByPaysIdAndStatus(
+                    filter.getPaysId(), filter.getStatus(), withDefaultSort(pageable))
                     .map(r -> toDto(r, safeType(r.getRequestTypeId())));
         }
         return requestRepo.findAll(pageable).map(r -> toDto(r, safeType(r.getRequestTypeId())));
+    }
+
+    /**
+     * The caller's ?sort= when it sent one, else the order these three filtered paths always had:
+     * newest first. (The unfiltered findAll path had no fixed order and still has none.)
+     */
+    private static Pageable withDefaultSort(Pageable pageable) {
+        return pageable.getSort().isSorted()
+                ? pageable
+                : PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+                        Sort.by(Sort.Direction.DESC, "createdAt"));
     }
 
     @Transactional(readOnly = true)
