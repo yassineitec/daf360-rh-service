@@ -14,9 +14,12 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * The account register behind Administration → Utilisateurs.
@@ -43,12 +46,28 @@ public class AdminUserService {
                u.isActive, u.is_employee, u.last_login_at, u.azure_oid,
                u.pays_id, p.french_label AS pays_label,
                u.role_id, r.frenchName AS role_label,
-               ep.id AS profile_id, ep.lifecycle_status
+               u.soldeConge, u.soldeMaladie, u.soldeTeletravail,
+               -- photo_url + gender feed the avatar; hire_date is the one extra fact this
+               -- screen can show without a second join. `department` and `grade` are NOT here:
+               -- they live on RSS_employee_profiles, a different table, and pulling them in
+               -- would mean a join whose semantics this screen has never needed.
+               ep.id AS profile_id, ep.lifecycle_status,
+               ep.photo_url, ep.gender, ep.hire_date
         FROM [dbo].[Users] u
         LEFT JOIN [dbo].[pays] p  ON p.id = u.pays_id
         LEFT JOIN [dbo].[Roles] r ON r.id = u.role_id
         LEFT JOIN [dbo].[employee_profiles] ep ON ep.user_id = u.id AND ep.deleted = 0
         """;
+
+    /**
+     * The three leave allowances, and the only columns this service will write on them.
+     *
+     * An allow-list rather than a field name taken from the request: the value goes into an
+     * UPDATE, and the set of balances is fixed by the schema. A fourth allowance would be a
+     * deliberate edit here, not something a caller can reach by naming a new column.
+     */
+    private static final Set<String> BALANCE_COLUMNS =
+            Set.of("soldeConge", "soldeMaladie", "soldeTeletravail");
 
     private static final String INSERT_SQL =
         "INSERT INTO [dbo].[Users] " +
@@ -214,7 +233,87 @@ public class AdminUserService {
         r.setProfileId(rs.wasNull() ? null : profileId);
         r.setHasProfile(r.getProfileId() != null);
         r.setLifecycleStatus(rs.getString("lifecycle_status"));
+        r.setPhotoUrl(rs.getString("photo_url"));
+        r.setGender(rs.getString("gender"));
+        r.setHireDate(rs.getObject("hire_date", LocalDate.class));
+        // Read as objects: these are nullable floats and 135 of 260 users have none recorded.
+        // getDouble() would turn every one of those into 0.0 — telling half the company they
+        // have no leave left, which is a different statement from "not set".
+        r.setSoldeConge(rs.getObject("soldeConge", Double.class));
+        r.setSoldeMaladie(rs.getObject("soldeMaladie", Double.class));
+        r.setSoldeTeletravail(rs.getObject("soldeTeletravail", Double.class));
         return r;
+    }
+
+    // ── Balances ──────────────────────────────────────────────────────────────
+
+    /**
+     * Set an employee's leave allowances.
+     *
+     * NULL IS A REAL VALUE HERE and is preserved on the way in as well as out: clearing a
+     * balance back to "not recorded" is a different act from setting it to zero, and only the
+     * second one says "you have none left".
+     *
+     * Each balance is written only when the caller sent it, so a screen that edits one does
+     * not silently blank the other two by omitting them.
+     *
+     * Logged with the previous value: this grants or removes leave, and "who changed it from
+     * what" is the first question anyone asks afterwards.
+     */
+    @Transactional
+    public AdminUserRow updateBalances(Long userId, Map<String, Double> balances, Long actorId) {
+        AdminUserRow before = byId(userId);
+        if (before == null) {
+            throw new AppException(ErrorCode.NOT_FOUND, "Utilisateur introuvable : " + userId);
+        }
+
+        List<String> sets = new ArrayList<>();
+        List<Object> args = new ArrayList<>();
+        for (Map.Entry<String, Double> e : balances.entrySet()) {
+            if (!BALANCE_COLUMNS.contains(e.getKey())) {
+                throw new AppException(ErrorCode.INVALID_TRANSITION, "Solde inconnu : " + e.getKey());
+            }
+            if (e.getValue() != null && e.getValue() < 0) {
+                throw new AppException(ErrorCode.INVALID_TRANSITION,
+                        "Un solde ne peut pas être négatif : " + e.getKey());
+            }
+            // Bracketed, never interpolated from the request: the key has already been matched
+            // against BALANCE_COLUMNS, so only those three literals can reach the statement.
+            //
+            // NULL IS WRITTEN AS A LITERAL, NOT AS A PARAMETER. Spring hands an untyped null
+            // to `setNull(i, Types.NULL)`, which the SQL Server driver rejects — so clearing a
+            // balance back to "not recorded" failed with a 500 while setting one worked. The
+            // literal is safe here for the same reason the column name is: neither comes from
+            // the request, only from this method.
+            if (e.getValue() == null) {
+                sets.add("[" + e.getKey() + "] = NULL");
+            } else {
+                sets.add("[" + e.getKey() + "] = ?");
+                args.add(e.getValue());
+            }
+        }
+        if (sets.isEmpty()) {
+            return before;
+        }
+
+        args.add(userId);
+        jdbc.update("UPDATE [dbo].[Users] SET " + String.join(", ", sets) + " WHERE id = ?",
+                args.toArray());
+
+        log.info("Balances of user {} changed by {}: congé {} -> {}, maladie {} -> {}, télétravail {} -> {}",
+                userId, actorId,
+                before.getSoldeConge(), balances.getOrDefault("soldeConge", before.getSoldeConge()),
+                before.getSoldeMaladie(), balances.getOrDefault("soldeMaladie", before.getSoldeMaladie()),
+                before.getSoldeTeletravail(), balances.getOrDefault("soldeTeletravail", before.getSoldeTeletravail()));
+
+        return byId(userId);
+    }
+
+    /** One row by id, for the before/after around a balance change. */
+    @Transactional(readOnly = true)
+    public AdminUserRow byId(Long userId) {
+        List<AdminUserRow> rows = jdbc.query(LIST_SQL + " WHERE u.id = ?", this::mapRow, userId);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     // ── DTOs ──────────────────────────────────────────────────────────────────
@@ -239,6 +338,17 @@ public class AdminUserService {
         private Long profileId;
         private boolean hasProfile;
         private String lifecycleStatus;
+        /** Feeds the avatar, exactly as the congé screens do — see LeaveRequestMapper.Face. */
+        private String photoUrl;
+        private String gender;
+        private LocalDate hireDate;
+        /**
+         * Leave allowances, in days. NULLABLE and meaningfully so: 135 of 260 users have no
+         * congé balance recorded, and "not set" is not "none remaining".
+         */
+        private Double soldeConge;
+        private Double soldeMaladie;
+        private Double soldeTeletravail;
     }
 
     @Data

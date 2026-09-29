@@ -99,6 +99,26 @@ public class AdminUserController {
      * Le jeton de l'appelant est transmis tel quel : chaque module applique ses propres
      * regles d'acces (celui de la paie exige SUPER_ADMIN, cf. ModuleSyncService).
      */
+    /**
+     * Set an employee's leave allowances.
+     *
+     * UPDATE_USER, not SETTLE_LEAVES: these are columns on `Users`, edited from the user
+     * register, by the same people who can already deactivate an account outright — a larger
+     * act than changing a day count. Narrowing it to SETTLE_LEAVES is a one-line change here
+     * if the two should be separated later.
+     *
+     * A body naming no balance is accepted and writes nothing: the screen may submit only the
+     * field it edited, and an empty submit is a no-op rather than an error.
+     */
+    @PatchMapping("/{id}/balances")
+    @PreAuthorize("hasPermission(null, 'UPDATE_USER')")
+    public ResponseEntity<AdminUserService.AdminUserRow> updateBalances(
+            @PathVariable Long id,
+            @RequestBody Map<String, Double> balances,
+            Authentication auth) {
+        return ResponseEntity.ok(service.updateBalances(id, balances, actorId(auth)));
+    }
+
     @PostMapping("/propagate")
     @PreAuthorize("hasPermission(null, 'UPDATE_USER')")
     public ResponseEntity<List<ModuleSyncService.ModuleSyncResult>> propagate(
