@@ -20,7 +20,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDate;
 import java.util.List;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -48,8 +50,15 @@ public class CandidateController {
             @RequestParam(required = false) String stage,
             @RequestParam(required = false) Long paysId,
             @RequestParam(required = false) String search,
+            @RequestParam(required = false) Long departmentId,
+            @RequestParam(required = false) Long demandId,
+            @RequestParam(defaultValue = "false") boolean spontaneous,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate createdFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate createdTo,
             @PageableDefault(size = 12) Pageable pageable) {
-        return candidateService.listCandidates(status, stage, paysId, search, pageable);
+        return candidateService.listCandidates(status, stage, paysId, search,
+                new CandidateListFilter(departmentId, demandId, spontaneous, createdFrom, createdTo),
+                pageable);
     }
 
     /** KPI tiles for the /candidates dashboard (total + growth, avg delay, urgent positions). */
