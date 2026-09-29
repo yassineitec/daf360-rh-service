@@ -20,7 +20,9 @@ public enum NotificationEntityType {
     IT_PROVISIONING,
     REQUEST,
     RECRUITMENT_DEMAND,
-    CONTRACT;
+    CONTRACT,
+    /** An avance sur salaire (V103) — resolved by the frontend to the desk that can act on it. */
+    SALARY_ADVANCE;
 
     /**
      * Parses a stored/configured value, tolerating null, blank and unknown names.
