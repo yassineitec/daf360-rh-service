@@ -45,6 +45,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -90,6 +92,8 @@ public class CandidateService {
     private final com.daf360.rh.lists.ConfigurableListTypeRepository listTypeRepo;
     /** Equipment ledger (V76) — seeded here too, see hireCandidate. */
     private final ItAssetAssignmentService        assetAssignmentService;
+    /** Entity timezone — reads the recruitment list's date filter as local calendar days. */
+    private final PaysTimezoneService             paysTimezoneService;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -313,14 +317,27 @@ public class CandidateService {
 
     @Transactional(readOnly = true)
     public Page<CandidateListItem> listCandidates(CandidateStatus status, String stage,
-                                                   Long paysId, String search, Pageable pageable) {
+                                                   Long paysId, String search,
+                                                   CandidateListFilter filter, Pageable pageable) {
         // Enforce tenant isolation: non-admin users can only see their own entity's candidates.
         Long effectivePaysId = tenantService.getEffectivePaysId();
         Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : paysId;
 
+        // Calendar days as the entity sees them; UTC when the entity has no zone (or the
+        // admin views every entity). `createdTo` is inclusive, so the bound is the next day.
+        ZoneId zone = resolvedPaysId != null ? paysTimezoneService.zoneFor(resolvedPaysId) : null;
+        if (zone == null) zone = ZoneOffset.UTC;
+        OffsetDateTime createdFrom = filter.createdFrom() == null ? null
+                : filter.createdFrom().atStartOfDay(zone).toOffsetDateTime();
+        OffsetDateTime createdTo = filter.createdTo() == null ? null
+                : filter.createdTo().plusDays(1).atStartOfDay(zone).toOffsetDateTime();
+        Long demandId = filter.spontaneous() ? null : filter.demandId();
+
         Page<Candidate> page = (stage != null && !stage.isBlank())
-                ? candidateRepo.searchByStatusesAndSearch(stageToStatuses(stage), resolvedPaysId, search, pageable)
-                : candidateRepo.searchPaged(status, resolvedPaysId, search, pageable);
+                ? candidateRepo.searchByStatusesAndSearch(stageToStatuses(stage), resolvedPaysId, search,
+                        filter.departmentId(), demandId, filter.spontaneous(), createdFrom, createdTo, pageable)
+                : candidateRepo.searchPaged(status, resolvedPaysId, search,
+                        filter.departmentId(), demandId, filter.spontaneous(), createdFrom, createdTo, pageable);
 
         Map<Long, String> contractLabels = resolveEmploymentTypeLabels(page.getContent());
         Map<Long, CandidateInterview> nextInterviews = resolveNextInterviews(page.getContent());
