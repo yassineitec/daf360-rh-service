@@ -210,9 +210,10 @@ public class LeaveRequestController {
                                             @RequestParam(required = false) Long collaborateurId,
                                             @RequestParam(required = false) String type,
                                             @RequestParam(required = false) String search,
+                                            @RequestParam(required = false) List<Long> ids,
                                             Authentication auth) {
         return service.bulkApprove(actorId(auth), from, to, collaborateurId, type, search,
-                canSettle(auth));
+                ids, canSettle(auth));
     }
 
     // ═══ Team and country ════════════════════════════════════════════════════

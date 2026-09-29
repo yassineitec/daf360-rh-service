@@ -32,5 +32,15 @@ public record LeaveTypeOptionDto(
         /** Which balance it draws on — CONGE or MALADIE — or null when it draws on none. */
         String balanceField,
         boolean requiresJustification,
-        Integer maxDays
+        Integer maxDays,
+        /**
+         * The scheduling rules that apply to this type, RESOLVED — the type's own value, or
+         * the country's when the type leaves it unset. Sent resolved rather than raw so the
+         * form can state the rule it will be judged by instead of re-deriving the fallback.
+         * Null or 0 means no rule.
+         */
+        Integer advanceNoticeDays,
+        Integer leaveGapDays,
+        /** What this type is for, in a sentence, or null. */
+        String description
 ) {}

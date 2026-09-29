@@ -52,6 +52,23 @@ public class AbsenceTypeUpsert {
     @Min(1)
     private Integer maxDays;
 
+    /**
+     * Working days of notice required before the leave starts (V109).
+     *
+     * Null leaves the country default in force; 0 disables the rule for this type outright.
+     * The two are different answers and the admin screen keeps them apart.
+     */
+    @Min(value = 0, message = "Le préavis ne peut pas être négatif")
+    private Integer advanceNoticeDays;
+
+    /** Working days required after an existing leave before the next may start (V109). */
+    @Min(value = 0, message = "Le délai entre deux congés ne peut pas être négatif")
+    private Integer leaveGapDays;
+
+    /** What this type is for, in a sentence. Shown wherever the type is chosen. */
+    @Size(max = 1000, message = "L'explication ne peut pas dépasser 1000 caractères")
+    private String description;
+
     @Min(0)
     private int displayOrder = 0;
 

@@ -1,7 +1,12 @@
 package com.daf360.rh.controller;
 
 import com.daf360.rh.dto.ref.CreateRefDataRequest;
+import com.daf360.rh.dto.ref.PaysSchedulingDto;
 import com.daf360.rh.dto.ref.PaysTimezoneDto;
+import com.daf360.rh.dto.ref.UpdatePaysSchedulingRequest;
+import com.daf360.rh.service.PaysSchedulingService;
+import jakarta.validation.Valid;
+import org.springframework.security.core.Authentication;
 import com.daf360.rh.dto.ref.RefDataItemDto;
 import com.daf360.rh.dto.ref.TimezoneOptionDto;
 import com.daf360.rh.dto.ref.UpdateGradeNoticePeriodRequest;
@@ -28,6 +33,7 @@ import java.util.Map;
 public class ReferenceDataController {
 
     private final ReferenceDataService refService;
+    private final PaysSchedulingService paysSchedulingService;
     private final PaysTimezoneService  paysTimezoneService;
     private final TenantService        tenantService;
     private final JdbcTemplate         jdbc;
@@ -267,6 +273,45 @@ public class ReferenceDataController {
                                                    @RequestBody UpdatePaysTimezoneRequest req) {
         paysTimezoneService.setTimezone(id, req.getTimezone());
         return ResponseEntity.noContent().build();
+    }
+
+    // ── Entity (pays) working calendar ────────────────────────────────────────
+    //
+    // Which days are an entity's weekend, plus the two leave-scheduling delays that every
+    // leave type inherits unless it sets its own (V109).
+    //
+    // `pays_weekends` had FIVE readers and no writer: the congé day-count, the presence
+    // automation, the break deduction, the regime resolver and the holiday service all consult
+    // it, and it silently falls back to Saturday/Sunday when a country has no rows. Until this
+    // endpoint, changing it meant hand-written SQL.
+
+    /** Entities worth configuring — those with employees, or with configuration already. */
+    @GetMapping("/pays/scheduling")
+    @PreAuthorize("hasAnyAuthority('ADMIN_REGIMES', 'ADMIN_LISTS', 'GET_PAYS')")
+    public List<PaysSchedulingDto> getPaysScheduling() {
+        return paysSchedulingService.list();
+    }
+
+    /**
+     * Replaces an entity's weekend and its two default delays.
+     *
+     * Same gate as the timezone endpoint above, and for the same reason: whoever configures
+     * the hours an entity works must be able to configure which days it works at all. Both
+     * settings are edited from the same administration screen.
+     */
+    @PutMapping("/pays/{id}/scheduling")
+    @PreAuthorize("hasAnyAuthority('ADMIN_REGIMES', 'ADMIN_LISTS')")
+    public PaysSchedulingDto updatePaysScheduling(@PathVariable Long id,
+                                                  @Valid @RequestBody UpdatePaysSchedulingRequest req,
+                                                  Authentication auth) {
+        return paysSchedulingService.update(id, req, actorIdOrNull(auth));
+    }
+
+    /** Best-effort actor for the audit line; a missing or odd principal must not fail a save. */
+    private Long actorIdOrNull(Authentication auth) {
+        if (auth == null || auth.getPrincipal() == null) return null;
+        try { return Long.valueOf(auth.getPrincipal().toString()); }
+        catch (NumberFormatException e) { return null; }
     }
 
     // ── Diagnostic (remove after debug) ──────────────────────────────────────

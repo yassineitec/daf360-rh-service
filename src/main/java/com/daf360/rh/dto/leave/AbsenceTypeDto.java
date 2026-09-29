@@ -23,6 +23,12 @@ public record AbsenceTypeDto(
         boolean includedInHrStats,
         boolean requiresJustification,
         Integer maxDays,
+        /** Working days of notice required before the leave starts. Null/0 = no rule (V109). */
+        Integer advanceNoticeDays,
+        /** Working days required between an existing leave's last day and the next (V109). */
+        Integer leaveGapDays,
+        /** What this type is for, in a sentence — shown wherever the type is chosen. */
+        String description,
         int displayOrder,
         String allowedGender,
         boolean managerCanView,

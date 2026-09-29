@@ -127,6 +127,30 @@ public class AbsenceType {
     @Column(name = "display_order", nullable = false)
     private Integer displayOrder;
 
+    /**
+     * Working days that must sit between today and the first day of the leave (V109).
+     *
+     * Null or 0 means no rule. Falls back to {@code pays.advance_notice_days} when null, so a
+     * country-wide policy still works and a type only overrides where it differs — annual
+     * leave is planned weeks ahead, sick leave is declared the morning it happens.
+     */
+    @Column(name = "advance_notice_days")
+    private Integer advanceNoticeDays;
+
+    /**
+     * Working days that must sit between the last day of an existing leave and the first day
+     * of the next one (V109). Same null/0/fallback rules as {@link #advanceNoticeDays}.
+     */
+    @Column(name = "leave_gap_days")
+    private Integer leaveGapDays;
+
+    /**
+     * What this type is for, in a sentence — shown to the employee choosing it and to the
+     * administrator editing it. The labels name a type; this explains when to use it.
+     */
+    @Column(name = "description", length = 1000, columnDefinition = "nvarchar(1000)")
+    private String description;
+
     /** INERT — see the class comment. */
     @Enumerated(EnumType.STRING)
     @Column(name = "allowed_gender", length = 16)

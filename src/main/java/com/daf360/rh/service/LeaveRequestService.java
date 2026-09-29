@@ -88,7 +88,7 @@ public class LeaveRequestService {
         Long paysId = paysOf(userId);
         return new LeaveHeadersDto(
                 balancesOf(userId),
-                typeOptions(userId, lang),
+                typeOptions(userId, paysId, lang),
                 Arrays.stream(LeaveCategory.values())
                         .map(c -> new LeaveOptionDto(c.getLabel(lang), c.name())).toList(),
                 approvers.approversFor(userId),
@@ -153,6 +153,11 @@ public class LeaveRequestService {
 
         AbsenceType type = requireType(dto.getType());
         validateTypeRules(type, total, dto.getJustificatif());
+        // NOT applied to a régularisation: it records leave already taken, so demanding three
+        // working days' notice for a day off last month would refuse every real case.
+        if (!settle) {
+            validateScheduling(type, collaborateurId, paysId, from, to, null);
+        }
         assertBalanceAllows(collaborateurId, type, total);
 
         LeaveRequest entity = LeaveRequest.builder()
@@ -287,10 +292,32 @@ public class LeaveRequestService {
     @Transactional
     public BulkApproveResultDto bulkApprove(Long managerId, LocalDate from, LocalDate to,
                                             Long collaborateurId, String type, String search,
-                                            boolean canSettle) {
+                                            List<Long> selectedIds, boolean canSettle) {
         String term = normalise(search);
-        List<Long> ids = repository.findPendingIdsForManager(managerId, from, to, collaborateurId,
-                type, term, searchIds(term), hiddenFromManagers());
+
+        // THE FILTERED SET IS ALWAYS RESOLVED, even when the caller names ids.
+        //
+        // An explicit selection is INTERSECTED with it rather than trusted: the ids arrive
+        // from a browser, and `decide` on its own only checks that this manager may rule on a
+        // request — not that the request was one the queue would have shown. Without the
+        // intersection, a crafted id list could approve a type configured as hidden from
+        // managers, or somebody else's row. Resolving the queue costs one indexed query.
+        List<Long> visible = repository.findPendingIdsForManager(managerId, from, to,
+                collaborateurId, type, term, searchIds(term), hiddenFromManagers());
+
+        List<Long> ids;
+        if (selectedIds == null || selectedIds.isEmpty()) {
+            ids = visible;
+        } else {
+            java.util.Set<Long> allowed = new java.util.HashSet<>(visible);
+            ids = selectedIds.stream().filter(allowed::contains).toList();
+            if (ids.size() < selectedIds.size()) {
+                // Not an error: a row decided by the adjoint a moment ago legitimately drops
+                // out. Logged because a large gap means the screen and the server disagree.
+                log.info("Bulk approve by {}: {} of {} selected ids are no longer in the queue",
+                        managerId, selectedIds.size() - ids.size(), selectedIds.size());
+            }
+        }
 
         int approved = 0;
         List<BulkApproveResultDto.Failure> failures = new ArrayList<>();
@@ -306,8 +333,9 @@ public class LeaveRequestService {
                 failures.add(new BulkApproveResultDto.Failure(id, nameOf(collaborateurOf(id)), e.getMessage()));
             }
         }
-        log.info("Bulk approve by {}: {} approved, {} failed of {} pending",
-                managerId, approved, failures.size(), ids.size());
+        log.info("Bulk approve by {}: {} approved, {} failed of {} targeted ({})",
+                managerId, approved, failures.size(), ids.size(),
+                selectedIds == null || selectedIds.isEmpty() ? "whole filtered queue" : "explicit selection");
         return new BulkApproveResultDto(approved, failures.size(), failures);
     }
 
@@ -353,7 +381,7 @@ public class LeaveRequestService {
      * those that do not get null, and the form falls back to the generic manager list. The
      * distinction matters — see {@link LeaveTypeOptionDto}.
      */
-    private List<LeaveTypeOptionDto> typeOptions(Long userId, String lang) {
+    private List<LeaveTypeOptionDto> typeOptions(Long userId, Long paysId, String lang) {
         List<LeaveTypeOptionDto> out = new ArrayList<>();
         for (AbsenceType t : absenceTypes.findSelectable()) {
             int roleCount = approvers.approverRoleCount(t.getCode());
@@ -369,7 +397,10 @@ public class LeaveRequestService {
                     Boolean.TRUE.equals(t.getTracksBalance()),
                     t.getBalanceField(),
                     Boolean.TRUE.equals(t.getRequiresJustification()),
-                    t.getMaxDays()));
+                    t.getMaxDays(),
+                    schedulingRuleFor(t.getAdvanceNoticeDays(), paysId, "advance_notice_days"),
+                    schedulingRuleFor(t.getLeaveGapDays(), paysId, "leave_gap_days"),
+                    t.getDescription()));
         }
         return out;
     }
@@ -577,6 +608,74 @@ public class LeaveRequestService {
             counts.put(((DemandeEtat) row[0]).name(), ((Number) row[1]).longValue());
         }
         return counts;
+    }
+
+    // ═══ Scheduling rules ════════════════════════════════════════════════════
+
+    /**
+     * The two per-type scheduling rules, ported from the timesheet and moved onto the type.
+     *
+     *   NOTICE   the leave must start after N working days from today.
+     *   GAP      the leave must not start within N working days of an existing leave's end.
+     *
+     * Both count WORKING days — weekends and public holidays do not consume notice, which is
+     * the whole point of asking for "three days' notice" rather than "three days".
+     *
+     * Each value comes from the type, falling back to the country (V106) when the type says
+     * nothing; null or 0 at both levels means the rule is off. Nothing fires until somebody
+     * configures a value, and today every row at both levels is null.
+     *
+     * @param excludeId the request being edited, so a leave is never blocked by itself.
+     */
+    private void validateScheduling(AbsenceType type, Long collaborateurId, Long paysId,
+                                    LocalDate from, LocalDate to, Long excludeId) {
+        Integer notice = schedulingRuleFor(type.getAdvanceNoticeDays(), paysId, "advance_notice_days");
+        Integer gap    = schedulingRuleFor(type.getLeaveGapDays(),      paysId, "leave_gap_days");
+        if ((notice == null || notice <= 0) && (gap == null || gap <= 0)) {
+            return;
+        }
+
+        if (notice != null && notice > 0) {
+            LocalDate earliest = workingDays.addWorkingDays(LocalDate.now(), notice, paysId);
+            // `isAfter`, not `!isBefore`: "three working days' notice" means the leave starts
+            // after the third one, which is how the timesheet read it too.
+            if (!from.isAfter(earliest)) {
+                throw new AppException(ErrorCode.INVALID_TRANSITION,
+                        "Ce congé doit être demandé plus à l'avance : un préavis de "
+                        + notice + " jour(s) ouvré(s) est requis pour « " + type.getLabel("fr") + " ».");
+            }
+        }
+
+        if (gap != null && gap > 0) {
+            // The same pending-or-approved set the form greys out, so the rule and the picker
+            // are talking about the same leaves. A year back is plenty: a gap is measured in
+            // working days, never months.
+            for (LeaveRequest other : repository.findBlockingRanges(
+                    collaborateurId, LocalDate.now().minusYears(1))) {
+                if (excludeId != null && excludeId.equals(other.getId())) continue;
+                if (other.getDateDebut() == null || other.getDateFin() == null) continue;
+                LocalDate blockUntil = workingDays.addWorkingDays(other.getDateFin(), gap, paysId);
+                // Overlap between [from, to] and [otherStart, blockUntil] — the requested
+                // range must clear the tail of the existing leave, not merely its last day.
+                if (!from.isAfter(blockUntil) && !to.isBefore(other.getDateDebut())) {
+                    throw new AppException(ErrorCode.INVALID_TRANSITION,
+                            "Ce congé est trop proche d'un autre congé : un délai de "
+                            + gap + " jour(s) ouvré(s) est requis après le congé du "
+                            + other.getDateDebut() + " au " + other.getDateFin() + ".");
+                }
+            }
+        }
+    }
+
+    /** The type's value, or the country's when the type says nothing. */
+    private Integer schedulingRuleFor(Integer typeValue, Long paysId, String paysColumn) {
+        if (typeValue != null) return typeValue;
+        if (paysId == null) return null;
+        // One tiny read per rule, and only when the type left it unset. `paysColumn` is a
+        // literal chosen by the two call sites above, never anything from a request.
+        List<Integer> rows = jdbcTemplate.queryForList(
+                "SELECT " + paysColumn + " FROM pays WHERE id = ?", Integer.class, paysId);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     /**

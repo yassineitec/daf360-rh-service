@@ -14,6 +14,7 @@ import java.time.LocalDate;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -93,6 +94,38 @@ public class WorkingDayCalculator {
     }
 
     /** True when this date is neither weekend nor holiday in that country. */
+    /**
+     * The Nth working day after {@code from}, skipping that country's weekends and holidays.
+     *
+     * Used by the advance-notice and leave-gap rules, so that "three days' notice" means three
+     * days somebody could actually have acted on — a Friday request for a Monday start gives
+     * no notice at all if the weekend counted.
+     *
+     * `n <= 0` returns `from` unchanged, which is how a disabled rule reads.
+     *
+     * The window is resolved ONCE for the whole walk rather than per day: the old per-day
+     * lookup in the timesheet ran a query for every step.
+     */
+    public LocalDate addWorkingDays(LocalDate from, int n, Long paysId) {
+        if (from == null || n <= 0) {
+            return from;
+        }
+        Set<DayOfWeek> weekend = weekendFor(paysId);
+        // Generous upper bound: n working days can never need more than n*2 + 30 calendar
+        // days even with a long public-holiday run, and the loop stops as soon as it has n.
+        Set<LocalDate> holidays = holidaysBetween(paysId, from, from.plusDays((long) n * 2 + 30));
+
+        LocalDate cursor = from;
+        int added = 0;
+        while (added < n) {
+            cursor = cursor.plusDays(1);
+            if (weekend.contains(cursor.getDayOfWeek())) continue;
+            if (holidays.contains(cursor)) continue;
+            added++;
+        }
+        return cursor;
+    }
+
     public boolean isWorkingDay(LocalDate date, Long paysId) {
         return !weekendFor(paysId).contains(date.getDayOfWeek())
                 && !holidaysBetween(paysId, date, date).contains(date);
@@ -144,13 +177,13 @@ public class WorkingDayCalculator {
             return java.util.Map.of();
         }
         java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
-        for (Holiday h : holidayRepository.findByPaysIdAndDateHolidayBetween(paysId, from, to)) {
-            if (h.getDateHoliday() == null) continue;
+        for (Map.Entry<LocalDate, Holiday> e : occurrencesBetween(paysId, from, to).entrySet()) {
+            Holiday h = e.getValue();
             String label = "fr".equalsIgnoreCase(lang) ? h.getFrenchLabel() : h.getEnglishLabel();
             if (label == null || label.isBlank()) {
                 label = h.getFrenchLabel() != null ? h.getFrenchLabel() : h.getEnglishLabel();
             }
-            out.put(h.getDateHoliday().toString(), label == null ? "" : label);
+            out.put(e.getKey().toString(), label == null ? "" : label);
         }
         return out;
     }
@@ -160,12 +193,63 @@ public class WorkingDayCalculator {
         if (paysId == null) {
             return Set.of();
         }
-        List<Holiday> rows = holidayRepository.findByPaysIdAndDateHolidayBetween(paysId, from, to);
-        Set<LocalDate> dates = new HashSet<>(rows.size());
-        for (Holiday h : rows) {
-            if (Boolean.TRUE.equals(h.getDeleted())) continue;
-            if (h.getDateHoliday() != null) dates.add(h.getDateHoliday());
+        return occurrencesBetween(paysId, from, to).keySet();
+    }
+
+    /**
+     * Every date in [from, to] that is a public holiday, mapped to the row that says so.
+     *
+     * RECURRENCE IS RESOLVED HERE, AND IT USED NOT TO BE.
+     * -------------------------------------------------------------------------------------
+     * `is_recurring` is labelled « Récurrent (chaque année) » in the admin screen, was stored
+     * and edited — and read by nothing. Every query matched `date_holiday BETWEEN ? AND ?`,
+     * so a holiday entered once for 2026 simply stopped existing on 1 January 2027 and every
+     * employee was charged a leave day for it. The data shows the workaround: Albania carries
+     * nine recurring rows dated 2025 and three dated 2026, re-entered by hand.
+     *
+     * A recurring row now means the same MONTH AND DAY of every year from its own year
+     * onward. Not before it: a holiday created in 2026 did not exist in 2024, and back-dating
+     * it would silently re-cost leave already taken and approved.
+     *
+     * 29 FEBRUARY falls back to 28 February in a common year. The alternative — skipping it —
+     * would quietly drop the holiday three years in four.
+     *
+     * Non-recurring rows keep matching on their exact date, which is right: Eid and Mawlid
+     * move with the lunar calendar, and the Egyptian data already marks them accordingly.
+     */
+    private Map<LocalDate, Holiday> occurrencesBetween(Long paysId, LocalDate from, LocalDate to) {
+        if (paysId == null || from == null || to == null || to.isBefore(from)) {
+            return Map.of();
         }
-        return dates;
+        Map<LocalDate, Holiday> out = new java.util.LinkedHashMap<>();
+
+        // The whole country's holidays, not a date slice: a recurring row dated 2020 has to be
+        // reachable when the window is 2027, and a BETWEEN on the stored date never finds it.
+        for (Holiday h : holidayRepository.findByPaysId(paysId)) {
+            if (Boolean.TRUE.equals(h.getDeleted())) continue;
+            LocalDate stored = h.getDateHoliday();
+            if (stored == null) continue;
+
+            if (!Boolean.TRUE.equals(h.getIsRecurring())) {
+                if (!stored.isBefore(from) && !stored.isAfter(to)) out.putIfAbsent(stored, h);
+                continue;
+            }
+
+            int firstYear = Math.max(stored.getYear(), from.getYear());
+            for (int year = firstYear; year <= to.getYear(); year++) {
+                LocalDate occurrence = occurrenceIn(stored, year);
+                if (!occurrence.isBefore(from) && !occurrence.isAfter(to)) {
+                    out.putIfAbsent(occurrence, h);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** The stored day-and-month placed in {@code year}, clamped for 29 February. */
+    private LocalDate occurrenceIn(LocalDate stored, int year) {
+        int day = Math.min(stored.getDayOfMonth(),
+                           java.time.YearMonth.of(year, stored.getMonth()).lengthOfMonth());
+        return LocalDate.of(year, stored.getMonth(), day);
     }
 }

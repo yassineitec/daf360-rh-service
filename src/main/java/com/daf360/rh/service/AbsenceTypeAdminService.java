@@ -179,6 +179,13 @@ public class AbsenceTypeAdminService {
         t.setIncludedInHrStats(dto.isIncludedInHrStats());
         t.setRequiresJustification(dto.isRequiresJustification());
         t.setMaxDays(dto.getMaxDays());
+        // Null is preserved rather than coerced to 0: null means "use the country default",
+        // 0 means "no rule for this type". Collapsing them would silently disable a
+        // country-wide policy the administrator never touched.
+        t.setAdvanceNoticeDays(dto.getAdvanceNoticeDays());
+        t.setLeaveGapDays(dto.getLeaveGapDays());
+        t.setDescription(dto.getDescription() == null || dto.getDescription().isBlank()
+                ? null : dto.getDescription().trim());
         t.setDisplayOrder(dto.getDisplayOrder());
         t.setManagerCanView(dto.isManagerCanView());
         t.setAllowedGender(dto.getAllowedGender() == null || dto.getAllowedGender().isBlank()
@@ -256,6 +263,9 @@ public class AbsenceTypeAdminService {
                 Boolean.TRUE.equals(t.getIncludedInHrStats()),
                 Boolean.TRUE.equals(t.getRequiresJustification()),
                 t.getMaxDays(),
+                t.getAdvanceNoticeDays(),
+                t.getLeaveGapDays(),
+                t.getDescription(),
                 t.getDisplayOrder() == null ? 0 : t.getDisplayOrder(),
                 t.getAllowedGender() == null ? null : t.getAllowedGender().name(),
                 Boolean.TRUE.equals(t.getManagerCanView()),
