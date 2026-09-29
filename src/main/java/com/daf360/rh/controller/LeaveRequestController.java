@@ -9,6 +9,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Congés, for every desk that touches them.
@@ -101,6 +103,21 @@ public class LeaveRequestController {
         return service.typeCatalogue(lang);
     }
 
+    /**
+     * The catalogue's decision-relevant rules: which balance each type draws on.
+     *
+     * Deliberately NOT on the admin controller. Which allowance a congé costs is what an
+     * approver is deciding about, so gating it on CREATE_ABSENCE_TYPE would hide it from
+     * everyone who actually needs it. What stays administrative is the rest of the
+     * configuration — who may approve, what is hidden from managers, the day caps.
+     */
+    @GetMapping("/type-rules")
+    @PreAuthorize("hasAuthority('GET_LEAVES') or hasAuthority('RESPONSE_LEAVE') "
+            + "or hasAuthority('GET_GLOBAL_LEAVES')")
+    public List<Map<String, Object>> typeRules() {
+        return service.typeBalanceFields();
+    }
+
     // ═══ The employee's own ══════════════════════════════════════════════════
 
     @PostMapping
@@ -151,13 +168,24 @@ public class LeaveRequestController {
                                      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                      @RequestParam(required = false) Long collaborateurId,
                                      @RequestParam(required = false) String type,
+                                     @RequestParam(required = false) String search,
+                                     @RequestParam(required = false) String sort,
+                                     @RequestParam(defaultValue = "desc") String dir,
                                      @RequestParam(defaultValue = "0") int page,
                                      @RequestParam(defaultValue = "10") int size,
                                      @RequestParam(defaultValue = "fr") String lang,
                                      Authentication auth) {
         Page<LeaveRequest> rows = service.managerQueue(
-                actorId(auth), etat, from, to, collaborateurId, type, PageRequest.of(page, size));
+                actorId(auth), etat, from, to, collaborateurId, type, search,
+                PageRequest.of(page, size, sortOf(sort, dir, "createdAt")));
         return pageResponse(rows, lang);
+    }
+
+    /** KPI counts for the queue — the whole queue, not the page the table is showing. */
+    @GetMapping("/queue/counts")
+    @PreAuthorize("hasAuthority('GET_LEAVES')")
+    public Map<String, Long> queueCounts(Authentication auth) {
+        return service.queueCounts(actorId(auth));
     }
 
     @PutMapping("/{id}/decision")
@@ -181,8 +209,10 @@ public class LeaveRequestController {
                                             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                             @RequestParam(required = false) Long collaborateurId,
                                             @RequestParam(required = false) String type,
+                                            @RequestParam(required = false) String search,
                                             Authentication auth) {
-        return service.bulkApprove(actorId(auth), from, to, collaborateurId, type, canSettle(auth));
+        return service.bulkApprove(actorId(auth), from, to, collaborateurId, type, search,
+                canSettle(auth));
     }
 
     // ═══ Team and country ════════════════════════════════════════════════════
@@ -190,14 +220,26 @@ public class LeaveRequestController {
     @GetMapping("/team")
     @PreAuthorize("hasAuthority('GET_EMPLOYEES_LEAVES')")
     public Map<String, Object> team(@RequestParam(required = false) DemandeEtat etat,
+                                    @RequestParam(required = false) String type,
                                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+                                    @RequestParam(required = false) Long collaborateurId,
+                                    @RequestParam(required = false) String search,
+                                    @RequestParam(required = false) String sort,
+                                    @RequestParam(defaultValue = "desc") String dir,
                                     @RequestParam(defaultValue = "0") int page,
                                     @RequestParam(defaultValue = "10") int size,
                                     @RequestParam(defaultValue = "fr") String lang,
                                     Authentication auth) {
-        Page<LeaveRequest> rows = service.teamHistory(actorId(auth), etat, from, to, PageRequest.of(page, size));
+        Page<LeaveRequest> rows = service.teamHistory(actorId(auth), etat, type, from, to,
+                collaborateurId, search, PageRequest.of(page, size, sortOf(sort, dir, "dateDebut")));
         return pageResponse(rows, lang);
+    }
+
+    @GetMapping("/team/counts")
+    @PreAuthorize("hasAuthority('GET_EMPLOYEES_LEAVES')")
+    public Map<String, Long> teamCounts(Authentication auth) {
+        return service.teamCounts(actorId(auth));
     }
 
     @GetMapping("/global")
@@ -208,12 +250,21 @@ public class LeaveRequestController {
                                       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                       @RequestParam(required = false) Long collaborateurId,
+                                      @RequestParam(required = false) String search,
+                                      @RequestParam(required = false) String sort,
+                                      @RequestParam(defaultValue = "desc") String dir,
                                       @RequestParam(defaultValue = "0") int page,
                                       @RequestParam(defaultValue = "20") int size,
                                       @RequestParam(defaultValue = "fr") String lang) {
         Page<LeaveRequest> rows = service.global(paysId, etat, type, from, to, collaborateurId,
-                PageRequest.of(page, size));
+                search, PageRequest.of(page, size, sortOf(sort, dir, "dateDebut")));
         return pageResponse(rows, lang);
+    }
+
+    @GetMapping("/global/counts")
+    @PreAuthorize("hasAuthority('GET_GLOBAL_LEAVES')")
+    public Map<String, Long> globalCounts(@RequestParam(required = false) Long paysId) {
+        return service.globalCounts(paysId);
     }
 
     // ═══ HR ══════════════════════════════════════════════════════════════════
@@ -243,21 +294,41 @@ public class LeaveRequestController {
     @PreAuthorize("hasAuthority('SETTLE_LEAVES')")
     public Map<String, Object> settled(@RequestParam(defaultValue = "true") boolean mine,
                                        @RequestParam(required = false) DemandeEtat etat,
+                                       @RequestParam(required = false) String type,
                                        @RequestParam(required = false) Long collaborateurId,
                                        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+                                       @RequestParam(required = false) String search,
+                                       @RequestParam(required = false) String sort,
+                                       @RequestParam(defaultValue = "desc") String dir,
                                        @RequestParam(defaultValue = "0") int page,
                                        @RequestParam(defaultValue = "20") int size,
                                        @RequestParam(defaultValue = "fr") String lang,
                                        Authentication auth) {
-        Page<LeaveRequest> rows = service.settled(actorId(auth), mine, etat, collaborateurId,
-                from, to, PageRequest.of(page, size));
+        Page<LeaveRequest> rows = service.settled(actorId(auth), mine, etat, type, collaborateurId,
+                from, to, search, PageRequest.of(page, size, sortOf(sort, dir, "createdAt")));
         return pageResponse(rows, lang);
     }
 
-    /** Balances for someone else — the régularisation form needs them before it can judge. */
+    @GetMapping("/settle/counts")
+    @PreAuthorize("hasAuthority('SETTLE_LEAVES')")
+    public Map<String, Long> settledCounts(@RequestParam(defaultValue = "true") boolean mine,
+                                           Authentication auth) {
+        return service.settledCounts(actorId(auth), mine);
+    }
+
+    /**
+     * Balances for someone else — the régularisation form needs them before it can judge, and
+     * so does anyone about to approve a request.
+     *
+     * RESPONSE_LEAVE was added to the gate deliberately: approving debits this allowance, and
+     * a manager who may take that decision but may not see the number it moves is being asked
+     * to decide blind. It exposes three day-counts about one employee, to someone who already
+     * holds the power to change them.
+     */
     @GetMapping("/balances/{collaborateurId}")
-    @PreAuthorize("hasAuthority('SETTLE_LEAVES') or hasAuthority('GET_EMPLOYEES_LEAVES')")
+    @PreAuthorize("hasAuthority('SETTLE_LEAVES') or hasAuthority('GET_EMPLOYEES_LEAVES') "
+            + "or hasAuthority('RESPONSE_LEAVE')")
     public LeaveBalancesDto balancesOf(@PathVariable Long collaborateurId) {
         return service.balancesOf(collaborateurId);
     }
@@ -290,6 +361,29 @@ public class LeaveRequestController {
     }
 
     // ═══ Helpers ═════════════════════════════════════════════════════════════
+
+    /**
+     * Turns the table's `sort`/`dir` into a Pageable Sort, against an ALLOW-LIST.
+     *
+     * The key arrives from the browser and goes into a JPQL ORDER BY, so it is matched against
+     * the sortable columns rather than passed through: an unknown key would either throw at
+     * query time or, worse, name a field the screen was never meant to order by. Anything
+     * unrecognised silently falls back to the caller's default, which is the behaviour a user
+     * expects from a sort they did not ask for.
+     *
+     * Only columns that ARE the stored value are listed. `typeLabel`, `collaborateurName` and
+     * `createdByName` are resolved after the query — by the type catalogue and by a batched
+     * name lookup — so sorting on them would order by a column the row does not have. The
+     * frontend marks exactly these as sortable; the two lists must stay in step.
+     */
+    private static final Set<String> SORTABLE = Set.of(
+            "createdAt", "dateDebut", "dateFin", "totalJours", "etatDemande", "type", "dateValidation");
+
+    private static Sort sortOf(String key, String dir, String fallback) {
+        String field = (key != null && SORTABLE.contains(key)) ? key : fallback;
+        Sort.Direction direction = "asc".equalsIgnoreCase(dir) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        return Sort.by(direction, field);
+    }
 
     /** Same envelope every paginated rh endpoint returns. */
     private Map<String, Object> pageResponse(Page<LeaveRequest> rows, String lang) {

@@ -9,6 +9,8 @@ import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.repository.AbsenceTypeRepository;
 import com.daf360.rh.repository.LeaveRequestRepository;
+import com.daf360.rh.security.PaysScopeContext;
+import com.daf360.rh.security.TenantService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -69,6 +71,8 @@ public class LeaveRequestService {
     private final LeaveApproverService approvers;
     private final WorkingDayCalculator workingDays;
     private final JdbcTemplate jdbcTemplate;
+    /** Resolves the caller's pays scope from the token — see global() above. */
+    private final TenantService tenantService;
 
     // ═══ The request form ════════════════════════════════════════════════════
 
@@ -282,8 +286,11 @@ public class LeaveRequestService {
      */
     @Transactional
     public BulkApproveResultDto bulkApprove(Long managerId, LocalDate from, LocalDate to,
-                                            Long collaborateurId, String type, boolean canSettle) {
-        List<Long> ids = repository.findPendingIdsForManager(managerId, from, to, collaborateurId, type);
+                                            Long collaborateurId, String type, String search,
+                                            boolean canSettle) {
+        String term = normalise(search);
+        List<Long> ids = repository.findPendingIdsForManager(managerId, from, to, collaborateurId,
+                type, term, searchIds(term), hiddenFromManagers());
 
         int approved = 0;
         List<BulkApproveResultDto.Failure> failures = new ArrayList<>();
@@ -522,9 +529,54 @@ public class LeaveRequestService {
      */
     @Transactional(readOnly = true)
     public Page<LeaveRequest> managerQueue(Long managerId, DemandeEtat etat, LocalDate from, LocalDate to,
-                                           Long collaborateurId, String type, Pageable pageable) {
+                                           Long collaborateurId, String type, String search,
+                                           Pageable pageable) {
+        String term = normalise(search);
         return repository.findForManager(managerId, etat, from, to, collaborateurId, type,
-                hiddenFromManagers(), pageable);
+                term, searchIds(term), hiddenFromManagers(), pageable);
+    }
+
+    /** Counts per state across the manager's whole queue — the KPI row, not the page. */
+    @Transactional(readOnly = true)
+    public Map<String, Long> queueCounts(Long managerId) {
+        return zeroFilled(repository.countByStateForManager(managerId, hiddenFromManagers()));
+    }
+
+    /**
+     * The search box, resolved to employee ids.
+     *
+     * `Users` is not a JPA entity in this service — names are batch-resolved through
+     * JdbcTemplate in LeaveRequestMapper for the same reason — so a name cannot be matched in
+     * JPQL by joining. Resolving the term to ids first keeps the four list queries free of a
+     * native join and lets them stay `Page<LeaveRequest>`.
+     *
+     * Always returns at least the `-1L` placeholder: an empty list makes `IN` invalid in JPQL,
+     * and a term that matches nobody must match no rows rather than fail the query.
+     */
+    private List<Long> searchIds(String term) {
+        if (term == null) return List.of(-1L);
+        List<Long> ids = new ArrayList<>();
+        jdbcTemplate.query(
+                "SELECT id FROM Users WHERE LOWER(fullName) LIKE ?",
+                ps -> ps.setString(1, "%" + term.toLowerCase() + "%"),
+                rs -> { ids.add(rs.getLong("id")); });
+        if (ids.isEmpty()) ids.add(-1L);
+        return ids;
+    }
+
+    /** Blank and whitespace are not a search term — they are the absence of one. */
+    private String normalise(String search) {
+        return (search == null || search.isBlank()) ? null : search.trim();
+    }
+
+    /** Every state present, so the KPI row never shrinks when a count happens to be zero. */
+    private Map<String, Long> zeroFilled(List<Object[]> rows) {
+        Map<String, Long> counts = new java.util.LinkedHashMap<>();
+        for (DemandeEtat e : DemandeEtat.values()) counts.put(e.name(), 0L);
+        for (Object[] row : rows) {
+            counts.put(((DemandeEtat) row[0]).name(), ((Number) row[1]).longValue());
+        }
+        return counts;
     }
 
     /**
@@ -539,19 +591,51 @@ public class LeaveRequestService {
     }
 
     @Transactional(readOnly = true)
-    public Page<LeaveRequest> teamHistory(Long managerId, DemandeEtat etat, LocalDate from, LocalDate to,
-                                          Pageable pageable) {
+    public Page<LeaveRequest> teamHistory(Long managerId, DemandeEtat etat, String type,
+                                          LocalDate from, LocalDate to, Long collaborateurId,
+                                          String search, Pageable pageable) {
         List<Long> ids = approvers.subordinateUserIds(managerId);
         if (ids.isEmpty()) {
             return Page.empty(pageable);
         }
-        return repository.findForEmployees(ids, etat, from, to, hiddenFromManagers(), pageable);
+        String term = normalise(search);
+        return repository.findForEmployees(ids, etat, type, from, to, collaborateurId,
+                term, searchIds(term), hiddenFromManagers(), pageable);
     }
 
     @Transactional(readOnly = true)
+    public Map<String, Long> teamCounts(Long managerId) {
+        List<Long> ids = approvers.subordinateUserIds(managerId);
+        if (ids.isEmpty()) return zeroFilled(List.of());
+        return zeroFilled(repository.countByStateForEmployees(ids, hiddenFromManagers()));
+    }
+
+    /**
+     * Country-wide history, bounded by the CALLER'S ROLE SCOPE.
+     *
+     * The scope comes from the token (V74) and is a ceiling, not a default: `paysId` is the
+     * screen's own filter and applies on top of it, so asking for a country the role does not
+     * cover returns nothing instead of revealing it. Before this, GET_GLOBAL_LEAVES read every
+     * country regardless of the role's configured scope — EmployeeProfileService had applied
+     * this since V74 and the leave module had never been brought in line.
+     */
+    @Transactional(readOnly = true)
     public Page<LeaveRequest> global(Long paysId, DemandeEtat etat, String type, LocalDate from,
-                                     LocalDate to, Long collaborateurId, Pageable pageable) {
-        return repository.findGlobal(paysId, etat, type, from, to, collaborateurId, pageable);
+                                     LocalDate to, Long collaborateurId, String search,
+                                     Pageable pageable) {
+        PaysScopeContext.Scope scope = tenantService.getPaysScope();
+        String term = normalise(search);
+        return repository.findGlobal(
+                scope.unfiltered() ? 1 : 0, scope.idsOrPlaceholder(),
+                paysId, etat, type, from, to, collaborateurId,
+                term, searchIds(term), pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Long> globalCounts(Long paysId) {
+        PaysScopeContext.Scope scope = tenantService.getPaysScope();
+        return zeroFilled(repository.countByStateGlobal(
+                scope.unfiltered() ? 1 : 0, scope.idsOrPlaceholder(), paysId));
     }
 
     /**
@@ -562,11 +646,35 @@ public class LeaveRequestService {
      * shows the whole company's, which is an audit view and deliberately a deliberate act.
      */
     @Transactional(readOnly = true)
-    public Page<LeaveRequest> settled(Long actorId, boolean mineOnly, DemandeEtat etat,
+    public Page<LeaveRequest> settled(Long actorId, boolean mineOnly, DemandeEtat etat, String type,
                                       Long collaborateurId, LocalDate from, LocalDate to,
-                                      Pageable pageable) {
-        return repository.findSettled(mineOnly ? actorId : null, etat, collaborateurId,
-                from, to, pageable);
+                                      String search, Pageable pageable) {
+        String term = normalise(search);
+        return repository.findSettled(mineOnly ? actorId : null, etat, type, collaborateurId,
+                from, to, term, searchIds(term), pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Long> settledCounts(Long actorId, boolean mineOnly) {
+        return zeroFilled(repository.countByStateSettled(mineOnly ? actorId : null));
+    }
+
+    /**
+     * `code -> balanceField` for the live catalogue, as a list of flat maps.
+     *
+     * A type that tracks no balance reports null rather than being left out, so a caller can
+     * tell "draws on nothing" from "unknown code" — the second means a stale client.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> typeBalanceFields() {
+        return absenceTypes.findAllLive().stream()
+                .map(t -> {
+                    Map<String, Object> row = new java.util.HashMap<>();
+                    row.put("code", t.getCode());
+                    row.put("balanceField", Boolean.TRUE.equals(t.getTracksBalance()) ? t.getBalanceField() : null);
+                    return row;
+                })
+                .toList();
     }
 
     /** Counts per state for the header tiles, zero-filled so the row is always complete. */

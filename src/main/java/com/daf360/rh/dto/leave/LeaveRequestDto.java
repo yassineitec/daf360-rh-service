@@ -14,6 +14,17 @@ public record LeaveRequestDto(
         Long id,
         Long collaborateurId,
         String collaborateurName,
+        /**
+         * What the UI needs to draw this employee's face, and nothing more.
+         *
+         * `avatarUtils.getAvatarUrl(profileId, photoUrl, gender)` needs all three: the photo
+         * endpoint is keyed by profile id, `photoUrl` carries the cache-busting token, and
+         * gender picks the placeholder when there is no photo. All three are null for a user
+         * with no employee profile, which is a real case — the initials then stand in.
+         */
+        Long collaborateurProfileId,
+        String collaborateurPhotoUrl,
+        String collaborateurGender,
         Long responsableId,
         String responsableName,
         Long paysId,

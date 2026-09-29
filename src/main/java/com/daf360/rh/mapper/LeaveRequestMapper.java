@@ -35,24 +35,37 @@ public class LeaveRequestMapper {
     private final JdbcTemplate jdbcTemplate;
     private final AbsenceTypeRepository absenceTypes;
 
+    /**
+     * What it takes to draw one employee's avatar. Null fields are normal — a user with no
+     * employee profile has no photo and no recorded gender, and the UI falls back to initials.
+     */
+    private record Face(Long profileId, String photoUrl, String gender) {}
+
     /** One row, resolving its names on their own. Use {@link #toDtos} for a page. */
     public LeaveRequestDto toDto(LeaveRequest e, String lang) {
-        return toDto(e, lang, namesFor(idsIn(List.of(e))), typeLabels(lang));
+        Set<Long> ids = idsIn(List.of(e));
+        return toDto(e, lang, namesFor(ids), facesFor(ids), typeLabels(lang));
     }
 
     /** A page, with every name resolved in a single extra query. */
     public List<LeaveRequestDto> toDtos(Collection<LeaveRequest> rows, String lang) {
-        Map<Long, String> names = namesFor(idsIn(rows));
+        Set<Long> ids = idsIn(rows);
+        Map<Long, String> names = namesFor(ids);
+        Map<Long, Face> faces = facesFor(ids);
         Map<String, String> labels = typeLabels(lang);
-        return rows.stream().map(e -> toDto(e, lang, names, labels)).toList();
+        return rows.stream().map(e -> toDto(e, lang, names, faces, labels)).toList();
     }
 
     private LeaveRequestDto toDto(LeaveRequest e, String lang, Map<Long, String> names,
-                                 Map<String, String> typeLabels) {
+                                 Map<Long, Face> faces, Map<String, String> typeLabels) {
+        Face face = faces.getOrDefault(e.getCollaborateurId(), new Face(null, null, null));
         return new LeaveRequestDto(
                 e.getId(),
                 e.getCollaborateurId(),
                 names.get(e.getCollaborateurId()),
+                face.profileId(),
+                face.photoUrl(),
+                face.gender(),
                 e.getResponsableId(),
                 names.get(e.getResponsableId()),
                 e.getPaysId(),
@@ -122,6 +135,33 @@ public class LeaveRequestMapper {
         jdbcTemplate.query(
                 "SELECT id, fullName FROM Users WHERE id IN (" + inList + ")",
                 rs -> { out.put(rs.getLong("id"), rs.getString("fullName")); });
+        return out;
+    }
+
+    /**
+     * Photo + gender per user, for the avatars — batched exactly like {@link #namesFor}.
+     *
+     * A LEFT-side lookup by `user_id` rather than a join from Users, because not every user has
+     * an employee profile: a congé filed for someone whose HR file was never created still has
+     * to render, and it renders as initials. Ids come from the database, never from request
+     * input, so the IN list is safe for the same reason namesFor's is.
+     *
+     * One query per page, not per row. Resolving this inside the row mapper would be the N+1
+     * the whole class is shaped to avoid.
+     */
+    private Map<Long, Face> facesFor(Set<Long> ids) {
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        String inList = ids.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("0");
+        Map<Long, Face> out = new HashMap<>(ids.size());
+        jdbcTemplate.query(
+                "SELECT user_id, id, photo_url, gender FROM employee_profiles WHERE user_id IN ("
+                        + inList + ")",
+                rs -> {
+                    out.put(rs.getLong("user_id"),
+                            new Face(rs.getLong("id"), rs.getString("photo_url"), rs.getString("gender")));
+                });
         return out;
     }
 }
