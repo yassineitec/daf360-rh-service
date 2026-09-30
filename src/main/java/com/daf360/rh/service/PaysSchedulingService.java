@@ -4,6 +4,8 @@ import com.daf360.rh.dto.ref.PaysSchedulingDto;
 import com.daf360.rh.dto.ref.UpdatePaysSchedulingRequest;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.security.PaysScopeContext;
+import com.daf360.rh.security.TenantService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -45,6 +47,8 @@ import java.util.Set;
 public class PaysSchedulingService {
 
     private final JdbcTemplate jdbc;
+    /** V74 per-role country scope — see assertInScope. */
+    private final TenantService tenantService;
 
     /**
      * Entities worth configuring: the ones that employ somebody, plus any that already carry
@@ -56,19 +60,22 @@ public class PaysSchedulingService {
      */
     @Transactional(readOnly = true)
     public List<PaysSchedulingDto> list() {
+        PaysScopeContext.Scope scope = tenantService.getPaysScope();
+        // The scope is a ceiling on the LIST as well as on the writes: offering an entity the
+        // save would refuse is a screen that lies about what it can do.
+        String scopeClause = scope.unfiltered() ? "" :
+                " AND p.id IN (" + scope.paysIds().stream().map(String::valueOf)
+                        .reduce((a, b) -> a + "," + b).orElse("-1") + ") ";
+
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT p.id, p.french_label, p.english_label, p.iso_code, p.timezone,
-                       p.advance_notice_days, p.leave_gap_days,
                        (SELECT COUNT(*) FROM [dbo].[Users] u
                          WHERE u.pays_id = p.id AND ISNULL(u.is_employee, 1) = 1) AS employees
                 FROM [dbo].[pays] p
                 WHERE ISNULL(p.deleted, 0) = 0
                   AND (EXISTS (SELECT 1 FROM [dbo].[Users] u WHERE u.pays_id = p.id)
-                       OR EXISTS (SELECT 1 FROM [dbo].[pays_weekends] w WHERE w.pays_id = p.id)
-                       OR p.advance_notice_days IS NOT NULL
-                       OR p.leave_gap_days IS NOT NULL)
-                ORDER BY p.french_label
-                """);
+                       OR EXISTS (SELECT 1 FROM [dbo].[pays_weekends] w WHERE w.pays_id = p.id))
+                """ + scopeClause + " ORDER BY p.french_label");
 
         Map<Long, Set<String>> weekends = weekendsByPays();
 
@@ -86,8 +93,6 @@ public class PaysSchedulingService {
                     // The screen has to be able to say "falling back", not just show two days
                     // that look configured. This is the same test WorkingDayCalculator makes.
                     days.isEmpty(),
-                    (Integer) r.get("advance_notice_days"),
-                    (Integer) r.get("leave_gap_days"),
                     ((Number) r.get("employees")).intValue()));
         }
         return out;
@@ -132,6 +137,7 @@ public class PaysSchedulingService {
      */
     @Transactional
     public PaysSchedulingDto update(Long paysId, UpdatePaysSchedulingRequest req, Long actorId) {
+        assertInScope(paysId);
         Integer exists = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM [dbo].[pays] WHERE id = ? AND ISNULL(deleted, 0) = 0",
                 Integer.class, paysId);
@@ -157,44 +163,38 @@ public class PaysSchedulingService {
             throw new AppException(ErrorCode.INVALID_TRANSITION,
                     "Une entité ne peut pas avoir sept jours de repos : aucun congé ne coûterait de jour.");
         }
-        if (nonNegative(req.getAdvanceNoticeDays()) || nonNegative(req.getLeaveGapDays())) {
-            throw new AppException(ErrorCode.INVALID_TRANSITION,
-                    "Les délais ne peuvent pas être négatifs.");
-        }
-
         Set<String> before = weekendsByPays().getOrDefault(paysId, Set.of());
 
         jdbc.update("DELETE FROM [dbo].[pays_weekends] WHERE pays_id = ?", paysId);
         for (String day : days) {
             jdbc.update("INSERT INTO [dbo].[pays_weekends] (pays_id, [day]) VALUES (?, ?)", paysId, day);
         }
-        // Written as literals when null: Spring hands an untyped null to setNull(Types.NULL),
-        // which the SQL Server driver rejects — the same trap the balances editor hit.
-        jdbc.update("UPDATE [dbo].[pays] SET advance_notice_days = "
-                        + (req.getAdvanceNoticeDays() == null ? "NULL" : "?")
-                        + ", leave_gap_days = "
-                        + (req.getLeaveGapDays() == null ? "NULL" : "?")
-                        + " WHERE id = ?",
-                argsFor(req, paysId));
+        // `pays.advance_notice_days` / `leave_gap_days` are NOT written here any more: they are
+        // configured per leave type (V109) and this screen is only about rest days. The columns
+        // remain as the fallback a type inherits — see UpdatePaysSchedulingRequest.
 
-        log.info("Calendar of pays {} changed by {}: weekend {} -> {}, notice {}, gap {}",
-                paysId, actorId, before, days,
-                req.getAdvanceNoticeDays(), req.getLeaveGapDays());
+        log.info("Rest days of pays {} changed by {}: {} -> {}", paysId, actorId, before, days);
 
         return list().stream().filter(p -> p.paysId().equals(paysId)).findFirst()
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND, "Entité introuvable après mise à jour"));
     }
 
-    /** Only the delays that were actually sent, then the id — matching the SQL built above. */
-    private Object[] argsFor(UpdatePaysSchedulingRequest req, Long paysId) {
-        List<Object> args = new ArrayList<>(3);
-        if (req.getAdvanceNoticeDays() != null) args.add(req.getAdvanceNoticeDays());
-        if (req.getLeaveGapDays() != null) args.add(req.getLeaveGapDays());
-        args.add(paysId);
-        return args.toArray();
-    }
-
-    private boolean nonNegative(Integer v) {
-        return v != null && v < 0;
+    /**
+     * Refuses an entity outside the caller's scope.
+     *
+     * ADMIN_REGIMES says "may configure working calendars", not "may configure ANY country's".
+     * Until this, a regional administrator could change another region's rest days — which
+     * decides that region's leave costs, its expected presence and its break deductions.
+     *
+     * Unresolved scope stays permissive, exactly as ReferenceDataController.readableP does: an
+     * incomplete token loses nothing it had before rather than being locked out.
+     */
+    private void assertInScope(Long paysId) {
+        PaysScopeContext.Scope scope = tenantService.getPaysScope();
+        if (scope.unfiltered() || paysId == null) return;
+        if (!scope.paysIds().contains(paysId)) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                    "Cette entité n'est pas dans votre périmètre.");
+        }
     }
 }

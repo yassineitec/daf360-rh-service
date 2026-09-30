@@ -22,9 +22,6 @@ public record PaysSchedulingDto(
         List<String> weekendDays,
         /** True when the list above is empty and Saturday/Sunday is being assumed. */
         boolean usingDefaultWeekend,
-        /** Country default inherited by any leave type that sets no value of its own (V109). */
-        Integer advanceNoticeDays,
-        Integer leaveGapDays,
         /** How many real people this applies to — the reason to get it right. */
         int employees
 ) {}

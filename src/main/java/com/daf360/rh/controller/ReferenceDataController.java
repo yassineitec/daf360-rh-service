@@ -13,6 +13,7 @@ import com.daf360.rh.dto.ref.UpdateGradeNoticePeriodRequest;
 import com.daf360.rh.dto.ref.UpdatePaysTimezoneRequest;
 import com.daf360.rh.service.PaysTimezoneService;
 import com.daf360.rh.security.PaysScopeContext;
+import com.daf360.rh.security.TenantContext;
 import com.daf360.rh.security.TenantService;
 import com.daf360.rh.service.ReferenceDataService;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import org.springframework.format.annotation.DateTimeFormat;
+
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,6 +40,8 @@ public class ReferenceDataController {
     private final PaysSchedulingService paysSchedulingService;
     private final PaysTimezoneService  paysTimezoneService;
     private final TenantService        tenantService;
+    /** One resolver for holidays across the whole app — see myHolidays. */
+    private final com.daf360.rh.service.WorkingDayCalculator workingDays;
     private final JdbcTemplate         jdbc;
 
     /**
@@ -273,6 +279,47 @@ public class ReferenceDataController {
                                                    @RequestBody UpdatePaysTimezoneRequest req) {
         paysTimezoneService.setTimezone(id, req.getTimezone());
         return ResponseEntity.noContent().build();
+    }
+
+    // ── The caller's own public holidays ─────────────────────────────────────
+
+    /**
+     * Public holidays for the CALLER'S OWN entity, for the home calendar.
+     *
+     * NOT permission-gated, deliberately, and for the same reason as
+     * {@code /api/hr/leave/my/calendar} next to it: it answers for the caller alone, every
+     * employee may see the days their own company is closed, and demanding GET_HOLIDAYS would
+     * blank the calendar for most of the company.
+     *
+     * Goes through {@code WorkingDayCalculator.holidayNames} rather than reading the table, so
+     * the calendar, the leave day-count and the date pickers resolve holidays identically —
+     * recurrence included. A second query here is how the three would drift.
+     *
+     * READS THE TOKEN'S OWN ENTITY, NOT {@code getEffectivePaysId()}.
+     * -------------------------------------------------------------------------------------
+     * That method answers « quelle portée cet appelant a-t-il », and returns null for a global
+     * admin to mean « aucun filtre ». This endpoint asks the opposite question — « dans quel
+     * pays cette personne travaille-t-elle » — and null there means « aucun pays ». Going
+     * through it emptied the home calendar for every administrator while working for everyone
+     * else, because an admin's own entity was thrown away before the lookup. An administrator
+     * of several countries is still an employee of exactly one.
+     */
+    @GetMapping("/my/holidays")
+    @PreAuthorize("isAuthenticated()")
+    public List<Map<String, String>> myHolidays(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(defaultValue = "fr") String lang) {
+        Long paysId = TenantContext.get();
+        if (paysId == null) {
+            // A token with no entity resolves to no holidays rather than to everyone's:
+            // showing another country's closures on someone's own calendar is worse than
+            // showing none.
+            return List.of();
+        }
+        return workingDays.holidayNames(paysId, from, to, lang).entrySet().stream()
+                .map(e -> Map.of("date", e.getKey(), "name", e.getValue()))
+                .toList();
     }
 
     // ── Entity (pays) working calendar ────────────────────────────────────────
