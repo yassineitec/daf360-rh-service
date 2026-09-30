@@ -138,6 +138,21 @@ public class LeaveRequest {
     @Column(name = "justificatif")
     private Boolean justificatif;
 
+    /**
+     * The uploaded supporting document, in `employee_documents` (V110).
+     *
+     * A plain id and NOT a JPA relation, on purpose: `employee_documents` is soft-deleted, so
+     * a managed association would either block the delete or cascade it, and a request whose
+     * document was removed must still load and simply show no file. The service treats a
+     * dangling id as absent.
+     *
+     * Distinct from {@link #justificatif}, which only ever meant "the employee says they have
+     * one". 716 migrated rows carry that flag with nothing behind it; a null here on one of
+     * them reads correctly as "claimed, not attached".
+     */
+    @Column(name = "justificatif_document_id")
+    private Long justificatifDocumentId;
+
     /** The employee's stated reason. */
     @Column(name = "reason", columnDefinition = "NVARCHAR(MAX)")
     private String reason;

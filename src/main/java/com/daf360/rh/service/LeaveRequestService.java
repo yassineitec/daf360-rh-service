@@ -16,6 +16,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.Authentication;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The congé rules, ported from the timesheet's {@code AbsenceServiceImpl}.
@@ -73,6 +76,8 @@ public class LeaveRequestService {
     private final JdbcTemplate jdbcTemplate;
     /** Resolves the caller's pays scope from the token — see global() above. */
     private final TenantService tenantService;
+    /** Local-first storage plus the best-effort SharePoint mirror — see attachJustification. */
+    private final EmployeeDocumentService documents;
 
     // ═══ The request form ════════════════════════════════════════════════════
 
@@ -608,6 +613,79 @@ public class LeaveRequestService {
             counts.put(((DemandeEtat) row[0]).name(), ((Number) row[1]).longValue());
         }
         return counts;
+    }
+
+    // ═══ Justificatif ════════════════════════════════════════════════════════
+
+    /** The `document_types` code every leave justification is filed under (V110). */
+    public static final String JUSTIFICATION_DOC_TYPE = "JUSTIFICATIF_ABSENCE";
+
+    /**
+     * Files the supporting document for a request and links it.
+     *
+     * DELEGATES to {@link EmployeeDocumentService}, which already stores the bytes locally as
+     * the source of truth and then mirrors them to SharePoint best-effort. That split is what
+     * makes this safe to enable before the SharePoint paths are configured: an unconfigured
+     * or unreachable tenant costs the mirror, never the upload, and the file stays
+     * downloadable from disk.
+     *
+     * The destination folder is therefore whatever Administration → SharePoint has assigned
+     * to the `JUSTIFICATIF_ABSENCE` document type for that employee's country — no new
+     * configuration surface, and no path hardcoded here.
+     *
+     * @throws AppException when the employee has no HR profile: `employee_documents` hangs off
+     *         a profile, and there is nowhere to file the document without one.
+     */
+    @Transactional
+    public LeaveRequest attachJustification(Long requestId, MultipartFile file,
+                                            Authentication auth) throws java.io.IOException {
+        LeaveRequest request = require(requestId);
+        if (file == null || file.isEmpty()) {
+            throw new AppException(ErrorCode.INVALID_TRANSITION, "Aucun fichier reçu.");
+        }
+
+        Long profileId = profileIdOf(request.getCollaborateurId());
+        if (profileId == null) {
+            throw new AppException(ErrorCode.EMPLOYEE_NOT_FOUND,
+                    "Ce collaborateur n'a pas de dossier RH : impossible de classer un justificatif.");
+        }
+
+        var saved = documents.upload(profileId, file, JUSTIFICATION_DOC_TYPE, null,
+                "Justificatif du congé #" + requestId, auth);
+
+        request.setJustificatifDocumentId(saved.getId());
+        request.setJustificatif(Boolean.TRUE);
+        log.info("Justification {} attached to leave request {} (document {})",
+                file.getOriginalFilename(), requestId, saved.getId());
+        return repository.save(request);
+    }
+
+    /** The stored file, for download. Empty when nothing is attached. */
+    @Transactional(readOnly = true)
+    public Optional<EmployeeDocumentService.DownloadPayload> justification(Long requestId) {
+        LeaveRequest request = require(requestId);
+        Long docId = request.getJustificatifDocumentId();
+        if (docId == null) return Optional.empty();
+
+        Long profileId = profileIdOf(request.getCollaborateurId());
+        if (profileId == null) return Optional.empty();
+        try {
+            return Optional.of(documents.download(profileId, docId));
+        } catch (AppException e) {
+            // A soft-deleted document leaves a dangling id — see LeaveRequest.justificatifDocumentId.
+            // "No file" is the honest answer; a 500 would say the request itself is broken.
+            log.info("Leave request {} points at document {}, which is gone: {}",
+                    requestId, docId, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /** `employee_profiles.id` for a user, or null when they have no HR file. */
+    private Long profileIdOf(Long userId) {
+        List<Long> rows = jdbcTemplate.queryForList(
+                "SELECT id FROM employee_profiles WHERE user_id = ? AND deleted = 0",
+                Long.class, userId);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     // ═══ Scheduling rules ════════════════════════════════════════════════════

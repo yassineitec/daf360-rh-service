@@ -77,6 +77,7 @@ public class LeaveRequestMapper {
                 e.getDateFin(),
                 e.getTotalJours(),
                 e.getJustificatif(),
+                e.getJustificatifDocumentId(),
                 e.getReason(),
                 e.getEtatDemande() == null ? null : e.getEtatDemande().name(),
                 e.getMotifRefus(),

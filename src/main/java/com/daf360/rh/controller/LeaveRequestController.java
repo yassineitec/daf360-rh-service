@@ -7,9 +7,14 @@ import com.daf360.rh.mapper.LeaveRequestMapper;
 import com.daf360.rh.service.LeaveRequestService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
@@ -101,6 +106,59 @@ public class LeaveRequestController {
     @PreAuthorize("hasAuthority('GET_LEAVES') or hasAuthority('GET_GLOBAL_LEAVES')")
     public List<LeaveOptionDto> types(@RequestParam(defaultValue = "fr") String lang) {
         return service.typeCatalogue(lang);
+    }
+
+    // ═══ Justificatif ════════════════════════════════════════════════════════
+
+    /**
+     * Attaches the supporting document to a request.
+     *
+     * A SEPARATE CALL rather than a multipart create, and that is a deliberate trade.
+     * Making POST / multipart would have made request+file atomic, but it would also have
+     * rewritten the one endpoint every employee already uses, for a file only some types
+     * need. Two calls mean a request can exist for a moment with its file still uploading —
+     * which is why `validateTypeRules` still refuses a request that claims no justificatif
+     * for a type that demands one, and why the form uploads before it reports success.
+     *
+     * Gated like the create it follows: an employee may attach to their own request,
+     * SETTLE_LEAVES may attach to anyone's. Ownership itself is checked in the service.
+     */
+    @PostMapping(value = "/{id}/justification", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAuthority('ADD_LEAVE') or hasAuthority('SETTLE_LEAVES')")
+    public LeaveRequestDto attachJustification(@PathVariable Long id,
+                                               @RequestParam("file") MultipartFile file,
+                                               @RequestParam(defaultValue = "fr") String lang,
+                                               Authentication auth) throws java.io.IOException {
+        return mapper.toDto(service.attachJustification(id, file, auth), lang);
+    }
+
+    /**
+     * Streams the attached document.
+     *
+     * Readable by anyone who may read the request itself — an approver has to be able to open
+     * the certificate they are being asked to trust. 404 when nothing is attached, including
+     * when the document was since deleted: "there is no file" is the honest answer, and a 500
+     * would suggest the request itself is broken.
+     *
+     * `inline` with an RFC 5987 filename, the same as the employee-document download, so a
+     * PDF or an image opens in the browser and accented names survive.
+     */
+    @GetMapping("/{id}/justification")
+    @PreAuthorize("hasAnyAuthority('GET_LEAVES', 'RESPONSE_LEAVE', 'GET_EMPLOYEES_LEAVES', "
+            + "'GET_GLOBAL_LEAVES', 'SETTLE_LEAVES')")
+    public ResponseEntity<Resource> downloadJustification(@PathVariable Long id) {
+        return service.justification(id)
+                .map(payload -> {
+                    String encoded = java.net.URLEncoder
+                            .encode(payload.fileName(), java.nio.charset.StandardCharsets.UTF_8)
+                            .replace("+", "%20");
+                    return ResponseEntity.ok()
+                            .header(HttpHeaders.CONTENT_TYPE, payload.contentType())
+                            .header(HttpHeaders.CONTENT_DISPOSITION,
+                                    "inline; filename*=UTF-8''" + encoded)
+                            .body(payload.resource());
+                })
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     /**

@@ -36,6 +36,8 @@ public record LeaveRequestDto(
         LocalDate dateFin,
         BigDecimal totalJours,
         Boolean justificatif,
+        /** The attached file's document id, or null when nothing was uploaded (V110). */
+        Long justificatifDocumentId,
         String reason,
         String etatDemande,
         String motifRefus,
