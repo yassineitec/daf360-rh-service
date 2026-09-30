@@ -15,13 +15,16 @@ import java.util.List;
 @Repository
 public interface EmployeeRequestRepository extends JpaRepository<EmployeeRequest, Long> {
 
-    Page<EmployeeRequest> findByEmployeeProfileIdOrderByCreatedAtDesc(
+    // No OrderBy in these names: a static OrderBy is applied *before* the Pageable's sort, which
+    // made the front's ?sort= a mere tie-breaker. The default (newest first) is now set by the
+    // service when the caller sends no sort — see EmployeeRequestService.withDefaultSort.
+    Page<EmployeeRequest> findByEmployeeProfileId(
             Long profileId, Pageable pageable);
 
-    Page<EmployeeRequest> findByEmployeeProfileIdAndStatusOrderByCreatedAtDesc(
+    Page<EmployeeRequest> findByEmployeeProfileIdAndStatus(
             Long profileId, RequestStatus status, Pageable pageable);
 
-    Page<EmployeeRequest> findByPaysIdAndStatusOrderByCreatedAtDesc(
+    Page<EmployeeRequest> findByPaysIdAndStatus(
             Long paysId, RequestStatus status, Pageable pageable);
 
     /** Duplicate check: one open request per type per employee. */
