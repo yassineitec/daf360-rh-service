@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/hr/admin/holidays")
@@ -21,6 +22,19 @@ import java.util.List;
 public class HolidayController {
 
     private final HolidayService holidayService;
+
+    /**
+     * The entities this caller may administer holidays for.
+     *
+     * Feeds the screen's country picker, so the UI can only offer what the writes below would
+     * accept. Before this the screen was hard-wired to the caller's own `paysId`, and the list
+     * endpoint took any `pays` the query string asked for.
+     */
+    @GetMapping("/pays")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<Map<String, Object>>> scopedPays() {
+        return ResponseEntity.ok(holidayService.scopedPays());
+    }
 
     /** GET /api/hr/admin/holidays?pays=1&year=2026 */
     @GetMapping

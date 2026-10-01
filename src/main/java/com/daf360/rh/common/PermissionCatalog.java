@@ -45,6 +45,17 @@ public final class PermissionCatalog {
     public static final String RESPONSE_LEAVE          = "RESPONSE_LEAVE";
     public static final String GET_GLOBAL_LEAVES       = "GET_GLOBAL_LEAVES";
     public static final String SETTLE_LEAVES           = "SETTLE_LEAVES";
+    /* Carried over with the congé module from the timesheet application (2026-09-28). The
+       five above were already declared here; these four govern the screens that had no RH
+       equivalent — the team history, the country-wide statistics, bulk approval and archive.
+       Codes unchanged so a role already holding them in the timesheet keeps working. */
+    public static final String GET_EMPLOYEES_LEAVES    = "GET_EMPLOYEES_LEAVES";
+    public static final String GET_HR_STATS            = "GET_HR_STATS";
+    public static final String BULK_APPROVE_LEAVES     = "BULK_APPROVE_LEAVES";
+    public static final String DELETE_LEAVE            = "DELETE_LEAVE";
+    /* Administering the leave-type catalogue: the screen that decides what a congé IS.
+       Separate from DELETE_LEAVE, which is about one request. */
+    public static final String CREATE_ABSENCE_TYPE     = "CREATE_ABSENCE_TYPE";
     public static final String GET_CATEGORIES          = "GET_CATEGORIES";
     public static final String CREATE_CATEGORY         = "CREATE_CATEGORY";
     public static final String UPDATE_CATEGORY         = "UPDATE_CATEGORY";
@@ -176,7 +187,9 @@ public final class PermissionCatalog {
         new PermGroup("Pays",                List.of(GET_PAYS, CREATE_PAYS, UPDATE_PAYS, DELETE_PAYS)),
         new PermGroup("Jours fériés",        List.of(GET_HOLIDAYS, CREATE_HOLIDAY, UPDATE_HOLIDAY, DELETE_HOLIDAY)),
         new PermGroup("Rôles & Permissions", List.of(GET_PERMISSIONS, GET_ROLES, CREATE_ROLE, UPDATE_ROLE, DELETE_ROLE, HR_ADMIN_ROLES)),
-        new PermGroup("Congés",              List.of(GET_LEAVES, ADD_LEAVE, RESPONSE_LEAVE, GET_GLOBAL_LEAVES, SETTLE_LEAVES)),
+        new PermGroup("Congés",              List.of(GET_LEAVES, ADD_LEAVE, RESPONSE_LEAVE, GET_GLOBAL_LEAVES, SETTLE_LEAVES,
+                                                     GET_EMPLOYEES_LEAVES, GET_HR_STATS, BULK_APPROVE_LEAVES, DELETE_LEAVE,
+                                                     CREATE_ABSENCE_TYPE)),
         new PermGroup("Catégories",          List.of(GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY)),
         new PermGroup("Timesheets",          List.of(GET_TSR, CREATE_TSR, RESPOND_TSR, GET_GLOBAL_TSR)),
         new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND, RH_HIRE_CANDIDATE, APPROVE_HIRING_COST, RH_MANAGE_PAYSLIPS)),
