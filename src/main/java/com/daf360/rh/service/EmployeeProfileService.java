@@ -417,6 +417,8 @@ public class EmployeeProfileService {
      */
     private static final java.util.Map<String, String> EMPLOYEE_SORT_COLUMNS = java.util.Map.of(
         "fullName",        "u.fullName",
+        // Matricule de paie — la colonne « Matricule » de /payroll/engine-results.
+        "employeeId",      "ep.payroll_matricule",
         "grade",           "g.label_fr",
         "department",      "d.label_fr",
         "pays",            "p.french_label",
@@ -559,7 +561,7 @@ public class EmployeeProfileService {
         com.daf360.rh.security.PaysScopeContext.Scope scope = tenantService.getPaysScope();
         List<com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto> paysList =
             jdbcTemplate.query(
-                "SELECT DISTINCT p.id, p.french_label " +
+                "SELECT DISTINCT p.id, p.french_label, p.english_label " +
                 "FROM [dbo].[pays] p " +
                 "JOIN [dbo].[Users] u ON u.pays_id = p.id " +
                 "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
@@ -568,28 +570,35 @@ public class EmployeeProfileService {
                 (scope.unfiltered() ? "" : "  AND p.id IN (" + placeholders(scope.paysIds().size()) + ") ") +
                 "ORDER BY p.french_label",
                 (rs, i) -> new com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto(
-                    String.valueOf(rs.getLong("id")), rs.getString("french_label")),
+                    String.valueOf(rs.getLong("id")), rs.getString("french_label"),
+                    rs.getString("english_label")),
                 scope.unfiltered() ? new Object[0] : scope.paysIds().toArray());
 
         // Department / grade: value IS the label — /employees matches on label_fr,
-        // since employee_profiles rows may predate the dimension FKs.
+        // since employee_profiles rows may predate the dimension FKs. Grouped on
+        // label_fr (not DISTINCT over both columns) so one French label stays one
+        // entry even if two rows disagree on the English one.
         List<com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto> departmentList =
             jdbcTemplate.query(
-                "SELECT DISTINCT d.label_fr " +
+                "SELECT d.label_fr, MAX(d.label_en) AS label_en " +
                 "FROM [dbo].[departments] d " +
                 "WHERE d.is_active = 1 AND d.label_fr IS NOT NULL " +
+                "GROUP BY d.label_fr " +
                 "ORDER BY d.label_fr",
                 (rs, i) -> new com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto(
-                    rs.getString("label_fr"), rs.getString("label_fr")));
+                    rs.getString("label_fr"), rs.getString("label_fr"),
+                    rs.getString("label_en")));
 
         List<com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto> gradeList =
             jdbcTemplate.query(
-                "SELECT DISTINCT g.label_fr " +
+                "SELECT g.label_fr, MAX(g.label_en) AS label_en " +
                 "FROM [dbo].[grades] g " +
                 "WHERE g.is_active = 1 AND g.label_fr IS NOT NULL " +
+                "GROUP BY g.label_fr " +
                 "ORDER BY g.label_fr",
                 (rs, i) -> new com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto(
-                    rs.getString("label_fr"), rs.getString("label_fr")));
+                    rs.getString("label_fr"), rs.getString("label_fr"),
+                    rs.getString("label_en")));
 
         // Raw codes only — contract_type is a free varchar holding two generations
         // of codes (PERMANENT/FIXED_TERM… and CDI/CDD/…); the client translates.

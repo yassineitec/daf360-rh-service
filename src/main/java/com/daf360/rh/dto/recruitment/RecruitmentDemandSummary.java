@@ -12,6 +12,8 @@ public class RecruitmentDemandSummary {
     private String jobTitle;
     private String jobExactTitle;
     private String department;
+    /** English label of the department (admin → données de référence), display-only. */
+    private String departmentLabelEn;
     private RecruitmentDemandStatus statut;
     private String urgencyLevelLabel;
     private String recruitmentReason;

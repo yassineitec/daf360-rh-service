@@ -341,6 +341,7 @@ public class EmployeeRequestService {
         if (type != null) {
             dto.setTypeCode(type.getTypeCode());
             dto.setTypeDisplayNameFr(type.getDisplayNameFr());
+            dto.setTypeDisplayNameEn(type.getDisplayNameEn());
         }
         dto.setEmployeeName(resolveEmployeeName(r.getEmployeeProfileId()));
         dto.setPaysId(r.getPaysId());

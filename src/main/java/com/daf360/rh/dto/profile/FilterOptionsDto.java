@@ -21,5 +21,10 @@ public record FilterOptionsDto(
         List<FilterOptionDto> pays,
         List<String>          contractTypes
 ) {
-    public record FilterOptionDto(String value, String label) {}
+    /**
+     * {@code label} is the French label; {@code labelEn} the English one, display-only —
+     * the client picks per UI language and falls back to {@code label} when it is blank.
+     * {@code value} never changes with the language.
+     */
+    public record FilterOptionDto(String value, String label, String labelEn) {}
 }

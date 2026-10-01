@@ -416,6 +416,7 @@ public class RecruitmentDemandService {
         s.setJobTitle(d.getJobTitle());
         s.setJobExactTitle(d.getJobExactTitle());
         s.setDepartment(d.getDepartment());
+        s.setDepartmentLabelEn(resolveDepartmentLabelEn(d.getDepartmentId(), d.getDepartment()));
         s.setStatut(d.getStatut());
         s.setUrgencyLevelLabel(resolveListLabel(d.getUrgencyLevelId()));
         s.setRecruitmentReason(d.getRecruitmentReason());
@@ -425,6 +426,28 @@ public class RecruitmentDemandService {
         s.setSubmittedAt(d.getSubmittedAt());
         s.setCreatedByUserId(d.getCreatedByUserId());
         return s;
+    }
+
+    /**
+     * The department's English label, for the list's department filter in English.
+     *
+     * By `department_id` when the demand has one (V72+); older demands only carry the French
+     * label, so those are matched on `label_fr`. Null when nothing matches — the client then
+     * falls back to the stored French label.
+     */
+    private String resolveDepartmentLabelEn(Long departmentId, String labelFr) {
+        try {
+            List<String> rows = departmentId != null
+                    ? jdbc.queryForList("SELECT label_en FROM [dbo].[departments] WHERE id = ?",
+                            String.class, departmentId)
+                    : (labelFr == null || labelFr.isBlank())
+                        ? List.of()
+                        : jdbc.queryForList("SELECT TOP 1 label_en FROM [dbo].[departments] WHERE label_fr = ?",
+                            String.class, labelFr);
+            return rows.isEmpty() ? null : rows.get(0);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

@@ -119,11 +119,22 @@ public class OnboardingService {
                 ? candidateRepo.findByStatusInAndPaysId(PENDING_STATUSES, paysId)
                 : candidateRepo.findByStatusIn(PENDING_STATUSES);
 
+        // One read of the (small) pays table, so the list's "Entité" filter can show the
+        // entity name in both languages instead of a bare "#id".
+        Map<Long, String[]> paysLabels = new java.util.HashMap<>();
+        try {
+            jdbc.query("SELECT id, french_label, english_label FROM [dbo].[pays]",
+                    rs -> { paysLabels.put(rs.getLong("id"),
+                            new String[] { rs.getString("french_label"), rs.getString("english_label") }); });
+        } catch (Exception e) {
+            log.warn("[Onboarding] pays labels unavailable: {}", e.getMessage());
+        }
+
         return candidates.stream()
                 .map(c -> {
                     ItProvisioning prov = itProvisioningRepo.findByCandidateId(c.getId())
                             .orElse(null);
-                    return toListItem(c, prov);
+                    return toListItem(c, prov, paysLabels.get(c.getPaysId()));
                 })
                 .sorted(Comparator.comparing(
                         OnboardingListItem::getMs365EmailCreatedAt,
@@ -499,12 +510,14 @@ public class OnboardingService {
         });
     }
 
-    private OnboardingListItem toListItem(Candidate c, ItProvisioning prov) {
+    private OnboardingListItem toListItem(Candidate c, ItProvisioning prov, String[] paysLabel) {
         return OnboardingListItem.builder()
                 .candidateId(c.getId())
                 .candidateFullName(c.getFirstName() + " " + c.getLastName())
                 .appliedPosition(c.getAppliedPosition())
                 .paysId(c.getPaysId())
+                .paysLabel(paysLabel != null ? paysLabel[0] : null)
+                .paysLabelEn(paysLabel != null ? paysLabel[1] : null)
                 .expectedStartDate(c.getExpectedStartDate())
                 .candidateStatus(c.getStatus())
                 .ms365Email(prov != null ? prov.getMs365Email() : null)
