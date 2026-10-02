@@ -27,6 +27,15 @@ public record LeaveRequestDto(
         String collaborateurGender,
         Long responsableId,
         String responsableName,
+        /**
+         * The optional second approver, carried so an EDIT can put it back.
+         *
+         * Absent until the self-service edit form existed, and its absence was a silent data
+         * loss: the edit endpoint takes responsableAdjointId in its body, so a form that
+         * never received the current value would send null and clear a deputy the employee
+         * had chosen. No name beside it — nothing displays this, it only round-trips.
+         */
+        Long responsableAdjointId,
         Long paysId,
         String type,
         String typeLabel,
@@ -41,6 +50,8 @@ public record LeaveRequestDto(
         String reason,
         String etatDemande,
         String motifRefus,
+        /** Why it was cancelled — the employee's own account, never an approver's. V112. */
+        String motifAnnulation,
         LocalDate dateValidation,
         Long decidedBy,
         String decidedByName,

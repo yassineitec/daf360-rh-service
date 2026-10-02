@@ -1,13 +1,17 @@
 package com.daf360.rh.mapper;
 
 import com.daf360.rh.domain.AbsenceType;
+import com.daf360.rh.domain.LeaveModificationRequest;
 import com.daf360.rh.domain.LeaveRequest;
+import com.daf360.rh.domain.enums.ModificationType;
 import com.daf360.rh.repository.AbsenceTypeRepository;
+import com.daf360.rh.dto.leave.LeaveModificationDto;
 import com.daf360.rh.dto.leave.LeaveRequestDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -68,6 +72,7 @@ public class LeaveRequestMapper {
                 face.gender(),
                 e.getResponsableId(),
                 names.get(e.getResponsableId()),
+                e.getResponsableAdjointId(),
                 e.getPaysId(),
                 e.getType(),
                 e.getType() == null ? null : typeLabels.getOrDefault(e.getType(), e.getType()),
@@ -81,6 +86,7 @@ public class LeaveRequestMapper {
                 e.getReason(),
                 e.getEtatDemande() == null ? null : e.getEtatDemande().name(),
                 e.getMotifRefus(),
+                e.getMotifAnnulation(),
                 e.getDateValidation(),
                 e.getDecidedBy(),
                 names.get(e.getDecidedBy()),
@@ -107,6 +113,89 @@ public class LeaveRequestMapper {
             out.put(t.getCode(), t.getLabel(lang));
         }
         return out;
+    }
+
+    // ═══ Modification proposals ══════════════════════════════════════════════
+
+    /**
+     * A page of modification proposals, each paired with the congé it stands against.
+     *
+     * Takes the leaves as a map the caller has already loaded rather than loading them here:
+     * the service needs them anyway to compute the delta, and fetching them twice would undo
+     * the batching this class exists for. A proposal whose leave is missing from the map is
+     * still rendered — the proposal is the row, and a blank "original" column is more useful
+     * than a 500.
+     */
+    public List<LeaveModificationDto> toModificationDtos(Collection<LeaveModificationRequest> rows,
+                                                         Map<Long, LeaveRequest> leaves,
+                                                         String lang) {
+        Set<Long> ids = new HashSet<>();
+        for (LeaveModificationRequest r : rows) {
+            if (r.getCollaborateurId() != null) ids.add(r.getCollaborateurId());
+            if (r.getResponsableId() != null)   ids.add(r.getResponsableId());
+        }
+        Map<Long, String> names = namesFor(ids);
+        Map<Long, Face> faces = facesFor(ids);
+        Map<String, String> labels = typeLabels(lang);
+
+        return rows.stream()
+                .map(r -> toModificationDto(r, leaves.get(r.getAbsenceId()), lang, names, faces, labels))
+                .toList();
+    }
+
+    /** One row, resolving its own names. Use {@link #toModificationDtos} for a page. */
+    public LeaveModificationDto toModificationDto(LeaveModificationRequest r, LeaveRequest leave,
+                                                  String lang) {
+        return toModificationDtos(List.of(r),
+                leave == null ? Map.of() : Map.of(leave.getId(), leave), lang).get(0);
+    }
+
+    private LeaveModificationDto toModificationDto(LeaveModificationRequest r, LeaveRequest leave,
+                                                   String lang, Map<Long, String> names,
+                                                   Map<Long, Face> faces,
+                                                   Map<String, String> typeLabels) {
+        Face face = faces.getOrDefault(r.getCollaborateurId(), new Face(null, null, null));
+
+        // What the change costs or gives back. Null when either side is unknown rather than
+        // zero: "no change" and "cannot say" are different answers, and an approver reading a
+        // confident 0 for a leave that failed to load would be misinformed.
+        BigDecimal delta = null;
+        if (leave != null && leave.getTotalJours() != null) {
+            BigDecimal proposed = r.getType() == ModificationType.ANNULATION
+                    ? BigDecimal.ZERO                  // a cancellation returns the whole leave
+                    : r.getNouveauTotal();
+            if (proposed != null) {
+                delta = proposed.subtract(leave.getTotalJours());
+            }
+        }
+
+        return LeaveModificationDto.builder()
+                .id(r.getId())
+                .type(r.getType() == null ? null : r.getType().name())
+                .typeLabel(r.getType() == null ? null : r.getType().getLabel(lang))
+                .etat(r.getEtat() == null ? null : r.getEtat().name())
+                .etatLabel(r.getEtat() == null ? null : r.getEtat().getLabel(lang))
+                .nouvelleDateDebut(r.getNouvelleDateDebut())
+                .nouvelleDateFin(r.getNouvelleDateFin())
+                .nouveauTotal(r.getNouveauTotal())
+                .deltaJours(delta)
+                .motif(r.getMotif())
+                .motifRefus(r.getMotifRefus())
+                .absenceId(r.getAbsenceId())
+                .absenceType(leave == null ? null : leave.getType())
+                .absenceTypeLabel(leave == null || leave.getType() == null
+                        ? null : typeLabels.getOrDefault(leave.getType(), leave.getType()))
+                .absenceDateDebut(leave == null ? null : leave.getDateDebut())
+                .absenceDateFin(leave == null ? null : leave.getDateFin())
+                .absenceTotalJours(leave == null ? null : leave.getTotalJours())
+                .collaborateurId(r.getCollaborateurId())
+                .collaborateurNom(names.get(r.getCollaborateurId()))
+                .collaborateurAvatarUrl(face.photoUrl())
+                .responsableId(r.getResponsableId())
+                .responsableNom(names.get(r.getResponsableId()))
+                .createdAt(r.getCreatedAt())
+                .dateValidation(r.getDateValidation())
+                .build();
     }
 
     private Set<Long> idsIn(Collection<LeaveRequest> rows) {

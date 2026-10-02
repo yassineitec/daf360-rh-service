@@ -7,6 +7,9 @@ import com.daf360.rh.domain.enums.LeaveCategory;
 import com.daf360.rh.dto.leave.*;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.notification.NotificationEntityType;
+import com.daf360.rh.notification.NotificationRoutingService;
+import com.daf360.rh.notification.RoutingContext;
 import com.daf360.rh.repository.AbsenceTypeRepository;
 import com.daf360.rh.repository.LeaveRequestRepository;
 import com.daf360.rh.security.PaysScopeContext;
@@ -78,6 +81,8 @@ public class LeaveRequestService {
     private final TenantService tenantService;
     /** Local-first storage plus the best-effort SharePoint mirror — see attachJustification. */
     private final EmployeeDocumentService documents;
+    /** Admin-configurable recipients and wording — see notifyLeave. */
+    private final NotificationRoutingService routing;
 
     // ═══ The request form ════════════════════════════════════════════════════
 
@@ -188,6 +193,22 @@ public class LeaveRequestService {
         log.info("Leave request {} created for user {} by {} ({} {} days, {} to {}){}",
                 saved.getId(), collaborateurId, actorId, dto.getType(), total, from, to,
                 settle ? " [régularisation]" : "");
+
+        /*
+         * Both approvers are told, as two dispatches.
+         *
+         * The routing engine's SUBJECT mode resolves ONE user, and a congé may name a
+         * responsable and a deputy who may each decide it. Telling only the first would make
+         * the deputy a fallback nobody can use, since they would never learn there was
+         * anything to fall back on.
+         *
+         * A régularisation notifies nobody: HR filed it already approved, so there is no
+         * queue it lands in and no decision anyone is waiting to make.
+         */
+        if (!settle) {
+            notifyLeave("LEAVE_SUBMITTED", saved, saved.getResponsableId(), Map.of());
+            notifyLeave("LEAVE_SUBMITTED", saved, saved.getResponsableAdjointId(), Map.of());
+        }
         return saved;
     }
 
@@ -208,7 +229,22 @@ public class LeaveRequestService {
             throw new AppException(ErrorCode.REQUEST_WRONG_STATUS,
                     "Seule une demande en attente peut être modifiée.");
         }
-        if (!canSettle && !existing.getCollaborateurId().equals(actorId)) {
+        /*
+         * WHO MAY EDIT: the employee, one of the two approvers THEY chose, or HR.
+         *
+         * The approvers were missing, and that was wrong by the process rather than by the
+         * code: a responsable who may APPROVE a request — committing the employee's balance —
+         * could not correct a date on it first, and had to refuse it and ask for a resubmit.
+         *
+         * Approver, not "any manager": the right follows the request's own responsable /
+         * responsable adjoint, so it cannot reach a congé this person was never asked to
+         * decide.
+         */
+        boolean isOwner    = existing.getCollaborateurId().equals(actorId);
+        boolean isApprover = actorId != null
+                && (actorId.equals(existing.getResponsableId())
+                 || actorId.equals(existing.getResponsableAdjointId()));
+        if (!canSettle && !isOwner && !isApprover) {
             throw new AppException(ErrorCode.FORBIDDEN,
                     "Cette demande appartient à un autre collaborateur.");
         }
@@ -231,6 +267,39 @@ public class LeaveRequestService {
         validateTypeRules(type, total, dto.getJustificatif());
         if (existing.isPending()) {
             assertBalanceAllows(existing.getCollaborateurId(), type, total);
+        }
+
+        /*
+         * AN APPROVED REQUEST HAS ALREADY MOVED A BALANCE, SO EDITING IT MUST MOVE IT AGAIN.
+         * -----------------------------------------------------------------------------
+         * This was missing, and it silently corrupted the solde: changing an approved 5-day
+         * congé to 10 days left the employee debited 5, keeping 5 days they had spent. The
+         * comment above correctly explains why the request must not be RE-VALIDATED against
+         * the balance — and that reasoning was mistakenly carried over to the ADJUSTMENT,
+         * which is a different thing.
+         *
+         * Two cases, because the type can change too:
+         *   same type     — move only the DIFFERENCE, like applyModification. One write, and
+         *                   it never dips the balance below where it will settle.
+         *   type changed  — the two types may draw on different balances (congé vs maladie vs
+         *                   télétravail, per AbsenceType.balanceField), so the old one is
+         *                   refunded in full and the new one debited in full. A delta across
+         *                   two different columns is meaningless.
+         *
+         * Only for a request that is already VALIDE: a pending one has never been debited.
+         */
+        if (existing.getEtatDemande() == DemandeEtat.VALIDE) {
+            AbsenceType oldType = requireType(existing.getType());
+            BigDecimal oldTotal = existing.getTotalJours() == null ? BigDecimal.ZERO : existing.getTotalJours();
+
+            if (oldType.getId().equals(type.getId())) {
+                BigDecimal delta = total.subtract(oldTotal);
+                if (delta.signum() > 0)      debit(existing.getCollaborateurId(), type, delta);
+                else if (delta.signum() < 0) refund(existing.getCollaborateurId(), type, delta.negate());
+            } else {
+                refund(existing.getCollaborateurId(), oldType, oldTotal);
+                debit(existing.getCollaborateurId(), type, total);
+            }
         }
 
         existing.setType(dto.getType());
@@ -283,7 +352,15 @@ public class LeaveRequestService {
 
         request.setDateValidation(LocalDate.now());
         request.setDecidedBy(actorId);
-        return repository.save(request);
+        LeaveRequest saved = repository.save(request);
+
+        // The employee learns the verdict. Until this existed they found out by opening the
+        // history and noticing — which is how the timesheet's EmailAspect earned its keep.
+        notifyLeave("LEAVE_DECIDED", saved, saved.getCollaborateurId(), Map.of(
+                "decision",   Boolean.TRUE.equals(decision.getApproved()) ? "validé" : "refusé",
+                "approver",   nameOf(actorId),
+                "motifRefus", saved.getMotifRefus() == null ? "" : "Motif : " + saved.getMotifRefus()));
+        return saved;
     }
 
     /**
@@ -353,12 +430,115 @@ public class LeaveRequestService {
      */
     @Transactional
     public LeaveRequest archive(Long id, Long actorId) {
+        return archive(id, actorId, null);
+    }
+
+    /** Same, recording why — see {@link LeaveRequest#getMotifAnnulation()}. */
+    @Transactional
+    public LeaveRequest archive(Long id, Long actorId, String motifAnnulation) {
         LeaveRequest request = require(id);
 
         if (request.getEtatDemande() == DemandeEtat.VALIDE) {
             refund(request.getCollaborateurId(), requireType(request.getType()), request.getTotalJours());
         }
         request.setEtatDemande(DemandeEtat.ARCHIVE);
+        request.setDecidedBy(actorId);
+        if (motifAnnulation != null && !motifAnnulation.isBlank()) {
+            request.setMotifAnnulation(motifAnnulation.trim());
+        }
+        return repository.save(request);
+    }
+
+    /**
+     * The employee takes back a request nobody has decided yet.
+     *
+     * NOT the same act as {@link #archive}, which is HR's power to remove ANY congé and is
+     * gated on DELETE_LEAVE. This is the employee's own, gated on ADD_LEAVE: whoever may file
+     * may unfile, and until this existed somebody who filed by mistake had to wait for a
+     * manager to refuse it.
+     *
+     * NO REFUND, and that is not an oversight: a pending request has never been debited — the
+     * debit happens in {@link #decide} at approval. Refunding here would credit days that were
+     * never taken.
+     *
+     * Routed through ARCHIVE rather than a delete, because a congé is part of the employee's
+     * record even once withdrawn.
+     */
+    @Transactional
+    public LeaveRequest withdraw(Long id, String motif, Long actorId) {
+        LeaveRequest request = require(id);
+
+        if (!request.getCollaborateurId().equals(actorId)) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                    "Cette demande appartient à un autre collaborateur.");
+        }
+        if (!request.isPending()) {
+            throw new AppException(ErrorCode.REQUEST_WRONG_STATUS,
+                    "Seule une demande en attente peut être retirée. Un congé déjà validé "
+                    + "s'annule par une demande d'annulation.");
+        }
+        if (motif == null || motif.isBlank()) {
+            throw new AppException(ErrorCode.INVALID_TRANSITION,
+                    "Un motif est requis pour retirer une demande.");
+        }
+
+        request.setEtatDemande(DemandeEtat.ARCHIVE);
+        request.setDecidedBy(actorId);
+        request.setMotifAnnulation(motif.trim());
+        LeaveRequest saved = repository.save(request);
+
+        // The approvers are told why it left their queue. A request that simply vanishes
+        // reads as a bug; one that says "withdrawn, because…" reads as a decision.
+        notifyLeave("LEAVE_WITHDRAWN", saved, saved.getResponsableId(),
+                Map.of("motif", motif.trim()));
+        notifyLeave("LEAVE_WITHDRAWN", saved, saved.getResponsableAdjointId(),
+                Map.of("motif", motif.trim()));
+        return saved;
+    }
+
+    /**
+     * Move an approved congé to new dates, adjusting the balance by the DIFFERENCE.
+     *
+     * Called by {@link LeaveModificationService} when HR approves a MODIFICATION proposal.
+     * It lives here, not there, because the balance rules live here: which balance a type
+     * draws on ({@code balanceField}), the −3 tolerance, and the COALESCE that stops a NULL
+     * balance being erased. A second class adjusting balances its own way is how the two
+     * drift.
+     *
+     * ONLY THE DELTA MOVES. Refunding the old total and debiting the new one would be two
+     * writes where one will do, and would fail the tolerance check in the gap for an employee
+     * already near their limit — their balance would dip by the old total before the refund
+     * landed, which is an artefact of the implementation rather than anything they did.
+     *
+     * A SHORTER leave gives days back and is always allowed; a LONGER one is a fresh draw and
+     * is checked against the tolerance like any other.
+     *
+     * Recomputing the total is the CALLER's job — it needs the entity's weekend pattern and
+     * holiday calendar, which the proposal carries and this method does not re-derive.
+     */
+    @Transactional
+    public LeaveRequest applyModification(Long id, LocalDate newFrom, LocalDate newTo,
+                                          BigDecimal newTotal, Long actorId) {
+        LeaveRequest request = require(id);
+
+        if (request.getEtatDemande() != DemandeEtat.VALIDE) {
+            throw new AppException(ErrorCode.INVALID_TRANSITION,
+                    "Seul un congé validé peut être modifié.");
+        }
+
+        AbsenceType type = requireType(request.getType());
+        BigDecimal oldTotal = request.getTotalJours() == null ? BigDecimal.ZERO : request.getTotalJours();
+        BigDecimal delta = newTotal.subtract(oldTotal);
+
+        if (delta.signum() > 0) {
+            debit(request.getCollaborateurId(), type, delta);
+        } else if (delta.signum() < 0) {
+            refund(request.getCollaborateurId(), type, delta.negate());
+        }
+
+        request.setDateDebut(newFrom);
+        request.setDateFin(newTo);
+        request.setTotalJours(newTotal);
         request.setDecidedBy(actorId);
         return repository.save(request);
     }
@@ -373,6 +553,61 @@ public class LeaveRequestService {
      * Does not filter on `active`: a retired type must still resolve, or archiving an old
      * request would fail to refund its days and a report could not label it.
      */
+    // ═══ Notifications ═══════════════════════════════════════════════════════
+
+    /**
+     * Fires one congé event through the admin-configurable routing engine.
+     *
+     * NOT a hardcoded recipient. Who receives this is a row in
+     * notification_routing_recipients, retunable in Administration → Notifications without a
+     * deploy — the same engine the recruitment demands and the salary advances use. All this
+     * method decides is WHO THE EVENT IS ABOUT ({@code subjectUserId}), because that is
+     * per-event business data the engine cannot know: the chosen approver for the events that
+     * travel up, the employee for the ones that come back.
+     *
+     * Failure is swallowed deliberately. A notification that cannot be routed must not roll
+     * back an approved congé whose days have already moved — the decision is the transaction,
+     * the message is a consequence of it.
+     */
+    private void notifyLeave(String eventCode, LeaveRequest leave, Long subjectUserId,
+                             Map<String, String> extraVars) {
+        if (subjectUserId == null) {
+            return;
+        }
+        try {
+            Map<String, String> vars = new java.util.HashMap<>(Map.of(
+                    "employee", nameOf(leave.getCollaborateurId()),
+                    "type",     typeLabelOf(leave.getType()),
+                    "period",   periodOf(leave),
+                    "days",     leave.getTotalJours() == null ? "" : leave.getTotalJours().toPlainString()));
+            vars.putAll(extraVars);
+
+            routing.resolveAndDispatch(RoutingContext.builder()
+                    .eventCode(eventCode)
+                    .paysId(leave.getPaysId())
+                    .subjectUserId(subjectUserId)
+                    .entityType(NotificationEntityType.LEAVE)
+                    .entityId(leave.getId())
+                    .templateVars(vars)
+                    .build());
+        } catch (RuntimeException e) {
+            log.warn("Congé {} : notification {} non envoyée — {}", leave.getId(), eventCode, e.toString());
+        }
+    }
+
+    /** The catalogue label, falling back to the code — a retired type must still render. */
+    private String typeLabelOf(String code) {
+        if (code == null) return "";
+        return absenceTypes.findByCode(code).map(t -> t.getLabelFr()).orElse(code);
+    }
+
+    private String periodOf(LeaveRequest l) {
+        if (l.getDateDebut() == null) return "";
+        return l.getDateDebut().equals(l.getDateFin())
+                ? l.getDateDebut().toString()
+                : l.getDateDebut() + " au " + l.getDateFin();
+    }
+
     private AbsenceType requireType(String code) {
         return absenceTypes.findByCode(code)
                 .orElseThrow(() -> new AppException(ErrorCode.INVALID_TRANSITION,
@@ -882,10 +1117,17 @@ public class LeaveRequestService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    /**
+     * `fullName` for a user id.
+     *
+     * Returns "" rather than null for an unknown id: the notification templates interpolate
+     * this straight into a sentence, where a null prints the word "null" to whoever receives
+     * it. Callers that want to test for absence test for blank.
+     */
     String nameOf(Long userId) {
-        if (userId == null) return null;
+        if (userId == null) return "";
         List<String> rows = jdbcTemplate.queryForList(
                 "SELECT fullName FROM Users WHERE id = ?", String.class, userId);
-        return rows.isEmpty() ? null : rows.get(0);
+        return rows.isEmpty() || rows.get(0) == null ? "" : rows.get(0);
     }
 }

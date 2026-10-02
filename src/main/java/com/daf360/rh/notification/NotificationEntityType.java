@@ -22,7 +22,13 @@ public enum NotificationEntityType {
     RECRUITMENT_DEMAND,
     CONTRACT,
     /** An avance sur salaire (V103) — resolved by the frontend to the desk that can act on it. */
-    SALARY_ADVANCE;
+    SALARY_ADVANCE,
+    /**
+     * A congé (V113). One kind for the request and for any modification proposal filed
+     * against it: the proposal is only ever read beside the congé it contests, so a recipient
+     * landing on the congé lands in the right place either way.
+     */
+    LEAVE;
 
     /**
      * Parses a stored/configured value, tolerating null, blank and unknown names.

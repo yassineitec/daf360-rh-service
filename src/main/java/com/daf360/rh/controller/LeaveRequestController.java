@@ -411,6 +411,22 @@ public class LeaveRequestController {
      * Archive. The only removal there is — a congé stays part of the employee's record even
      * once cancelled, and an approved one has its days refunded on the way out.
      */
+    /**
+     * The employee takes back their own request, while it is still pending.
+     *
+     * ADD_LEAVE, not DELETE_LEAVE: whoever may file may unfile. The service refuses anything
+     * that is not the caller's own pending request, so the weaker code cannot reach further
+     * than archive() below — which stays HR's power to remove any congé at all.
+     */
+    @PutMapping("/{id}/withdraw")
+    @PreAuthorize("hasAuthority('ADD_LEAVE')")
+    public LeaveRequestDto withdraw(@PathVariable Long id,
+                                    @Valid @RequestBody LeaveWithdrawRequest body,
+                                    @RequestParam(defaultValue = "fr") String lang,
+                                    Authentication auth) {
+        return mapper.toDto(service.withdraw(id, body.getMotif(), actorId(auth)), lang);
+    }
+
     @PutMapping("/{id}/archive")
     @PreAuthorize("hasAuthority('DELETE_LEAVE')")
     public LeaveRequestDto archive(@PathVariable Long id,

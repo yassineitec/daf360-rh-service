@@ -53,6 +53,14 @@ public final class PermissionCatalog {
     public static final String GET_HR_STATS            = "GET_HR_STATS";
     public static final String BULK_APPROVE_LEAVES     = "BULK_APPROVE_LEAVES";
     public static final String DELETE_LEAVE            = "DELETE_LEAVE";
+    /* Modifying or cancelling a congé that is ALREADY VALIDATED — its own two-stage workflow
+       (responsable then RH for a modification, RH alone for an annulation), so its own codes.
+       Carried over unchanged from the timesheet with the congé module's second wave
+       (2026-10-01); seeded and granted by implication in V111. */
+    public static final String REQUEST_LEAVE_MODIFICATION   = "REQUEST_LEAVE_MODIFICATION";
+    public static final String RESPOND_MODIFICATION_MANAGER = "RESPOND_MODIFICATION_MANAGER";
+    public static final String RESPOND_MODIFICATION_HR      = "RESPOND_MODIFICATION_HR";
+    public static final String GET_LEAVE_MODIFICATIONS      = "GET_LEAVE_MODIFICATIONS";
     /* Administering the leave-type catalogue: the screen that decides what a congé IS.
        Separate from DELETE_LEAVE, which is about one request. */
     public static final String CREATE_ABSENCE_TYPE     = "CREATE_ABSENCE_TYPE";
@@ -190,6 +198,9 @@ public final class PermissionCatalog {
         new PermGroup("Congés",              List.of(GET_LEAVES, ADD_LEAVE, RESPONSE_LEAVE, GET_GLOBAL_LEAVES, SETTLE_LEAVES,
                                                      GET_EMPLOYEES_LEAVES, GET_HR_STATS, BULK_APPROVE_LEAVES, DELETE_LEAVE,
                                                      CREATE_ABSENCE_TYPE)),
+        new PermGroup("Modifications de congé",
+                                             List.of(REQUEST_LEAVE_MODIFICATION, RESPOND_MODIFICATION_MANAGER,
+                                                     RESPOND_MODIFICATION_HR, GET_LEAVE_MODIFICATIONS)),
         new PermGroup("Catégories",          List.of(GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY)),
         new PermGroup("Timesheets",          List.of(GET_TSR, CREATE_TSR, RESPOND_TSR, GET_GLOBAL_TSR)),
         new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND, RH_HIRE_CANDIDATE, APPROVE_HIRING_COST, RH_MANAGE_PAYSLIPS)),
