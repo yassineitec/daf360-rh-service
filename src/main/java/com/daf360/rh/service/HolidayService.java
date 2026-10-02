@@ -6,6 +6,8 @@ import com.daf360.rh.dto.admin.HolidayResponseDto;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.repository.HolidayRepository;
+import com.daf360.rh.security.PaysScopeContext;
+import com.daf360.rh.security.TenantService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
@@ -16,6 +18,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -33,11 +36,56 @@ public class HolidayService {
     private final HolidayRepository holidayRepo;
     private final AuditService      auditService;
     private final JdbcTemplate      jdbcTemplate;
+    /** V74 per-role country scope — see assertInScope. */
+    private final TenantService     tenantService;
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
+    /**
+     * Entities this caller may read or edit holidays for, in week-order of the reference list.
+     *
+     * Follows {@code ReferenceDataController.readableP()}: ALL means no filter, LIST/OWN means
+     * exactly those entities, and an UNRESOLVED scope is permissive — a token with no pays
+     * claim gets today's behaviour rather than an empty screen, which is a louder failure than
+     * a leak on data every employee can see anyway.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> scopedPays() {
+        PaysScopeContext.Scope scope = tenantService.getPaysScope();
+        String where = scope.unfiltered() ? "" : " AND p.id IN (:ids) ";
+        String sql = """
+                SELECT p.id, p.french_label, p.english_label, p.iso_code
+                FROM [dbo].[pays] p
+                WHERE ISNULL(p.deleted, 0) = 0
+                  AND (EXISTS (SELECT 1 FROM [dbo].[Users] u WHERE u.pays_id = p.id)
+                       OR EXISTS (SELECT 1 FROM [dbo].[holidays] h WHERE h.pays_id = p.id))
+                """ + where + " ORDER BY p.french_label";
+        if (scope.unfiltered()) {
+            return jdbcTemplate.queryForList(sql);
+        }
+        String ids = scope.paysIds().stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("-1");
+        return jdbcTemplate.queryForList(sql.replace(":ids", ids));
+    }
+
+    /**
+     * Refuses an entity outside the caller's scope.
+     *
+     * Applied to every write: the permission says "may edit holidays", it does not say "may
+     * edit ANY country's holidays", and until now a CREATE_HOLIDAY holder could post a
+     * paysId for a country they have nothing to do with.
+     */
+    private void assertInScope(Long paysId) {
+        PaysScopeContext.Scope scope = tenantService.getPaysScope();
+        if (scope.unfiltered() || paysId == null) return;
+        if (!scope.paysIds().contains(paysId)) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                    "Cette entité n'est pas dans votre périmètre.");
+        }
+    }
+
     @Transactional(readOnly = true)
     public List<HolidayResponseDto> list(Long paysId, Integer year) {
+        assertInScope(paysId);
         List<Holiday> holidays;
         if (year != null) {
             LocalDate from = LocalDate.of(year, 1, 1);
@@ -50,6 +98,7 @@ public class HolidayService {
     }
 
     public HolidayResponseDto create(HolidayCreateDto dto, Authentication auth) {
+        assertInScope(dto.getPaysId());
         if (holidayRepo.existsByPaysIdAndDateHoliday(dto.getPaysId(), dto.getDateHoliday())) {
             throw new AppException(ErrorCode.ALREADY_EXISTS,
                     "Un jour férié existe déjà pour le " + dto.getDateHoliday());
@@ -71,6 +120,9 @@ public class HolidayService {
 
     public HolidayResponseDto update(Long id, HolidayCreateDto dto, Authentication auth) {
         Holiday h = findOrThrow(id);
+        // The row decides the entity, not the body: an id names a holiday that already
+        // belongs to a country, and moving it elsewhere is not something this screen does.
+        assertInScope(h.getPaysId());
         h.setFrenchLabel(dto.getFrenchLabel());
         h.setEnglishLabel(dto.getEnglishLabel());
         if (dto.getIsRecurring() != null) h.setIsRecurring(dto.getIsRecurring());
@@ -82,6 +134,7 @@ public class HolidayService {
 
     public void delete(Long id, Authentication auth) {
         Holiday h = findOrThrow(id);
+        assertInScope(h.getPaysId());
         h.setDeleted(true);
         h.setDeletedAt(LocalDateTime.now());
         holidayRepo.save(h);

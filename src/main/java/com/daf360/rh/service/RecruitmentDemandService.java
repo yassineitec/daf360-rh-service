@@ -15,7 +15,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -157,18 +159,28 @@ public class RecruitmentDemandService {
     public Page<RecruitmentDemandSummary> listByPays(Long paysId, RecruitmentDemandStatus statut, Pageable pageable) {
         Long effectivePaysId = tenantService.getEffectivePaysId();
         Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : paysId;
+        Pageable sorted = withDefaultSort(pageable);
         Page<RecruitmentDemand> page = (statut != null)
-                ? demandRepo.findByPaysIdAndStatutOrderBySubmittedAtDesc(resolvedPaysId, statut, pageable)
-                : demandRepo.findByPaysIdOrderBySubmittedAtDesc(resolvedPaysId, pageable);
+                ? demandRepo.findByPaysIdAndStatut(resolvedPaysId, statut, sorted)
+                : demandRepo.findByPaysId(resolvedPaysId, sorted);
         return page.map(this::toSummary);
     }
 
     @Transactional(readOnly = true)
     public Page<RecruitmentDemandSummary> listMine(Long userId, RecruitmentDemandStatus statut, Pageable pageable) {
+        Pageable sorted = withDefaultSort(pageable);
         Page<RecruitmentDemand> page = (statut != null)
-                ? demandRepo.findByCreatedByUserIdAndStatutOrderBySubmittedAtDesc(userId, statut, pageable)
-                : demandRepo.findByCreatedByUserIdOrderBySubmittedAtDesc(userId, pageable);
+                ? demandRepo.findByCreatedByUserIdAndStatut(userId, statut, sorted)
+                : demandRepo.findByCreatedByUserId(userId, sorted);
         return page.map(this::toSummary);
+    }
+
+    /** The caller's ?sort= when it sent one, else the historical order: newest submission first. */
+    private static Pageable withDefaultSort(Pageable pageable) {
+        return pageable.getSort().isSorted()
+                ? pageable
+                : PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+                        Sort.by(Sort.Direction.DESC, "submittedAt"));
     }
 
     @Transactional(readOnly = true)
@@ -404,6 +416,7 @@ public class RecruitmentDemandService {
         s.setJobTitle(d.getJobTitle());
         s.setJobExactTitle(d.getJobExactTitle());
         s.setDepartment(d.getDepartment());
+        s.setDepartmentLabelEn(resolveDepartmentLabelEn(d.getDepartmentId(), d.getDepartment()));
         s.setStatut(d.getStatut());
         s.setUrgencyLevelLabel(resolveListLabel(d.getUrgencyLevelId()));
         s.setRecruitmentReason(d.getRecruitmentReason());
@@ -413,6 +426,28 @@ public class RecruitmentDemandService {
         s.setSubmittedAt(d.getSubmittedAt());
         s.setCreatedByUserId(d.getCreatedByUserId());
         return s;
+    }
+
+    /**
+     * The department's English label, for the list's department filter in English.
+     *
+     * By `department_id` when the demand has one (V72+); older demands only carry the French
+     * label, so those are matched on `label_fr`. Null when nothing matches — the client then
+     * falls back to the stored French label.
+     */
+    private String resolveDepartmentLabelEn(Long departmentId, String labelFr) {
+        try {
+            List<String> rows = departmentId != null
+                    ? jdbc.queryForList("SELECT label_en FROM [dbo].[departments] WHERE id = ?",
+                            String.class, departmentId)
+                    : (labelFr == null || labelFr.isBlank())
+                        ? List.of()
+                        : jdbc.queryForList("SELECT TOP 1 label_en FROM [dbo].[departments] WHERE label_fr = ?",
+                            String.class, labelFr);
+            return rows.isEmpty() ? null : rows.get(0);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

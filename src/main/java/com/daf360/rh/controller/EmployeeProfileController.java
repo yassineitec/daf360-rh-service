@@ -197,9 +197,9 @@ public class EmployeeProfileController {
             // Faux par défaut : « les employés », ce sont ceux qui sont en service. Voir
             // EmployeeProfileService.listAllEmployees pour les statuts retenus.
             @RequestParam(defaultValue = "false") boolean includeInactive,
-            // No `sort` here: the query is hand-written JDBC and owns its ORDER BY
-            // (newest hire first). A Pageable sort would be silently ignored, so
-            // advertising one only invites a caller to trust it.
+            // `sort=key,asc|desc` is honoured for a whitelist of columns (fullName, grade,
+            // department, pays, contractType, lifecycleStatus, hireDate) — see
+            // EmployeeProfileService.employeeOrderBy. No sort = newest hire first.
             @PageableDefault(size = 12) Pageable pageable,
             Authentication auth) {
 

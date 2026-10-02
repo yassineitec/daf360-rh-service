@@ -410,6 +410,48 @@ public class EmployeeProfileService {
         return rows.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(rows.get(0));
     }
 
+    /**
+     * Sortable columns of the employee directory (`?sort=key,asc|desc`) → SQL expression.
+     * A whitelist, never the raw request value: the query is hand-assembled JDBC, so an
+     * unknown key is ignored rather than concatenated into the ORDER BY.
+     */
+    private static final java.util.Map<String, String> EMPLOYEE_SORT_COLUMNS = java.util.Map.of(
+        "fullName",        "u.fullName",
+        // Matricule de paie — la colonne « Matricule » de /payroll/engine-results.
+        "employeeId",      "ep.payroll_matricule",
+        "grade",           "g.label_fr",
+        "department",      "d.label_fr",
+        "pays",            "p.french_label",
+        "contractType",    "ep.contract_type",
+        "lifecycleStatus", "ep.lifecycle_status",
+        "hireDate",        "ep.hire_date");
+
+    /**
+     * ORDER BY for {@link #listAllEmployees}: the first recognised `sort` key, else the
+     * historical order (newest hire first).
+     *
+     * NULLs always sink to the bottom (SQL Server sorts them *first*, which would park every
+     * profile-less row at the top of page 1), and the u.fullName / u.id / ep.id tiebreakers
+     * keep OFFSET/FETCH deterministic: neither hire_date nor fullName is unique, and without
+     * them the same row can come back on two different pages.
+     */
+    static String employeeOrderBy(org.springframework.data.domain.Sort sort) {
+        for (org.springframework.data.domain.Sort.Order order : sort) {
+            String column = EMPLOYEE_SORT_COLUMNS.get(order.getProperty());
+            if (column == null) continue;
+            String dir = order.isAscending() ? "ASC" : "DESC";
+            // SQL Server rejects a column listed twice in ORDER BY (error 169), so the sorted
+            // column is dropped from the tiebreakers — sorting by fullName used to repeat it.
+            String tiebreakers = java.util.stream.Stream.of("u.fullName", "u.id", "ep.id")
+                    .filter(c -> !c.equals(column))
+                    .collect(java.util.stream.Collectors.joining(", "));
+            return "ORDER BY CASE WHEN " + column + " IS NULL THEN 1 ELSE 0 END, "
+                 + column + " " + dir + ", " + tiebreakers + " ";
+        }
+        return "ORDER BY CASE WHEN ep.hire_date IS NULL THEN 1 ELSE 0 END, "
+             + "ep.hire_date DESC, u.fullName, u.id, ep.id ";
+    }
+
     @Transactional(readOnly = true)
     public org.springframework.data.domain.Page<EmployeeListItemDto> listAllEmployees(
             ProfileFilterDto filter, Pageable pageable) {
@@ -492,8 +534,7 @@ public class EmployeeProfileService {
             // (duplicate names exist), and a user could join >1 profile row — without
             // u.id + ep.id the paged order shuffles, so the same row can return a
             // different profile/gender (or null) between identical requests.
-            "ORDER BY CASE WHEN ep.hire_date IS NULL THEN 1 ELSE 0 END, " +
-            "ep.hire_date DESC, u.fullName, u.id, ep.id " +
+            employeeOrderBy(pageable.getSort()) +
             "OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";
 
         List<EmployeeListItemDto> rows = jdbcTemplate.query(listSql, EMPLOYEE_ROW_MAPPER, args.toArray());
@@ -520,7 +561,7 @@ public class EmployeeProfileService {
         com.daf360.rh.security.PaysScopeContext.Scope scope = tenantService.getPaysScope();
         List<com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto> paysList =
             jdbcTemplate.query(
-                "SELECT DISTINCT p.id, p.french_label " +
+                "SELECT DISTINCT p.id, p.french_label, p.english_label " +
                 "FROM [dbo].[pays] p " +
                 "JOIN [dbo].[Users] u ON u.pays_id = p.id " +
                 "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
@@ -529,28 +570,35 @@ public class EmployeeProfileService {
                 (scope.unfiltered() ? "" : "  AND p.id IN (" + placeholders(scope.paysIds().size()) + ") ") +
                 "ORDER BY p.french_label",
                 (rs, i) -> new com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto(
-                    String.valueOf(rs.getLong("id")), rs.getString("french_label")),
+                    String.valueOf(rs.getLong("id")), rs.getString("french_label"),
+                    rs.getString("english_label")),
                 scope.unfiltered() ? new Object[0] : scope.paysIds().toArray());
 
         // Department / grade: value IS the label — /employees matches on label_fr,
-        // since employee_profiles rows may predate the dimension FKs.
+        // since employee_profiles rows may predate the dimension FKs. Grouped on
+        // label_fr (not DISTINCT over both columns) so one French label stays one
+        // entry even if two rows disagree on the English one.
         List<com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto> departmentList =
             jdbcTemplate.query(
-                "SELECT DISTINCT d.label_fr " +
+                "SELECT d.label_fr, MAX(d.label_en) AS label_en " +
                 "FROM [dbo].[departments] d " +
                 "WHERE d.is_active = 1 AND d.label_fr IS NOT NULL " +
+                "GROUP BY d.label_fr " +
                 "ORDER BY d.label_fr",
                 (rs, i) -> new com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto(
-                    rs.getString("label_fr"), rs.getString("label_fr")));
+                    rs.getString("label_fr"), rs.getString("label_fr"),
+                    rs.getString("label_en")));
 
         List<com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto> gradeList =
             jdbcTemplate.query(
-                "SELECT DISTINCT g.label_fr " +
+                "SELECT g.label_fr, MAX(g.label_en) AS label_en " +
                 "FROM [dbo].[grades] g " +
                 "WHERE g.is_active = 1 AND g.label_fr IS NOT NULL " +
+                "GROUP BY g.label_fr " +
                 "ORDER BY g.label_fr",
                 (rs, i) -> new com.daf360.rh.dto.profile.FilterOptionsDto.FilterOptionDto(
-                    rs.getString("label_fr"), rs.getString("label_fr")));
+                    rs.getString("label_fr"), rs.getString("label_fr"),
+                    rs.getString("label_en")));
 
         // Raw codes only — contract_type is a free varchar holding two generations
         // of codes (PERMANENT/FIXED_TERM… and CDI/CDD/…); the client translates.

@@ -12,14 +12,17 @@ import java.util.List;
 
 public interface RecruitmentDemandRepository extends JpaRepository<RecruitmentDemand, Long> {
 
-    Page<RecruitmentDemand> findByPaysIdOrderBySubmittedAtDesc(Long paysId, Pageable pageable);
+    // No OrderBy in these names: a static OrderBy is applied *before* the Pageable's sort, which
+    // made the front's ?sort= a mere tie-breaker. The default (newest first) is now set by the
+    // service when the caller sends no sort — see RecruitmentDemandService.withDefaultSort.
+    Page<RecruitmentDemand> findByPaysId(Long paysId, Pageable pageable);
 
-    Page<RecruitmentDemand> findByPaysIdAndStatutOrderBySubmittedAtDesc(
+    Page<RecruitmentDemand> findByPaysIdAndStatut(
             Long paysId, RecruitmentDemandStatus statut, Pageable pageable);
 
-    Page<RecruitmentDemand> findByCreatedByUserIdOrderBySubmittedAtDesc(Long userId, Pageable pageable);
+    Page<RecruitmentDemand> findByCreatedByUserId(Long userId, Pageable pageable);
 
-    Page<RecruitmentDemand> findByCreatedByUserIdAndStatutOrderBySubmittedAtDesc(
+    Page<RecruitmentDemand> findByCreatedByUserIdAndStatut(
             Long userId, RecruitmentDemandStatus statut, Pageable pageable);
 
     List<RecruitmentDemand> findByPaysIdAndStatutOrderByJobTitleAsc(
