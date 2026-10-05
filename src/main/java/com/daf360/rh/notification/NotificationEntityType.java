@@ -28,7 +28,9 @@ public enum NotificationEntityType {
      * against it: the proposal is only ever read beside the congé it contests, so a recipient
      * landing on the congé lands in the right place either way.
      */
-    LEAVE;
+    LEAVE,
+    /** A short paid absence in minutes (V114) — its own kind, its own screens. */
+    AUTORISATION;
 
     /**
      * Parses a stored/configured value, tolerating null, blank and unknown names.
