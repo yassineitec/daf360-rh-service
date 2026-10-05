@@ -30,7 +30,9 @@ public enum NotificationEntityType {
      */
     LEAVE,
     /** A short paid absence in minutes (V114) — its own kind, its own screens. */
-    AUTORISATION;
+    AUTORISATION,
+    /** A day or half day of remote work (V116) — its own kind, its own screens. */
+    TELETRAVAIL;
 
     /**
      * Parses a stored/configured value, tolerating null, blank and unknown names.
