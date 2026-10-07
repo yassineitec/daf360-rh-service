@@ -104,10 +104,10 @@ public class EmployeeProfile {
     private String personalPhone;
 
     /**
-     * Payroll register number — zero-padded decimal, min width 2 ("01", "10", "206").
-     * Allocated once, at activation, by {@code PayrollMatriculeService}; never
-     * regenerated and never gap-filled, because departed employees' numbers stay
-     * referenced by historical payslips. Distinct from {@code Users.employee_id}
+     * Payroll register number transmitted by the accounting firm ("01", "10", "206").
+     * Typed in by RH on the Emploi tab, write-once: editable while empty, locked once set
+     * (EmployeeProfileService.applyPayrollMatricule), because departed employees' numbers
+     * stay referenced by historical payslips. Distinct from {@code Users.employee_id}
      * (this app's own auto-generated "matricule", format [NOM3][PRE3][userId], see
      * EmployeeIdGeneratorService) — the two are unrelated numbering systems, do not
      * confuse them. Also the field {@code PayslipBatchService} matches against to find

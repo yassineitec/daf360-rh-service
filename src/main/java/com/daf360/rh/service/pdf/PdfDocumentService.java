@@ -841,9 +841,9 @@ public class PdfDocumentService {
     private String deriveContractDuration(String ct) {
         if (ct == null) return "indeterminee";
         return switch (ct.toUpperCase()) {
-            case "PERMANENT"   -> "indeterminee (titulaire)";
-            case "FIXED_TERM"  -> "determinee";
-            case "INTERN"      -> "stage";
+            case "PERMANENT", "CDI"   -> "indeterminee (titulaire)";
+            case "FIXED_TERM", "CDD", "CIVP", "DETACHEMENT"  -> "determinee";
+            case "INTERN", "STAGE"      -> "stage";
             default            -> "indeterminee";
         };
     }

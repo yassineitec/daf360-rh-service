@@ -2,6 +2,8 @@ package com.daf360.rh.lists;
 
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.security.TenantContext;
+import com.daf360.rh.security.TenantService;
 import com.daf360.rh.service.AuditService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +29,7 @@ public class ConfigurableListService {
     private final ConfigurableListValueRepository valueRepo;
     private final ConfigurableListMapper          mapper;
     private final AuditService                    auditService;
+    private final TenantService                   tenantService;
 
     // ── In-memory TTL cache ──────────────────────────────────────────────────
 
@@ -78,6 +81,7 @@ public class ConfigurableListService {
 
     @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ListValueResponse createListValue(CreateListValueRequest dto, Long createdBy) {
+        assertCanWritePays(dto.getPaysId());
         boolean duplicate = valueRepo.existsByListTypeIdAndPaysIdAndValueCode(
                 dto.getListTypeId(), dto.getPaysId(), dto.getValueCode());
         if (duplicate) {
@@ -116,6 +120,7 @@ public class ConfigurableListService {
         ConfigurableListValue value = valueRepo.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
                         "Valeur de liste introuvable : id=" + id));
+        assertCanWritePays(value.getPaysId());
 
         String before = valueSnapshot(value);
 
@@ -157,6 +162,7 @@ public class ConfigurableListService {
         ConfigurableListValue value = valueRepo.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
                         "Valeur de liste introuvable : id=" + id));
+        assertCanWritePays(value.getPaysId());
 
         if (Boolean.TRUE.equals(value.getIsSystem())) {
             throw new AppException(ErrorCode.INVALID_TRANSITION,
@@ -199,6 +205,24 @@ public class ConfigurableListService {
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /**
+     * An entity's own values (CONTRACT_TYPE of Égypte…) may only be written by that entity's
+     * administrators or by a cross-country admin. ADMIN_LISTS alone used to open every
+     * entity's lists, because the screen had no way to target another one — it now does.
+     *
+     * Shared values (pays_id NULL) keep the old rule, ADMIN_LISTS alone: every global list is
+     * made of them today. A token with no pays claim is let through, like TenantService's own
+     * reads, rather than locking an incomplete session out of a screen it could use before.
+     */
+    private void assertCanWritePays(Long paysId) {
+        if (paysId == null || tenantService.isAdmin()) return;
+        Long own = TenantContext.get();
+        if (own != null && !own.equals(paysId)) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                    "Vous ne pouvez gérer que les valeurs de votre entité.");
+        }
+    }
 
     private void invalidateCacheForType(Long listTypeId) {
         typeRepo.findById(listTypeId).ifPresent(type -> invalidateCacheForCode(type.getCode()));

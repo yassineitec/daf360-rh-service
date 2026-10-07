@@ -145,7 +145,8 @@ public class DashboardService {
         long total = paysId != null
                 ? profileRepository.countByPaysIdAndLifecycleStatusIn(paysId, IN_SERVICE)
                 : profileRepository.countByLifecycleStatusIn(IN_SERVICE);
-        if (total == 0) return new WorkforceStatsDto(0, 0, 0, 0, 0.0, 0.0, List.of());
+        if (total == 0) return new WorkforceStatsDto(0, 0, 0, 0, 0.0, 0.0, List.of(), 0, 0, 0.0, 0.0,
+                0, 0, 0, 0, 0.0, 0.0, 0.0);
 
         List<Object[]> genderRows = paysId != null
                 ? profileRepository.countByGenderAndLifecycleStatusInAndPaysId(IN_SERVICE, paysId)
@@ -174,11 +175,112 @@ public class DashboardService {
         long f = byGender.getOrDefault(GenderNormalizer.FEMALE, 0L);
         long n = Math.max(0L, total - h - f);
 
+        long[] ingPro = getIngenieurProCounts(paysId);
+        long ing = ingPro[0];
+        long pro = ingPro[1];
+        long ingProTotal = ing + pro;
+
+        // [juniors, confirmes, seniors, total] — le total inclut les profils sans date
+        // d'embauche, comme `total` inclut les genres non définis : les trois % peuvent
+        // donc faire moins de 100.
+        long[] seniority = getSeniorityCounts(paysId);
+        long seniorityTotal = seniority[3];
+
         return new WorkforceStatsDto(
                 total, h, f, n,
                 Math.round((double) h / total * 1000.0) / 10.0,
                 Math.round((double) f / total * 1000.0) / 10.0,
-                getHeadcountByCountry(paysId));
+                getHeadcountByCountry(paysId),
+                ing, pro,
+                pct(ing, ingProTotal),
+                pct(pro, ingProTotal),
+                seniority[0], seniority[1], seniority[2],
+                Math.max(0L, seniorityTotal - seniority[0] - seniority[1] - seniority[2]),
+                pct(seniority[0], seniorityTotal),
+                pct(seniority[1], seniorityTotal),
+                pct(seniority[2], seniorityTotal));
+    }
+
+    /** Pourcentage arrondi à une décimale ; 0 quand il n'y a personne. */
+    private static double pct(long part, long total) {
+        return total == 0 ? 0.0 : Math.round((double) part / total * 1000.0) / 10.0;
+    }
+
+    /**
+     * Effectif en service réparti par ancienneté dans l'entreprise, d'après
+     * {@code hire_date} — seule donnée d'ancienneté présente sur TOUS les profils
+     * ({@code experience_years} n'existe que sur le candidat).
+     *
+     * <p>Règle métier, en années COMPLÈTES depuis l'embauche :
+     * <ul>
+     *   <li>moins de 5 ans (moins d'un an inclus, et embauche future) → Junior</li>
+     *   <li>5 à 7 ans → Confirmé</li>
+     *   <li>8 ans et plus → Senior</li>
+     * </ul>
+     * Comparé avec {@code DATEADD(year, n, hire_date)} plutôt que {@code DATEDIFF(year, …)} :
+     * DATEDIFF compte les passages au 1er janvier, si bien qu'une embauche du 31/12/2021
+     * aurait déjà « 5 ans » le 01/01/2026.
+     *
+     * @return {@code [juniors, confirmes, seniors, total]}
+     */
+    private long[] getSeniorityCounts(Long paysId) {
+        String sql = "SELECT " +
+                     "  SUM(CASE WHEN ep.hire_date IS NOT NULL AND DATEADD(year, 5, ep.hire_date) > ? THEN 1 ELSE 0 END) AS juniors, " +
+                     "  SUM(CASE WHEN DATEADD(year, 5, ep.hire_date) <= ? AND DATEADD(year, 8, ep.hire_date) > ? THEN 1 ELSE 0 END) AS confirmes, " +
+                     "  SUM(CASE WHEN DATEADD(year, 8, ep.hire_date) <= ? THEN 1 ELSE 0 END) AS seniors, " +
+                     "  COUNT(*) AS total " +
+                     "FROM [dbo].[employee_profiles] ep " +
+                     "WHERE ep.lifecycle_status IN " + IN_SERVICE_SQL + " " +
+                     "  AND ep.deleted = 0 " +
+                     (paysId != null ? "  AND ep.pays_id = ? " : "");
+
+        Date today = Date.valueOf(LocalDate.now());
+        List<Object> params = new ArrayList<>(List.of(today, today, today, today));
+        if (paysId != null) params.add(paysId);
+
+        return jdbcTemplate.queryForObject(sql,
+                (rs, rowNum) -> new long[]{
+                        rs.getLong("juniors"),     // SUM sur 0 ligne = NULL → getLong = 0
+                        rs.getLong("confirmes"),
+                        rs.getLong("seniors"),
+                        rs.getLong("total") },
+                params.toArray());
+    }
+
+    /**
+     * Effectif en service réparti Ingénieurs / Pros, d'après le grade du profil.
+     *
+     * <p>Règle métier : est « Ing » tout profil dont le grade (code, libellé FR ou EN)
+     * contient « ingénieur » ou « engineer » — donc aussi « Ingénieur principal » ou
+     * « Senior Engineer ». Tout le reste est « Pro », y compris les profils SANS grade
+     * (LEFT JOIN : un recruté direct n'a pas encore de grade et doit quand même compter).
+     *
+     * <p>Le {@code _} de {@code ing_nieur} remplace un caractère quelconque : il couvre
+     * « ingénieur » comme « ingenieur », quelle que soit la collation de la base.
+     *
+     * @return {@code [ingenieurs, pros]}
+     */
+    private long[] getIngenieurProCounts(Long paysId) {
+        String sql = "SELECT " +
+                     "  SUM(CASE WHEN LOWER(CONCAT(g.code, ' ', g.label_fr, ' ', g.label_en)) LIKE N'%ing_nieur%' " +
+                     "            OR LOWER(CONCAT(g.code, ' ', g.label_fr, ' ', g.label_en)) LIKE N'%engineer%' " +
+                     "      THEN 1 ELSE 0 END) AS ing, " +
+                     "  COUNT(*) AS total " +
+                     "FROM [dbo].[employee_profiles] ep " +
+                     "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
+                     "WHERE ep.lifecycle_status IN " + IN_SERVICE_SQL + " " +
+                     "  AND ep.deleted = 0 " +
+                     (paysId != null ? "  AND ep.pays_id = ? " : "");
+
+        Object[] params = paysId != null ? new Object[]{ paysId } : new Object[0];
+
+        return jdbcTemplate.queryForObject(sql,
+                (rs, rowNum) -> {
+                    long ing   = rs.getLong("ing");   // SUM sur 0 ligne = NULL → getLong = 0
+                    long total = rs.getLong("total");
+                    return new long[]{ ing, Math.max(0L, total - ing) };
+                },
+                params);
     }
 
     /**

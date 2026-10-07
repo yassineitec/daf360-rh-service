@@ -88,7 +88,7 @@ public class CandidateService {
     private final DisciplineRepository            disciplineRepo;
     private final HrDepartmentRepository          departmentRepo;
     private final ConfigurableListValueRepository listValueRepo;
-    /** Only to resolve the EMPLOYMENT_TYPE list id — see applyEmploymentType. */
+    /** Only to resolve the CONTRACT_TYPE list id — see applyEmploymentType. */
     private final com.daf360.rh.lists.ConfigurableListTypeRepository listTypeRepo;
     /** Equipment ledger (V76) — seeded here too, see hireCandidate. */
     private final ItAssetAssignmentService        assetAssignmentService;
@@ -727,7 +727,7 @@ public class CandidateService {
     }
 
     /**
-     * Sets the candidature's contract type — an EMPLOYMENT_TYPE `configurable_list_values.id`.
+     * Sets the candidature's contract type — an CONTRACT_TYPE `configurable_list_values.id`.
      *
      * Null means "leave it alone", like every other field on the update DTO. There is no
      * "detach" here: a candidature without a contract type falls back to CDI everywhere
@@ -735,7 +735,7 @@ public class CandidateService {
      * quietly turn a CDD offer into a CDI rather than leaving a blank.
      *
      * Validated rather than trusted — unlike creation, which writes the raw id straight
-     * through the mapper. The id must be an ACTIVE value of the EMPLOYMENT_TYPE list and
+     * through the mapper. The id must be an ACTIVE value of the CONTRACT_TYPE list and
      * either global (`pays_id IS NULL`) or the candidate's own entity; otherwise a typo, a
      * stale dropdown or another entity's list would be persisted and only surface much later,
      * as a wrong contract at hire time.
@@ -756,10 +756,10 @@ public class CandidateService {
                   + "passez par un nouveau contrat sur la fiche employé.");
         }
 
-        Long listTypeId = listTypeRepo.findByCode("EMPLOYMENT_TYPE")
+        Long listTypeId = listTypeRepo.findByCode("CONTRACT_TYPE")
                 .map(com.daf360.rh.lists.ConfigurableListType::getId)
                 .orElseThrow(() -> new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
-                        "Liste EMPLOYMENT_TYPE introuvable."));
+                        "Liste CONTRACT_TYPE introuvable."));
 
         // The same query the dropdown is built from, so anything the user can pick is
         // accepted and anything else is not.

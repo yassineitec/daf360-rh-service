@@ -58,7 +58,6 @@ public class OnboardingService {
     private final EmployeeProfileRepository  profileRepo;
     private final WorkingTimeRegimeRepository regimeRepo;
     private final WorkflowInstanceService    workflowInstanceService;
-    private final PayrollMatriculeService    payrollMatriculeService;
     private final MailService                mailService;
     private final AuditService               auditService;
     private final AppProperties              appProperties;
@@ -427,14 +426,8 @@ public class OnboardingService {
         saved.setOnboardingCompleted(true);
         saved.setOnboardingCompletedAt(OffsetDateTime.now());
         saved.setLifecycleStatus(LifecycleStatus.ACTIVE);
-        // The payroll matricule is allocated here rather than at profile creation: an
-        // abandoned PRE_ONBOARDING draft would otherwise consume a register number for
-        // good. Guarded so re-running an incomplete onboarding keeps the first number.
-        if (saved.getPayrollMatricule() == null) {
-            saved.setPayrollMatricule(payrollMatriculeService.allocate());
-            log.info("Allocated payroll matricule={} to profileId={}",
-                     saved.getPayrollMatricule(), saved.getId());
-        }
+        // No payroll matricule here: it comes from the accounting firm and is typed in
+        // once on the profile's Emploi tab (EmployeeProfileService.applyPayrollMatricule).
         saved.setUpdatedAt(OffsetDateTime.now());
         saved = profileRepo.save(saved);
         log.info("Onboarding completed: profileId={} userId={} now ACTIVE", saved.getId(), saved.getUserId());
@@ -530,21 +523,13 @@ public class OnboardingService {
 
     /**
      * Pre-fills the onboarding contract type from the candidate's employment type.
-     * The candidate's employment type uses the lifecycle vocabulary (CDI/CDD/…)
-     * while the onboarding form uses PERMANENT/FIXED_TERM/INTERN/CONSULTANT, so we
-     * map the known ones and leave the rest blank (the user then picks).
+     * Both now speak the same vocabulary — the CONTRACT_TYPE configurable list (Admin ›
+     * Listes configurables › Type de contrat) — so the candidate's value code is used as is.
+     * It used to be mapped onto a hardcoded PERMANENT/FIXED_TERM/INTERN/CONSULTANT set,
+     * which dropped DETACHEMENT and any value added in the admin.
      */
     private String onboardingContractTypeFromCandidate(Long employmentTypeId) {
-        if (employmentTypeId == null) return null;
-        String code = contractTypeBridge.resolveContractTypeCode(employmentTypeId);
-        if (code == null) return null;
-        return switch (code) {
-            case "CDI"                 -> "PERMANENT";
-            case "CDD"                 -> "FIXED_TERM";
-            case "STAGE", "CIVP"       -> "INTERN";
-            case "PORTAGE", "FREELANCE" -> "CONSULTANT";
-            default                    -> null; // DETACHEMENT / unknown → let the user choose
-        };
+        return contractTypeBridge.resolveListValueCode(employmentTypeId);
     }
 
     private RegimeSummary toRegimeSummary(WorkingTimeRegime r) {

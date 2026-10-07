@@ -84,7 +84,7 @@ public interface CandidateMapper {
     // candidate's own pays). Mapping it here would write it unchecked.
     @Mapping(target = "recruitmentDemandId",   ignore = true)
     // Same deal: CandidateService.applyEmploymentType owns this one, because the value must
-    // be an active EMPLOYMENT_TYPE of the candidate's own pays and cannot move once the
+    // be an active CONTRACT_TYPE of the candidate's own pays and cannot move once the
     // candidate is HIRED. Mapping it here would write it unchecked.
     @Mapping(target = "employmentTypeId",      ignore = true)
     // FK dimension fields — resolved by CandidateService after mapping

@@ -29,6 +29,7 @@ class ConfigurableListServiceTest {
     @Mock ConfigurableListValueRepository valueRepo;
     @Mock ConfigurableListMapper          mapper;
     @Mock AuditService                    auditService;
+    @Mock com.daf360.rh.security.TenantService tenantService;
 
     @InjectMocks ConfigurableListService service;
 

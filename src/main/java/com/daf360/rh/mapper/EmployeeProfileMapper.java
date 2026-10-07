@@ -69,5 +69,7 @@ public interface EmployeeProfileMapper {
     @Mapping(target = "nogLevel",        ignore = true)
     @Mapping(target = "department",      ignore = true)
     @Mapping(target = "bank",            ignore = true)
+    // Write-once, guarded in EmployeeProfileService.applyPayrollMatricule.
+    @Mapping(target = "payrollMatricule", ignore = true)
     void updateEntityFromDto(EmployeeProfileUpdateDto dto, @MappingTarget EmployeeProfile profile);
 }

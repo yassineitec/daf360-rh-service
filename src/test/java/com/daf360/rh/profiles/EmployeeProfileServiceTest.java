@@ -66,6 +66,7 @@ class EmployeeProfileServiceTest {
     @Mock BankRepository              bankRepo;
     @Mock NationalityRepository       nationalityRepo;
     @Mock WorkingTimeRegimeRepository regimeRepo;
+    @Mock com.daf360.rh.lists.ConfigurableListService configurableListService;
 
     @InjectMocks EmployeeProfileService service;
 

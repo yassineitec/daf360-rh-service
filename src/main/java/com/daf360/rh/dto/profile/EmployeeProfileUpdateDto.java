@@ -13,14 +13,15 @@ import java.time.LocalDate;
 public class EmployeeProfileUpdateDto {
 
     // ── Contract ──────────────────────────────────────────────────────────
-    @Pattern(regexp = "PERMANENT|FIXED_TERM|INTERN|CONSULTANT",
-             message = "Type de contrat invalide — valeurs : PERMANENT, FIXED_TERM, INTERN, CONSULTANT")
+    /** A code from the configurable type_contrat list — checked in EmployeeProfileService. */
     private String contractType;
 
     private LocalDate contractEndDate;
     private LocalDate probationEndDate;
     private LocalDate hireDate;
     private Boolean   isOnProbation;
+    /** Matricule from the accounting firm — write-once, see EmployeeProfileService.applyPayrollMatricule. */
+    @Size(max = 50) private String payrollMatricule;
 
     // ── Position ──────────────────────────────────────────────────────────
     private Long departmentId;

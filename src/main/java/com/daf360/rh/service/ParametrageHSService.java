@@ -235,7 +235,8 @@ public class ParametrageHSService {
     @Transactional(readOnly = true)
     public List<java.util.Map<String, Object>> getAllPays() {
         return jdbc.queryForList(
-            "SELECT id, iso_code, french_label FROM [dbo].[pays] " +
+            // english_label: lets the payroll screens name an entity in English too.
+            "SELECT id, iso_code, french_label, english_label FROM [dbo].[pays] " +
             "WHERE (deleted=0 OR deleted IS NULL) ORDER BY iso_code");
     }
 

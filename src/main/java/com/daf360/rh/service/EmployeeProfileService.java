@@ -44,7 +44,6 @@ public class EmployeeProfileService {
     private final EmployeeProfileRepository profileRepository;
     private final EmployeeProfileMapper     mapper;
     private final AuditService              auditService;
-    private final PayrollMatriculeService   payrollMatriculeService;
     private final JdbcTemplate              jdbcTemplate;
     private final ObjectMapper              objectMapper;
     private final com.daf360.rh.security.TenantService tenantService;
@@ -69,6 +68,26 @@ public class EmployeeProfileService {
     private final BankRepository         bankRepo;
     private final NationalityRepository        nationalityRepo;
     private final WorkingTimeRegimeRepository  regimeRepo;
+    /** Contract types come from Admin › Listes configurables › Type de contrat (CONTRACT_TYPE). */
+    private final com.daf360.rh.lists.ConfigurableListService configurableListService;
+    private static final String CONTRACT_TYPE_LIST = "CONTRACT_TYPE";
+
+    /**
+     * Rejects a contract type that is not an active value of the CONTRACT_TYPE configurable
+     * list (for the profile's pays). Replaces the PERMANENT|FIXED_TERM|INTERN|CONSULTANT regex
+     * the DTOs used to carry, so a value added in the admin is accepted without a release.
+     * A profile may keep its current code even after that value is deactivated — only a
+     * *change* to an unknown/inactive code is refused.
+     */
+    private void checkContractType(String code, String current, Long paysId) {
+        if (code == null || code.isBlank() || code.equals(current)) return;
+        boolean active = configurableListService.getListValues(CONTRACT_TYPE_LIST, paysId).stream()
+                .anyMatch(v -> code.equals(v.getValueCode()));
+        if (!active) {
+            throw new AppException(com.daf360.rh.exception.ErrorCode.CONTRACT_TYPE_INVALID,
+                    "Type de contrat inconnu ou désactivé : " + code);
+        }
+    }
 
     // ── Create ────────────────────────────────────────────────────────────────
 
@@ -82,8 +101,10 @@ public class EmployeeProfileService {
 
         // The Users.employee_id uniqueness probe that stood here is gone with the column's
         // role: it is NULL for every profile in prod, so the check passed unconditionally
-        // and guarded nothing. Uniqueness of the real matricule is enforced by
-        // PayrollMatriculeService's allocation lock plus the filtered unique index.
+        // and guarded nothing. Uniqueness of the real matricule is checked per pays in
+        // applyPayrollMatricule, backed by the filtered unique index.
+
+        checkContractType(dto.getContractType(), null, dto.getPaysId());
 
         EmployeeProfile profile = mapper.toEntity(dto);
         profile.setCreatedAt(OffsetDateTime.now(PARIS));
@@ -92,12 +113,8 @@ public class EmployeeProfileService {
         applyDimensionFks(profile, dto.getNationalityId(), dto.getGradeId(),
                 dto.getDisciplineId(), dto.getNogLevelId(), dto.getDepartmentId(), dto.getBankId());
 
-        // No matricule here: the mapper forces every new profile to PRE_ONBOARDING, and a
-        // number is allocated on the transition to ACTIVE — so an abandoned file never
-        // burns one. Left as an explicit call rather than nothing, so a future change to
-        // that mapper default keeps allocating instead of silently producing ACTIVE
-        // profiles with no matricule.
-        ensurePayrollMatricule(profile, profile.getLifecycleStatus());
+        // No matricule here: it is the number the accounting firm assigns, typed in once
+        // on the Emploi tab when it arrives (see applyPayrollMatricule).
 
         EmployeeProfile saved = profileRepository.save(profile);
 
@@ -167,6 +184,12 @@ public class EmployeeProfileService {
             dto.setCnssAffiliationDate(null);
         }
 
+        // The edit form posts '' for "no selection"; null keeps the PATCH meaning (untouched).
+        if (dto.getContractType() != null && dto.getContractType().isBlank()) {
+            dto.setContractType(null);
+        }
+        checkContractType(dto.getContractType(), profile.getContractType(), profile.getPaysId());
+
         String before = safeJson(profile);
 
         // Apply non-dimension scalar fields via MapStruct (PATCH semantics)
@@ -221,6 +244,8 @@ public class EmployeeProfileService {
         if (dto.getSalaireNetCandidat() != null) profile.setSalaireNetCandidat(dto.getSalaireNetCandidat());
         if (dto.getSalaireNetRh()       != null) profile.setSalaireNetRh(dto.getSalaireNetRh());
 
+        applyPayrollMatricule(profile, dto.getPayrollMatricule());
+
         profile.setUpdatedAt(OffsetDateTime.now(PARIS));
         EmployeeProfile saved = profileRepository.save(profile);
 
@@ -249,7 +274,6 @@ public class EmployeeProfileService {
         if (next == LifecycleStatus.ARCHIVED) {
             pseudonymise(profile);
         }
-        ensurePayrollMatricule(profile, next);
 
         profile.setLifecycleStatus(next);
         profile.setUpdatedAt(OffsetDateTime.now(PARIS));
@@ -289,7 +313,6 @@ public class EmployeeProfileService {
         if (next == LifecycleStatus.ARCHIVED) {
             pseudonymise(profile);
         }
-        ensurePayrollMatricule(profile, next);
         profile.setLifecycleStatus(next);
         profile.setUpdatedAt(OffsetDateTime.now(PARIS));
         profileRepository.save(profile);
@@ -1302,19 +1325,34 @@ public class EmployeeProfileService {
     // reports WHY it failed instead of returning a bare null.
 
     /**
-     * Gives the profile a payroll matricule the first time it becomes ACTIVE.
+     * Records the matricule transmitted by the accounting firm — write-once.
      *
-     * <p>Mirrors the allocation in OnboardingService STEP 7, for the profiles that reach
-     * ACTIVE without going through the wizard — a PRE_ONBOARDING row activated by hand,
-     * or a rehire. Idempotent: a profile that already has a number keeps it across every
-     * later ON_LEAVE / ON_MISSION / ACTIVE round trip.
+     * <p>The field stays editable while empty and locks as soon as it holds a value: it is
+     * the key PayslipBatchService matches the monthly payroll PDF against, so changing it
+     * afterwards would detach the employee from their payslips. Re-sending the stored
+     * value is a no-op (the edit form echoes it back), anything else is refused.
+     * Uniqueness is per pays, like the external payroll register itself.
      */
-    private void ensurePayrollMatricule(EmployeeProfile profile, LifecycleStatus next) {
-        if (next == LifecycleStatus.ACTIVE && profile.getPayrollMatricule() == null) {
-            profile.setPayrollMatricule(payrollMatriculeService.allocate());
-            log.info("Allocated payroll matricule={} to profileId={} on transition to ACTIVE",
-                     profile.getPayrollMatricule(), profile.getId());
+    private void applyPayrollMatricule(EmployeeProfile profile, String requested) {
+        if (requested == null || requested.isBlank()) return;
+        String value = requested.trim();
+
+        String current = profile.getPayrollMatricule();
+        if (current != null && !current.isBlank()) {
+            if (current.equals(value)) return;
+            throw new AppException(com.daf360.rh.exception.ErrorCode.PAYROLL_MATRICULE_LOCKED,
+                    "Le matricule " + current + " est déjà renseigné et ne peut plus être modifié");
         }
+
+        profileRepository.findByPaysIdAndPayrollMatricule(profile.getPaysId(), value)
+                .filter(other -> !other.getId().equals(profile.getId()))
+                .ifPresent(other -> {
+                    throw new AppException(com.daf360.rh.exception.ErrorCode.PAYROLL_MATRICULE_DUPLICATE,
+                            "Le matricule " + value + " est déjà attribué à un autre employé");
+                });
+
+        profile.setPayrollMatricule(value);
+        log.info("Payroll matricule={} set on profileId={}", value, profile.getId());
     }
 
     private EmployeeProfile findOrThrow(Long id) {

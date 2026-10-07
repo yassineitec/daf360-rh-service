@@ -532,16 +532,16 @@ public class DocumentTemplateService {
         if (ct == null) return isEnglish ? "indefinite" : "indeterminee";
         if (isEnglish) {
             return switch (ct.toUpperCase()) {
-                case "PERMANENT"  -> "indefinite (permanent)";
-                case "FIXED_TERM" -> "fixed";
-                case "INTERN"     -> "internship";
+                case "PERMANENT", "CDI"  -> "indefinite (permanent)";
+                case "FIXED_TERM", "CDD", "CIVP", "DETACHEMENT" -> "fixed";
+                case "INTERN", "STAGE"     -> "internship";
                 default           -> "indefinite";
             };
         }
         return switch (ct.toUpperCase()) {
-            case "PERMANENT"  -> "indeterminee (titulaire)";
-            case "FIXED_TERM" -> "determinee";
-            case "INTERN"     -> "stage";
+            case "PERMANENT", "CDI"  -> "indeterminee (titulaire)";
+            case "FIXED_TERM", "CDD", "CIVP", "DETACHEMENT" -> "determinee";
+            case "INTERN", "STAGE"     -> "stage";
             default           -> "indeterminee";
         };
     }

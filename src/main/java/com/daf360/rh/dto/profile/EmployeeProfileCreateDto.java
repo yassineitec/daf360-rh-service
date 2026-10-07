@@ -19,8 +19,8 @@ public class EmployeeProfileCreateDto {
     private Long paysId;
 
     /**
-     * @deprecated Legacy Users.employee_id. Ignored: the matricule is now allocated by
-     * {@code PayrollMatriculeService} into employee_profiles.payroll_matricule. Kept on
+     * @deprecated Legacy Users.employee_id. Ignored: the matricule is now
+     * employee_profiles.payroll_matricule, entered from the accounting firm's number. Kept on
      * the DTO — without the @NotBlank/@ValidEmployeeId it used to carry — so existing
      * callers posting it do not start failing validation. Nothing reads it.
      */
@@ -32,8 +32,7 @@ public class EmployeeProfileCreateDto {
     private LocalDate hireDate;
 
     @NotBlank(message = "Le type de contrat est obligatoire")
-    @Pattern(regexp = "PERMANENT|FIXED_TERM|INTERN|CONSULTANT",
-             message = "Type de contrat invalide — valeurs: PERMANENT, FIXED_TERM, INTERN, CONSULTANT")
+    /** A code from the configurable type_contrat list — checked in EmployeeProfileService. */
     private String contractType;
 
     /** Required when contractType = FIXED_TERM — enforced by @ValidFixedTermContract. */

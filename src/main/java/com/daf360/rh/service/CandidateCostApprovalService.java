@@ -26,7 +26,7 @@ public class CandidateCostApprovalService {
 
     private final CandidateCostApprovalRepository approvalRepo;
     private final CandidateRepository             candidateRepo;
-    /** Resolves the candidate's EMPLOYMENT_TYPE into the contract code the snapshot was run for. */
+    /** Resolves the candidate's CONTRACT_TYPE into the contract code the snapshot was run for. */
     private final ContractTypeBridge              contractTypeBridge;
 
     /**
