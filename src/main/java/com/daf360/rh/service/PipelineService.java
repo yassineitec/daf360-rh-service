@@ -80,7 +80,7 @@ public class PipelineService {
             c.id, c.first_name, c.last_name, c.applied_position, c.status,
             c.expected_start_date, c.notes, c.email_personal, c.created_at,
             c.experience_years, c.location, c.cv_path,
-            ep.gender, ep.contract_type, ep.onboarding_completed,
+            ep.gender, COALESCE(ctv.value_code, ep.contract_type) AS contract_type, ep.onboarding_completed,
             rd.budget_range, rd.technical_skills,
             c.recruitment_demand_id AS demand_id,
             -- jobExactTitle when set, else the generic title: the same precedence
@@ -99,6 +99,8 @@ public class PipelineService {
     private static final String KANBAN_FROM = """
              FROM [dbo].[candidates] c
              LEFT JOIN [dbo].[employee_profiles] ep ON ep.candidate_id = c.id AND ep.deleted = 0
+             -- contract_type stores the CONTRACT_TYPE row id (ContractTypeRefs); the card shows its code.
+             LEFT JOIN [dbo].[configurable_list_values] ctv ON ctv.id = TRY_CAST(ep.contract_type AS BIGINT)
              LEFT JOIN [dbo].[recruitment_demands] rd ON rd.id = c.recruitment_demand_id
              LEFT JOIN [dbo].[it_provisioning] ipv ON ipv.candidate_id = c.id
              OUTER APPLY (

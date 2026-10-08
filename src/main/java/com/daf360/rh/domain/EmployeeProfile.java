@@ -47,8 +47,13 @@ public class EmployeeProfile {
     @Column(name = "hire_date")
     private LocalDate hireDate;
 
+    /**
+     * Id (as text — the column stays varchar) of the CONTRACT_TYPE row of configurable_list_values.
+     * Not a code: read the code through {@link com.daf360.rh.lists.ContractTypeRefs#codeOf}, and
+     * write through {@link com.daf360.rh.lists.ContractTypeRefs#toStored}.
+     */
     @Column(name = "contract_type", length = 50)
-    private String contractType;
+    private String contractTypeId;
 
     @Column(name = "contract_end_date")
     private LocalDate contractEndDate;

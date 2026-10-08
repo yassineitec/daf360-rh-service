@@ -454,7 +454,8 @@ public class DashboardService {
         LocalDate threeMonthsAgo = LocalDate.now().minusMonths(3);
         Long paysId = tenantService.getEffectivePaysId();
 
-        String sql = "SELECT ep.id, u.fullName, ep.hire_date, ep.gender, ep.contract_type, " +
+        String sql = "SELECT ep.id, u.fullName, ep.hire_date, ep.gender, " +
+                     com.daf360.rh.lists.ContractTypeRefs.sqlCode("ep", "ctv") + " AS contract_type, " +
                      "       ep.onboarding_completed, " +
                      "       d.label_fr AS department_label, g.label_fr AS grade_label, " +
                      "       disc.label_fr AS discipline_label, p.french_label AS pays_label, " +
@@ -470,6 +471,7 @@ public class DashboardService {
                      "LEFT JOIN [dbo].[grades]        g    ON g.id    = ep.grade_id " +
                      "LEFT JOIN [dbo].[disciplines]   disc ON disc.id = ep.discipline_id " +
                      "LEFT JOIN [dbo].[pays]          p    ON p.id    = ep.pays_id " +
+                     com.daf360.rh.lists.ContractTypeRefs.sqlJoin("ep", "ctv") +
                      "WHERE ep.lifecycle_status = 'ACTIVE' " +
                      "  AND ep.deleted = 0 " +
                      "  AND ep.hire_date >= ? " +

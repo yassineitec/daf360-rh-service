@@ -73,6 +73,8 @@ public class OnboardingService {
     private final com.daf360.rh.repository.NationalityRepository  natRepo;
     private final com.daf360.rh.repository.BankRepository         bankRepo;
     private final com.daf360.rh.lifecycle.ContractTypeBridge      contractTypeBridge;
+    /** employee_profiles.contract_type stores the CONTRACT_TYPE row id, not the code. */
+    private final com.daf360.rh.lists.ContractTypeRefs             contractTypeRefs;
     /**
      * Contract creation at completion (V69). Safe injection: EmployeeLifecycleService knows
      * nothing about onboarding, so there is no cycle.
@@ -320,7 +322,7 @@ public class OnboardingService {
         profile.setUpdatedAt(OffsetDateTime.now());
         // Employment
         profile.setHireDate(dto.getHireDate());
-        profile.setContractType(dto.getContractType());
+        profile.setContractTypeId(contractTypeRefs.toStored(dto.getContractType(), candidate.getPaysId()));
         profile.setContractEndDate(dto.getContractEndDate());
         profile.setProbationEndDate(dto.getProbationEndDate());
         profile.setIsOnProbation(dto.getIsOnProbation());
@@ -628,7 +630,7 @@ public class OnboardingService {
                 .appliedDiscipline(c.getAppliedDiscipline() != null ? c.getAppliedDiscipline().getLabelFr() : null)
                 .department(c.getDepartment() != null ? c.getDepartment().getLabelFr() : null)
                 .contractType(hasDraft ? draft.getContractType()
-                            : hasProfile ? existingProfile.getContractType()
+                            : hasProfile ? contractTypeRefs.codeOf(existingProfile.getContractTypeId(), existingProfile.getPaysId())
                             : onboardingContractTypeFromCandidate(c.getEmploymentTypeId()))
                 .expectedStartDate(c.getExpectedStartDate())
                 .hireDate(hasProfile ? existingProfile.getHireDate() : null)

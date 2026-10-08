@@ -29,6 +29,9 @@ public interface EmployeeProfileRepository
 
     boolean existsByUserId(Long userId);
 
+    /** Whether a profile points at this CONTRACT_TYPE list row (contract_type holds its id as text). */
+    boolean existsByContractTypeId(String contractTypeId);
+
     Page<EmployeeProfile> findByPaysId(Long paysId, Pageable pageable);
 
     Page<EmployeeProfile> findByPaysIdAndLifecycleStatus(
@@ -66,6 +69,7 @@ public interface EmployeeProfileRepository
             JOIN [dbo].[Users] u ON ep.user_id = u.id
             LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id
             LEFT JOIN [dbo].[departments] dept ON dept.id = ep.department_id
+            LEFT JOIN [dbo].[configurable_list_values] ctv ON ctv.id = TRY_CAST(ep.contract_type AS BIGINT)
             WHERE ep.deleted = 0
               AND u.is_employee = 1
               AND (:scopeAll = 1 OR ep.pays_id IN (:paysIds))
@@ -75,7 +79,7 @@ public interface EmployeeProfileRepository
                    OR ep.lifecycle_status IN ('ACTIVE', 'ON_LEAVE', 'ON_MISSION'))
               AND (:department  IS NULL OR dept.label_fr       = :department)
               AND (:grade       IS NULL OR g.label_fr          = :grade)
-              AND (:contract    IS NULL OR ep.contract_type    = :contract)
+              AND (:contract    IS NULL OR COALESCE(ctv.value_code, ep.contract_type) = :contract)
               AND (:hireFrom    IS NULL OR ep.hire_date       >= :hireFrom)
               AND (:hireTo      IS NULL OR ep.hire_date       <= :hireTo)
               AND (:search      IS NULL
@@ -88,6 +92,7 @@ public interface EmployeeProfileRepository
             JOIN [dbo].[Users] u ON ep.user_id = u.id
             LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id
             LEFT JOIN [dbo].[departments] dept ON dept.id = ep.department_id
+            LEFT JOIN [dbo].[configurable_list_values] ctv ON ctv.id = TRY_CAST(ep.contract_type AS BIGINT)
             WHERE ep.deleted = 0
               AND u.is_employee = 1
               AND (:scopeAll = 1 OR ep.pays_id IN (:paysIds))
@@ -97,7 +102,7 @@ public interface EmployeeProfileRepository
                    OR ep.lifecycle_status IN ('ACTIVE', 'ON_LEAVE', 'ON_MISSION'))
               AND (:department  IS NULL OR dept.label_fr       = :department)
               AND (:grade       IS NULL OR g.label_fr          = :grade)
-              AND (:contract    IS NULL OR ep.contract_type    = :contract)
+              AND (:contract    IS NULL OR COALESCE(ctv.value_code, ep.contract_type) = :contract)
               AND (:hireFrom    IS NULL OR ep.hire_date       >= :hireFrom)
               AND (:hireTo      IS NULL OR ep.hire_date       <= :hireTo)
               AND (:search      IS NULL

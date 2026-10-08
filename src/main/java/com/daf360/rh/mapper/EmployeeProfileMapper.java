@@ -28,6 +28,8 @@ public interface EmployeeProfileMapper {
     @Mapping(target = "nogLevel",        ignore = true)
     @Mapping(target = "department",      ignore = true)
     @Mapping(target = "bank",            ignore = true)
+    // Stores the list row id — resolved from the code by EmployeeProfileService.
+    @Mapping(target = "contractTypeId",  ignore = true)
     EmployeeProfile toEntity(EmployeeProfileCreateDto dto);
 
     // ── Response DTO — derive label strings and IDs from FK entities ──────────
@@ -43,10 +45,14 @@ public interface EmployeeProfileMapper {
     @Mapping(target = "departmentId",  expression = "java(profile.getDepartment() != null ? profile.getDepartment().getId() : null)")
     @Mapping(target = "bankName",      expression = "java(profile.getBank() != null ? profile.getBank().getLabelFr() : null)")
     @Mapping(target = "bankId",        expression = "java(profile.getBank() != null ? profile.getBank().getId() : null)")
+    // Code + id resolved through ContractTypeRefs in EmployeeProfileService.toResponseDto.
+    @Mapping(target = "contractType",   ignore = true)
+    @Mapping(target = "contractTypeId", ignore = true)
     EmployeeProfileResponseDto toResponseDto(EmployeeProfile profile);
 
     @Mapping(target = "department", expression = "java(profile.getDepartment() != null ? profile.getDepartment().getLabelFr() : null)")
     @Mapping(target = "grade",      expression = "java(profile.getGrade() != null ? profile.getGrade().getLabelFr() : null)")
+    @Mapping(target = "contractType", ignore = true)
     EmployeeProfileSummaryDto toSummaryDto(EmployeeProfile profile);
 
     /**
@@ -69,6 +75,8 @@ public interface EmployeeProfileMapper {
     @Mapping(target = "nogLevel",        ignore = true)
     @Mapping(target = "department",      ignore = true)
     @Mapping(target = "bank",            ignore = true)
+    // Stores the list row id — resolved from the code by EmployeeProfileService.
+    @Mapping(target = "contractTypeId",  ignore = true)
     // Write-once, guarded in EmployeeProfileService.applyPayrollMatricule.
     @Mapping(target = "payrollMatricule", ignore = true)
     void updateEntityFromDto(EmployeeProfileUpdateDto dto, @MappingTarget EmployeeProfile profile);

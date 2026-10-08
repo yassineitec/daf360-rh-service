@@ -56,6 +56,7 @@ public enum ErrorCode {
     BUSINESS_RULE_VIOLATION         (HttpStatus.UNPROCESSABLE_CONTENT,    "Règle métier non respectée"),
     INVALID_TIMEZONE                (HttpStatus.BAD_REQUEST,              "Fuseau horaire invalide — utilisez un identifiant IANA (ex. Africa/Tunis)"),
     CONTRACT_TYPE_INVALID           (HttpStatus.BAD_REQUEST,              "Type de contrat inconnu ou désactivé — voir Admin › Listes configurables › Type de contrat"),
+    LIST_VALUE_IN_USE               (HttpStatus.CONFLICT,                 "Valeur utilisée par des profils employés — désactivez-la plutôt que de la supprimer"),
     PAYROLL_MATRICULE_LOCKED        (HttpStatus.CONFLICT,                 "Le matricule est déjà renseigné et n'est plus modifiable"),
     PAYROLL_MATRICULE_DUPLICATE     (HttpStatus.CONFLICT,                 "Ce matricule est déjà attribué à un autre employé"),
     INVALID_NOTICE_PERIOD           (HttpStatus.BAD_REQUEST,              "Préavis invalide — un nombre de jours calendaires positif ou nul"),

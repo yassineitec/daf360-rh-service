@@ -32,7 +32,10 @@ public class EmployeeProfileResponseDto {
 
     // ── Contract ──────────────────────────────────────────────────────────
     private LocalDate hireDate;
+    /** Code of the CONTRACT_TYPE list value (CDI…), resolved from {@link #contractTypeId}. */
     private String    contractType;
+    /** configurable_list_values.id — what employee_profiles.contract_type stores. */
+    private Long      contractTypeId;
     private LocalDate contractEndDate;
     private LocalDate probationEndDate;
     private Boolean   isOnProbation;

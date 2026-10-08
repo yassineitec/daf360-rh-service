@@ -49,6 +49,7 @@ class OnboardingServiceTest {
     @Mock JdbcTemplate               jdbc;
     @Mock ObjectMapper               objectMapper;
     @Mock com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
+    @Mock com.daf360.rh.lists.ContractTypeRefs contractTypeRefs;
 
     @InjectMocks OnboardingService service;
 

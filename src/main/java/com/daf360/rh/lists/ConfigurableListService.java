@@ -30,6 +30,7 @@ public class ConfigurableListService {
     private final ConfigurableListMapper          mapper;
     private final AuditService                    auditService;
     private final TenantService                   tenantService;
+    private final com.daf360.rh.repository.EmployeeProfileRepository profileRepo;
 
     // ── In-memory TTL cache ──────────────────────────────────────────────────
 
@@ -167,6 +168,10 @@ public class ConfigurableListService {
         if (Boolean.TRUE.equals(value.getIsSystem())) {
             throw new AppException(ErrorCode.INVALID_TRANSITION,
                     "Valeur système non supprimable");
+        }
+        // employee_profiles.contract_type stores this row's id as varchar — no FK can protect it.
+        if (profileRepo.existsByContractTypeId(String.valueOf(id))) {
+            throw new AppException(ErrorCode.LIST_VALUE_IN_USE);
         }
 
         auditService.log(
