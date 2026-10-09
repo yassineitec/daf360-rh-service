@@ -11,12 +11,13 @@ public record WorkforceStatsDto(
         double pctFemmes,
         /** Active headcount per country, biggest first. Feeds the dashboard's bar chart. */
         List<CountryHeadcount> byCountry,
-        /** Grade contenant « ingénieur » / « engineer » (code ou libellé FR/EN). */
+        /** Code de grade EN1 … EN8. */
         long ingenieurs,
-        /** Tous les autres, y compris les profils sans grade. */
-        long pros,
+        /** Code de grade BC1 … BC5. */
+        long projeteurs,
+        /** Pourcentages sur ingenieurs + projeteurs (les autres profils ne comptent pas). */
         double pctIngenieurs,
-        double pctPros,
+        double pctProjeteurs,
         /** Ancienneté (hire_date) en années complètes : moins de 5 ans. */
         long juniors,
         /** 5 à 7 ans. */

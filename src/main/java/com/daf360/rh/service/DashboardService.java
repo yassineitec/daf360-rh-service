@@ -175,10 +175,10 @@ public class DashboardService {
         long f = byGender.getOrDefault(GenderNormalizer.FEMALE, 0L);
         long n = Math.max(0L, total - h - f);
 
-        long[] ingPro = getIngenieurProCounts(paysId);
-        long ing = ingPro[0];
-        long pro = ingPro[1];
-        long ingProTotal = ing + pro;
+        long[] ingProj = getIngenieurProjeteurCounts(paysId);
+        long ing  = ingProj[0];
+        long proj = ingProj[1];
+        long ingProjTotal = ing + proj;
 
         // [juniors, confirmes, seniors, total] — le total inclut les profils sans date
         // d'embauche, comme `total` inclut les genres non définis : les trois % peuvent
@@ -191,9 +191,9 @@ public class DashboardService {
                 Math.round((double) h / total * 1000.0) / 10.0,
                 Math.round((double) f / total * 1000.0) / 10.0,
                 getHeadcountByCountry(paysId),
-                ing, pro,
-                pct(ing, ingProTotal),
-                pct(pro, ingProTotal),
+                ing, proj,
+                pct(ing, ingProjTotal),
+                pct(proj, ingProjTotal),
                 seniority[0], seniority[1], seniority[2],
                 Math.max(0L, seniorityTotal - seniority[0] - seniority[1] - seniority[2]),
                 pct(seniority[0], seniorityTotal),
@@ -248,24 +248,22 @@ public class DashboardService {
     }
 
     /**
-     * Effectif en service réparti Ingénieurs / Pros, d'après le grade du profil.
+     * Effectif en service réparti Ingénieurs / Projeteurs, d'après le code du grade
+     * du profil (grille BIM &amp; CAD / Engineering) :
+     * <ul>
+     *   <li>{@code EN1} … {@code EN8} (Engineering) → Ingénieur</li>
+     *   <li>{@code BC1} … {@code BC5} (BIM &amp; CAD, techniciens) → Projeteur</li>
+     *   <li>tout autre code, ou pas de grade → compté nulle part</li>
+     * </ul>
+     * Le {@code [0-9]} après le préfixe évite qu'un code comme « ENGINEER » ou « BCxyz »
+     * soit pris pour un grade de la grille.
      *
-     * <p>Règle métier : est « Ing » tout profil dont le grade (code, libellé FR ou EN)
-     * contient « ingénieur » ou « engineer » — donc aussi « Ingénieur principal » ou
-     * « Senior Engineer ». Tout le reste est « Pro », y compris les profils SANS grade
-     * (LEFT JOIN : un recruté direct n'a pas encore de grade et doit quand même compter).
-     *
-     * <p>Le {@code _} de {@code ing_nieur} remplace un caractère quelconque : il couvre
-     * « ingénieur » comme « ingenieur », quelle que soit la collation de la base.
-     *
-     * @return {@code [ingenieurs, pros]}
+     * @return {@code [ingenieurs, projeteurs]}
      */
-    private long[] getIngenieurProCounts(Long paysId) {
+    private long[] getIngenieurProjeteurCounts(Long paysId) {
         String sql = "SELECT " +
-                     "  SUM(CASE WHEN LOWER(CONCAT(g.code, ' ', g.label_fr, ' ', g.label_en)) LIKE N'%ing_nieur%' " +
-                     "            OR LOWER(CONCAT(g.code, ' ', g.label_fr, ' ', g.label_en)) LIKE N'%engineer%' " +
-                     "      THEN 1 ELSE 0 END) AS ing, " +
-                     "  COUNT(*) AS total " +
+                     "  SUM(CASE WHEN g.code LIKE 'EN[0-9]%' THEN 1 ELSE 0 END) AS ing, " +
+                     "  SUM(CASE WHEN g.code LIKE 'BC[0-9]%' THEN 1 ELSE 0 END) AS proj " +
                      "FROM [dbo].[employee_profiles] ep " +
                      "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
                      "WHERE ep.lifecycle_status IN " + IN_SERVICE_SQL + " " +
@@ -275,11 +273,9 @@ public class DashboardService {
         Object[] params = paysId != null ? new Object[]{ paysId } : new Object[0];
 
         return jdbcTemplate.queryForObject(sql,
-                (rs, rowNum) -> {
-                    long ing   = rs.getLong("ing");   // SUM sur 0 ligne = NULL → getLong = 0
-                    long total = rs.getLong("total");
-                    return new long[]{ ing, Math.max(0L, total - ing) };
-                },
+                (rs, rowNum) -> new long[]{
+                        rs.getLong("ing"),    // SUM sur 0 ligne = NULL → getLong = 0
+                        rs.getLong("proj") },
                 params);
     }
 
