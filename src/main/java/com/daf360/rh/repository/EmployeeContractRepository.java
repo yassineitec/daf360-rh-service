@@ -16,17 +16,38 @@ public interface EmployeeContractRepository extends JpaRepository<EmployeeContra
 
     long countByEmployeeProfileIdAndIsActiveTrue(Long employeeProfileId);
 
-    /** D3-102: contracts expiring within the alert window (CDD/CIVP/STAGE/DETACHEMENT only). */
+    /**
+     * D3-102: active contracts whose planned end falls in [today, horizon].
+     *
+     * Any type with a planned end — a CDI has none and so never matches. The horizon is the
+     * LARGEST lead time an admin can configure; the per-(pays, type) lead time is applied by
+     * the job, so changing it takes effect on the next run instead of being frozen into a
+     * pre-planned row.
+     */
     @Query("""
         SELECT c FROM EmployeeContract c
         WHERE c.isActive = true
         AND c.dateFinPrevue IS NOT NULL
-        AND c.dateFinPrevue BETWEEN :today AND :alertDate
-        AND c.contractTypeCode IN ('CDD', 'CIVP', 'STAGE', 'DETACHEMENT')
+        AND c.dateFinPrevue BETWEEN :today AND :horizon
         """)
     List<EmployeeContract> findExpiringContracts(
         @Param("today") LocalDate today,
-        @Param("alertDate") LocalDate alertDate);
+        @Param("horizon") LocalDate horizon);
+
+    /**
+     * Active contracts still before trial validation whose trial end (initial or renewed)
+     * falls in [today, horizon]. The job picks the effective date of the two.
+     */
+    @Query("""
+        SELECT c FROM EmployeeContract c
+        WHERE c.isActive = true
+        AND c.currentStatusCode IN ('RECRUTEMENT', 'PERIODE_ESSAI')
+        AND ((c.dateFinPeriodeEssai BETWEEN :today AND :horizon)
+          OR (c.periodeEssaiRenouvelee = true AND c.dateFinPeRenouvellement BETWEEN :today AND :horizon))
+        """)
+    List<EmployeeContract> findTrialPeriodsEnding(
+        @Param("today") LocalDate today,
+        @Param("horizon") LocalDate horizon);
 
     /** Contracts currently in trial period that have passed their end date. */
     @Query("""

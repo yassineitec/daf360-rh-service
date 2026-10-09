@@ -90,8 +90,11 @@ public class EmployeeLifecycleService {
             }
         }
 
-        LocalDate trialEnd = calculateTrialEndDate(
-            dto.getDateDebut(), dto.getContractTypeCode(), dto.isManagerProfile(), config);
+        // A date RH typed (the onboarding's « fin de période d'essai ») wins over the computed
+        // one: it is the agreed date, and the trial-end alert must announce that one.
+        LocalDate trialEnd = dto.isNoTrialPeriod() ? null
+            : dto.getDateFinPeriodeEssai() != null ? dto.getDateFinPeriodeEssai()
+            : calculateTrialEndDate(dto.getDateDebut(), dto.getContractTypeCode(), dto.isManagerProfile(), config);
 
         ResolvedNotice notice = resolveNoticePeriod(dto, profile);
 
@@ -134,7 +137,8 @@ public class EmployeeLifecycleService {
         profile.setLifecycleStatusCode(initialStatus);
         profileRepo.save(profile);
 
-        planContractAlerts(contract, config);
+        // No alert planning here any more: LifecycleAlertJob derives due alerts from the
+        // contract's dates on every run.
 
         return mapToDetailDto(contract);
     }
@@ -246,11 +250,12 @@ public class EmployeeLifecycleService {
 
         profileRepo.findById(contract.getEmployeeProfile().getId()).ifPresent(p -> {
             p.setLifecycleStatusCode("RENOUVELLEMENT_CDD");
+            p.setContractEndDate(dto.getNewDateFin());
             profileRepo.save(p);
         });
 
-        configRepo.findByPaysIdAndContractTypeCode(contract.getPaysId(), "CDD")
-            .ifPresent(config -> planContractAlerts(contract, config));
+        // The new end date is a new alert occurrence (the ledger is keyed by target date), so
+        // LifecycleAlertJob announces it without anything to plan here.
 
         return mapToDetailDto(contract);
     }
@@ -283,35 +288,38 @@ public class EmployeeLifecycleService {
         return createContract(cdiRequest, convertedBy);
     }
 
-    // ── Alert planning ────────────────────────────────────────────────────────
+    // ── Profile → contract date sync ──────────────────────────────────────────
 
-    public void planContractAlerts(EmployeeContract contract, ContractTypeConfig config) {
-        if (contract.getDateFinPrevue() == null) return;
-
-        int alertDays  = config.getAlertDaysBeforeExpiry() != null ? config.getAlertDaysBeforeExpiry() : 30;
-        LocalDate alertDate = contract.getDateFinPrevue().minusDays(alertDays);
-
-        if (alertDate.isBefore(LocalDate.now())) return;
-
-        if (alertRepo.existsByContractIdAndAlertType(contract.getId(), "CONTRACT_EXPIRY_30D")) return;
-
-        try {
-            List<String> recipientRoles = List.of("RH", "IT", "DIRECTEUR_PAYS");
-            String recipientsJson = objectMapper.writeValueAsString(recipientRoles);
-
-            EmployeeLifecycleAlert alert = EmployeeLifecycleAlert.builder()
-                .contract(contract)
-                .employeeProfileId(contract.getEmployeeProfile().getId())
-                .alertType("CONTRACT_EXPIRY_30D")
-                .alertDate(alertDate)
-                .targetDate(contract.getDateFinPrevue())
-                .recipients(recipientsJson)
-                .isSent(false)
-                .build();
-            alertRepo.save(alert);
-        } catch (Exception e) {
-            log.error("Failed to plan contract alert for contract {}: {}", contract.getId(), e.getMessage());
-        }
+    /**
+     * Copies the end dates edited on the profile onto the profile's current, active contract.
+     *
+     * The profile form edits employee_profiles.contract_end_date / probation_end_date, but the
+     * alerts read employee_contracts. Without this an HR correction on the profile left the
+     * alert announcing the old date — or nothing. Null means "not sent", never "clear".
+     * Security: the caller (profile update) is already permission-guarded.
+     */
+    public void syncContractDatesFromProfile(Long contractId, LocalDate contractEnd, LocalDate probationEnd) {
+        if (contractId == null || (contractEnd == null && probationEnd == null)) return;
+        contractRepo.findById(contractId)
+            .filter(c -> Boolean.TRUE.equals(c.getIsActive()))
+            .ifPresent(c -> {
+                boolean changed = false;
+                if (contractEnd != null && !contractEnd.equals(c.getDateFinPrevue())) {
+                    c.setDateFinPrevue(contractEnd);
+                    changed = true;
+                }
+                // Only while the trial is still running: once validated, the date is history.
+                if (probationEnd != null
+                        && List.of("RECRUTEMENT", "PERIODE_ESSAI").contains(c.getCurrentStatusCode())
+                        && !probationEnd.equals(c.getDateFinPeriodeEssai())) {
+                    c.setDateFinPeriodeEssai(probationEnd);
+                    changed = true;
+                }
+                if (changed) {
+                    c.setUpdatedAt(OffsetDateTime.now());
+                    contractRepo.save(c);
+                }
+            });
     }
 
     // ── Query methods ─────────────────────────────────────────────────────────
@@ -383,15 +391,59 @@ public class EmployeeLifecycleService {
                 "Configuration introuvable pour pays=" + paysId + " type=" + contractTypeCode));
     }
 
+    /** Every configured contract type of one pays — the admin screen's grid. */
+    @Transactional(readOnly = true)
+    @PreAuthorize("hasPermission(null, 'ADMIN_ROLES')")
+    public List<ContractTypeConfigDto> listConfigs(Long paysId) {
+        return configRepo.findByPaysId(paysId).stream()
+            .sorted(Comparator.comparing(ContractTypeConfig::getContractTypeCode))
+            .map(this::mapToConfigDto)
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * Creates the row for a (pays, contract type) that has none.
+     *
+     * Only pays_id=1 was ever seeded, so every other entity had no row: contract creation
+     * threw D3-95 there and no expiry alert could be configured. The admin screen offers to
+     * create the missing types from here, with the entity defaults unless values are given.
+     */
+    @PreAuthorize("hasPermission(null, 'ADMIN_ROLES')")
+    public ContractTypeConfigDto createConfig(Long paysId, String contractTypeCode,
+                                              UpdateContractTypeConfigRequest dto, Long createdBy) {
+        if (paysId == null || contractTypeCode == null || contractTypeCode.isBlank()) {
+            throw new BusinessRuleException("D3-105", "Pays et type de contrat obligatoires.");
+        }
+        String code = contractTypeCode.trim().toUpperCase();
+        if (configRepo.findByPaysIdAndContractTypeCode(paysId, code).isPresent()) {
+            throw new BusinessRuleException("D3-105",
+                "Une configuration existe déjà pour ce pays et ce type de contrat.");
+        }
+        ContractTypeConfig config = ContractTypeConfig.builder()
+            .paysId(paysId)
+            .contractTypeCode(code)
+            .trialPeriodDaysStandard("CDI".equals(code) ? 90 : 0)
+            .trialPeriodDaysManager("CDI".equals(code) ? 180 : 0)
+            .updatedBy(createdBy)
+            .build();
+        config = configRepo.save(config);
+        // Same field-by-field rules as an edit, so a create can carry the lead times.
+        return dto != null ? updateConfig(config.getId(), dto, createdBy) : mapToConfigDto(config);
+    }
+
     @PreAuthorize("hasPermission(null, 'ADMIN_ROLES')")
     public ContractTypeConfigDto updateConfig(Long configId, UpdateContractTypeConfigRequest dto, Long updatedBy) {
         ContractTypeConfig config = configRepo.findById(configId)
             .orElseThrow(() -> new BusinessRuleException("D3-105", "Configuration introuvable."));
 
+        validateLeadDays(dto.getAlertDaysBeforeExpiry());
+        validateLeadDays(dto.getAlertDaysBeforeTrialEnd());
+
         if (dto.getTrialPeriodDaysStandard()    != null) config.setTrialPeriodDaysStandard(dto.getTrialPeriodDaysStandard());
         if (dto.getTrialPeriodDaysManager()     != null) config.setTrialPeriodDaysManager(dto.getTrialPeriodDaysManager());
         if (dto.getTrialPeriodRenewable()       != null) config.setTrialPeriodRenewable(dto.getTrialPeriodRenewable());
         if (dto.getAlertDaysBeforeExpiry()      != null) config.setAlertDaysBeforeExpiry(dto.getAlertDaysBeforeExpiry());
+        if (dto.getAlertDaysBeforeTrialEnd()    != null) config.setAlertDaysBeforeTrialEnd(dto.getAlertDaysBeforeTrialEnd());
         if (dto.getIndemnityRatePct()           != null) config.setIndemnityRatePct(dto.getIndemnityRatePct());
         if (dto.getIndemnityApplicable()        != null) config.setIndemnityApplicable(dto.getIndemnityApplicable());
         if (dto.getCivpMaxAge()                 != null) config.setCivpMaxAge(dto.getCivpMaxAge());
@@ -406,6 +458,14 @@ public class EmployeeLifecycleService {
 
         logConfigChange(config, updatedBy);
         return mapToConfigDto(config);
+    }
+
+    /** Also enforced by the DTO's @Min/@Max; repeated here because createConfig calls in directly. */
+    private static void validateLeadDays(Integer days) {
+        if (days != null && (days < 0 || days > LifecycleAlertJob.MAX_LEAD_DAYS)) {
+            throw new BusinessRuleException("D3-105",
+                "Le délai d'alerte doit être compris entre 0 et " + LifecycleAlertJob.MAX_LEAD_DAYS + " jours.");
+        }
     }
 
     // ── CIVP validation (D3-98, D3-105) ──────────────────────────────────────
@@ -708,6 +768,7 @@ public class EmployeeLifecycleService {
             .trialPeriodDaysManager(c.getTrialPeriodDaysManager())
             .trialPeriodRenewable(c.getTrialPeriodRenewable())
             .alertDaysBeforeExpiry(c.getAlertDaysBeforeExpiry())
+            .alertDaysBeforeTrialEnd(c.getAlertDaysBeforeTrialEnd())
             .indemnityRatePct(c.getIndemnityRatePct())
             .indemnityApplicable(c.getIndemnityApplicable())
             .civpMaxAge(c.getCivpMaxAge())

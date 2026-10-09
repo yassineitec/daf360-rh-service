@@ -787,6 +787,14 @@ public class OnboardingService {
         req.setContractTypeCode(contractTypeCode);
         req.setDateDebut(dto.getHireDate());
         req.setDateFinPrevue(dto.getContractEndDate());
+        // The trial end RH typed on the same step — the date the trial-end alert must announce.
+        // « Pas de période d'essai » must not fall back to the computed default, or HR would be
+        // alerted about a trial that does not exist.
+        if (Boolean.FALSE.equals(dto.getIsOnProbation())) {
+            req.setNoTrialPeriod(true);
+        } else {
+            req.setDateFinPeriodeEssai(dto.getProbationEndDate());
+        }
         // Null is fine and meaningful: doCreateContract then resolves the négociated figure
         // from the offer, then the grade default, and records which one it used.
         req.setNoticePeriodDays(dto.getNoticePeriodDays());
