@@ -81,6 +81,12 @@ public class EmployeeProfileService {
      * value even after it is deactivated — only a *change* to an unknown/inactive one is refused.
      */
     private String resolveContractType(String codeOrId, String currentStored, Long paysId) {
+        // Unchanged value: kept as is, even one the list does not hold (a legacy text such as
+        // 'contrat' the migration could not map). The edit form echoes it on every save, and
+        // refusing it would make the whole profile unsavable over a field nobody touched.
+        if (codeOrId != null && currentStored != null && codeOrId.trim().equals(currentStored.trim())) {
+            return currentStored;
+        }
         String stored = contractTypeRefs.toStored(codeOrId, paysId);
         if (stored == null || stored.equals(contractTypeRefs.find(currentStored, paysId)
                 .map(v -> String.valueOf(v.getId())).orElse(null))) {
