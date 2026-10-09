@@ -26,6 +26,12 @@ public class CreateContractRequest {
 
     private LocalDate dateFinPrevue;
 
+    /** Optional agreed trial end. When absent it is computed from contract_type_config. */
+    private LocalDate dateFinPeriodeEssai;
+
+    /** True when the hire explicitly has no trial period: no date is computed, no alert raised. */
+    private boolean noTrialPeriod;
+
     private String referenceContrat;
 
     /** Whether employee will be in a managerial role — affects CDI trial period length. */

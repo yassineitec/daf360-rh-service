@@ -49,6 +49,11 @@ public class ContractTypeConfig {
     @Builder.Default
     private Integer alertDaysBeforeExpiry = 30;
 
+    /** Lead time of the TRIAL_PERIOD_END alert (V118). Same semantics as the expiry one. */
+    @Column(name = "alert_days_before_trial_end", nullable = false)
+    @Builder.Default
+    private Integer alertDaysBeforeTrialEnd = 15;
+
     @Column(name = "indemnity_rate_pct", precision = 6, scale = 4)
     private BigDecimal indemnityRatePct;
 
