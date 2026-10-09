@@ -47,6 +47,8 @@ public class EmployeeProfileService {
     private final JdbcTemplate              jdbcTemplate;
     private final ObjectMapper              objectMapper;
     private final com.daf360.rh.security.TenantService tenantService;
+    /** Keeps the current contract's end dates in step with the profile's (they drive the alerts). */
+    private final com.daf360.rh.lifecycle.EmployeeLifecycleService lifecycleService;
 
     // ── SharePoint (profile photo mirroring, cf. spec 2026-08-18) ─────────────
     // The photo's location now comes from SharePointResolver (V84 config + discovery cache)
@@ -267,6 +269,10 @@ public class EmployeeProfileService {
 
         profile.setUpdatedAt(OffsetDateTime.now(PARIS));
         EmployeeProfile saved = profileRepository.save(profile);
+
+        // The contract-end and trial-end alerts read the contract, not the profile.
+        lifecycleService.syncContractDatesFromProfile(saved.getCurrentContractId(),
+                dto.getContractEndDate(), dto.getProbationEndDate());
 
         String afterJson = safeJson(saved);
         String afterWithReason = "{\"reason\":\"" + dto.getReason().replace("\"", "\\\"")

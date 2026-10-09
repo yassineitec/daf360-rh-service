@@ -6,6 +6,7 @@ import com.daf360.rh.lifecycle.LifecycleAlertJob;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -101,10 +102,15 @@ public class EmployeeLifecycleController {
         return lifecycleService.acknowledgeAlert(id, actorId(auth));
     }
 
+    /**
+     * Runs the daily alert job now. Was open to any authenticated caller; it sends
+     * notifications and e-mails to HR, so it takes the alert-management permission.
+     * The job itself refuses to run twice at once ({@code ran=false} in the reply).
+     */
     @PostMapping("/api/hr/lifecycle/alerts/process")
-    @ResponseStatus(HttpStatus.ACCEPTED)
-    public void triggerAlertJob() {
-        alertJob.processLifecycleAlerts();
+    @PreAuthorize("hasPermission(null, 'RH_MANAGE_ALERTS')")
+    public LifecycleAlertJob.RunSummary triggerAlertJob() {
+        return alertJob.processLifecycleAlerts();
     }
 
     // ── Config ────────────────────────────────────────────────────────────────
@@ -116,10 +122,26 @@ public class EmployeeLifecycleController {
         return lifecycleService.getConfig(paysId, contractTypeCode);
     }
 
+    /** All contract types configured for one pays — Administration › Échéances de contrat. */
+    @GetMapping("/api/hr/lifecycle/configs")
+    public List<ContractTypeConfigDto> listConfigs(@RequestParam Long paysId) {
+        return lifecycleService.listConfigs(paysId);
+    }
+
+    @PostMapping("/api/hr/lifecycle/configs")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ContractTypeConfigDto createConfig(
+            @RequestParam Long paysId,
+            @RequestParam String contractTypeCode,
+            @Valid @RequestBody(required = false) UpdateContractTypeConfigRequest dto,
+            Authentication auth) {
+        return lifecycleService.createConfig(paysId, contractTypeCode, dto, actorId(auth));
+    }
+
     @PatchMapping("/api/hr/lifecycle/config/{id}")
     public ContractTypeConfigDto updateConfig(
             @PathVariable Long id,
-            @RequestBody UpdateContractTypeConfigRequest dto,
+            @Valid @RequestBody UpdateContractTypeConfigRequest dto,
             Authentication auth) {
         return lifecycleService.updateConfig(id, dto, actorId(auth));
     }

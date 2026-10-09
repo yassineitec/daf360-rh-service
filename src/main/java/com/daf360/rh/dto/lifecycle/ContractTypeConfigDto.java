@@ -16,6 +16,7 @@ public class ContractTypeConfigDto {
     private Integer trialPeriodDaysManager;
     private Boolean trialPeriodRenewable;
     private Integer alertDaysBeforeExpiry;
+    private Integer alertDaysBeforeTrialEnd;
     private BigDecimal indemnityRatePct;
     private Boolean indemnityApplicable;
     private Integer civpMaxAge;

@@ -37,6 +37,13 @@ public class RoutingContext {
     private final Long subjectUserId;
 
     /**
+     * The user who CAUSED the event: the manager who filed a recruitment request, the approver
+     * who decided it. Removed from every resolved audience (in-app and e-mail), so nobody is
+     * told about the thing they just did. Unlike {@link #subjectUserId} it never adds anyone.
+     */
+    private final Long actorUserId;
+
+    /**
      * Template variable substitutions.
      * Keys are placeholder names without braces: "candidateName", "ms365Email", etc.
      * Values are the resolved strings to substitute.

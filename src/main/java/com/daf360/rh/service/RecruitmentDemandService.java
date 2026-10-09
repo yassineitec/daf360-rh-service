@@ -60,6 +60,8 @@ public class RecruitmentDemandService {
         Long experienceId = resolveListValue(
                 request.getExperienceLevelId(), request.getExperienceLevelCode(), "EXPERIENCE_LEVEL");
 
+        checkPaysInScope(request.getPaysId());
+
         validateListValue(urgencyId, "URGENCY_LEVEL");
         if (request.getCspCategoryId() != null) validateListValue(request.getCspCategoryId(), "CSP_CATEGORY");
         if (experienceId != null) validateListValue(experienceId, "EXPERIENCE_LEVEL");
@@ -100,7 +102,7 @@ public class RecruitmentDemandService {
         auditService.log(actorUserId.toString(), "CREATE", "RECRUITMENT_DEMAND", demand.getId(),
                 null, "jobTitle=" + demand.getJobTitle());
 
-        dispatch("RECRUITMENT_DEMAND_CREATED", demand);
+        dispatch("RECRUITMENT_DEMAND_CREATED", demand, actorUserId);
 
         return toResponse(demand);
     }
@@ -110,6 +112,12 @@ public class RecruitmentDemandService {
 
         if (demand.getStatut() != RecruitmentDemandStatus.EN_ATTENTE) {
             throw new AppException(ErrorCode.RECRUITMENT_DEMAND_ALREADY_REVIEWED);
+        }
+        // Four-eyes: a DRH or an administrator can file a request AND holds the approval
+        // permission, which let them validate their own request in one click.
+        if (actorUserId != null && actorUserId.equals(demand.getCreatedByUserId())) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                    "Vous ne pouvez pas valider ou refuser votre propre demande de recrutement.");
         }
 
         String before = "statut=" + demand.getStatut();
@@ -127,9 +135,12 @@ public class RecruitmentDemandService {
         auditService.log(actorUserId.toString(), "REVIEW", "RECRUITMENT_DEMAND", demand.getId(),
                 before, "statut=" + newStatut);
 
-        if (newStatut == RecruitmentDemandStatus.APPROUVEE) {
-            onApproved(demand);
-        }
+        // Both outcomes are a validation step: the requester and HR must hear about a refusal
+        // as much as an approval — before, a rejected request was only discoverable in the list.
+        dispatch(newStatut == RecruitmentDemandStatus.APPROUVEE
+                        ? "RECRUITMENT_DEMAND_APPROVED"
+                        : "RECRUITMENT_DEMAND_REJECTED",
+                demand, actorUserId);
 
         return toResponse(demand);
     }
@@ -151,6 +162,9 @@ public class RecruitmentDemandService {
 
         auditService.log(actorUserId.toString(), "CANCEL", "RECRUITMENT_DEMAND", demand.getId(),
                 "statut=EN_ATTENTE", "statut=ANNULEE");
+
+        // The approvers and HR were told it was waiting; tell them it no longer is.
+        dispatch("RECRUITMENT_DEMAND_CANCELLED", demand, actorUserId);
 
         return toResponse(demand);
     }
@@ -338,8 +352,31 @@ public class RecruitmentDemandService {
                     "La valeur sélectionnée n'appartient pas à la liste " + listTypeCode);
         }
     }
-    private void onApproved(RecruitmentDemand demand) {
-        dispatch("RECRUITMENT_DEMAND_APPROVED", demand);
+    /**
+     * A request may only be filed for a pays the caller can see. paysId comes from the client,
+     * and recipients are resolved per pays — a wrong value notified another entity's approvers.
+     * An unresolved scope stays permissive, as everywhere else (see PaysScopeContext.Scope).
+     */
+    private void checkPaysInScope(Long paysId) {
+        var scope = tenantService.getPaysScope();
+        if (paysId == null || scope.unfiltered()) return;
+        if (!scope.paysIds().contains(paysId)) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                    "Vous ne pouvez pas créer une demande de recrutement pour ce pays.");
+        }
+    }
+
+    private static final String USER_NAME_SQL =
+            "SELECT COALESCE(u.fullName, u.username, u.email) FROM [dbo].[Users] u WHERE u.id = ?";
+
+    private String userName(Long userId) {
+        if (userId == null) return "";
+        try {
+            List<String> rows = jdbc.queryForList(USER_NAME_SQL, String.class, userId);
+            return rows.isEmpty() || rows.get(0) == null ? "" : rows.get(0);
+        } catch (Exception ex) {
+            return "";
+        }
     }
 
     /**
@@ -349,19 +386,37 @@ public class RecruitmentDemandService {
      * that resolved holders of a hardcoded permission, and an e-mail helper that built its own
      * HTML. Both are now the rule's business, so an admin can retune recipients and wording
      * without a deploy — and there is one code path instead of two that could disagree.
+     *
+     * - subject = the requester, so a rule can address "the person who asked" (SUBJECT mode);
+     *   it was never set, so the requester could only be reached through a broad permission.
+     * - actor = whoever triggered the step; excluded from the audience.
+     * - after commit: the class is @Transactional, and dispatching inside it could announce a
+     *   request whose commit then failed.
      */
-    private void dispatch(String eventCode, RecruitmentDemand demand) {
-        notificationRoutingService.resolveAndDispatch(RoutingContext.builder()
+    private void dispatch(String eventCode, RecruitmentDemand demand, Long actorUserId) {
+        Map<String, String> vars = new java.util.HashMap<>();
+        vars.put("jobTitle",      demand.getJobTitle() != null ? demand.getJobTitle() : "");
+        vars.put("department",    demand.getDepartment() != null ? demand.getDepartment() : "");
+        vars.put("headcount",     String.valueOf(demand.getHeadcount()));
+        vars.put("urgency",       nullToEmpty(resolveListLabel(demand.getUrgencyLevelId())));
+        vars.put("requesterName", userName(demand.getCreatedByUserId()));
+        vars.put("reviewerName",  userName(demand.getReviewedByUserId()));
+        vars.put("actorName",     userName(actorUserId));
+        vars.put("comment",       nullToEmpty(demand.getReviewComment()));
+
+        notificationRoutingService.dispatchAfterCommit(RoutingContext.builder()
                 .eventCode(eventCode)
                 .paysId(demand.getPaysId())
+                .subjectUserId(demand.getCreatedByUserId())
+                .actorUserId(actorUserId)
                 .entityType(NotificationEntityType.RECRUITMENT_DEMAND)
                 .entityId(demand.getId())
-                .templateVars(Map.of(
-                        "jobTitle",   demand.getJobTitle() != null ? demand.getJobTitle() : "",
-                        "department", demand.getDepartment() != null ? demand.getDepartment() : "",
-                        "headcount",  String.valueOf(demand.getHeadcount())
-                ))
+                .templateVars(vars)
                 .build());
+    }
+
+    private static String nullToEmpty(String s) {
+        return s != null ? s : "";
     }
 
     private RecruitmentDemandResponse toResponse(RecruitmentDemand d) {
