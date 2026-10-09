@@ -57,6 +57,14 @@ public class ConfigurableListValue {
     @Column(name = "payroll_contract_code", length = 20)
     private String payrollContractCode;
 
+    /**
+     * CONTRACT_TYPE only: which lifecycle rules a contract of this type follows — one of
+     * {@link ContractTypeRefs#NATURES} (CDI, CDD, CIVP, STAGE, FREELANCE, DETACHEMENT).
+     * Lets a type added in the admin (« contrat ») behave like a CDI, a CDD…
+     */
+    @Column(name = "lifecycle_nature", length = 30)
+    private String lifecycleNature;
+
     @PrePersist
     protected void prePersist() {
         if (createdAt == null) {

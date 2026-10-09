@@ -17,6 +17,7 @@ public class CreateContractRequest {
     @NotNull
     private Long paysId;
 
+    /** A CONTRACT_TYPE code (CDI…) or its configurable_list_values id — stored as the id. */
     @NotBlank
     private String contractTypeCode;
 

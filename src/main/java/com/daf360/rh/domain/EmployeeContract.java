@@ -34,9 +34,13 @@ public class EmployeeContract {
     @Column(name = "pays_id", nullable = false)
     private Long paysId;
 
-    /** CDI | CDD | CIVP | STAGE | FREELANCE | DETACHEMENT */
+    /**
+     * Id (as text) of the CONTRACT_TYPE row of configurable_list_values — like
+     * employee_profiles.contract_type. Not a code: the lifecycle rules follow the value's
+     * nature, read through {@link com.daf360.rh.lists.ContractTypeRefs#natureOf}.
+     */
     @Column(name = "contract_type_code", nullable = false, length = 30)
-    private String contractTypeCode;
+    private String contractTypeId;
 
     /** RECRUTEMENT | PERIODE_ESSAI | ACTIF | SUSPENDU | FIN_CONTRAT | … (from configurable_list_values) */
     @Column(name = "current_status_code", nullable = false, length = 50)

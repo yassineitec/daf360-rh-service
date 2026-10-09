@@ -43,6 +43,8 @@ class EmployeeLifecycleServiceTest {
     @Mock NotificationRoutingService              notificationRoutingService;
     @Mock JdbcTemplate                            jdbc;
     @Mock ObjectMapper                            objectMapper;
+    /** Stands in for the CONTRACT_TYPE list: a code is stored as is and is its own nature. */
+    @Mock com.daf360.rh.lists.ContractTypeRefs     contractTypeRefs;
 
     @InjectMocks EmployeeLifecycleService service;
 
@@ -53,6 +55,10 @@ class EmployeeLifecycleServiceTest {
 
     @BeforeEach
     void setup() {
+        lenient().when(contractTypeRefs.toStored(anyString(), any())).thenAnswer(i -> i.getArgument(0));
+        lenient().when(contractTypeRefs.natureOf(anyString(), any())).thenAnswer(i -> i.getArgument(0));
+        lenient().when(configRepo.findForNature(any(), any())).thenCallRealMethod();
+
         profile = EmployeeProfile.builder()
             .id(10L)
             .dateOfBirth(LocalDate.of(1990, 1, 1))
@@ -97,7 +103,7 @@ class EmployeeLifecycleServiceTest {
         assertThat(result.getCurrentStatusCode()).isEqualTo("RECRUTEMENT");
         ArgumentCaptor<EmployeeContract> captor = ArgumentCaptor.forClass(EmployeeContract.class);
         verify(contractRepo, atLeastOnce()).save(captor.capture());
-        assertThat(captor.getAllValues().get(0).getContractTypeCode()).isEqualTo("CDI");
+        assertThat(captor.getAllValues().get(0).getContractTypeId()).isEqualTo("CDI");
     }
 
     // ── 2. Create CIVP — age over 30 → exception ─────────────────────────────
@@ -180,7 +186,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void createCDD_withParent_incrementsCount() throws Exception {
         EmployeeContract parentCdd = EmployeeContract.builder()
-            .id(50L).contractTypeCode("CDD")
+            .id(50L).contractTypeId("CDD")
             .cddRenouvellementCount(0)
             .employeeProfile(profile).build();
 
@@ -217,7 +223,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void createCDD_parentAlreadyRenewed_throwsException() {
         EmployeeContract parentCdd = EmployeeContract.builder()
-            .id(50L).contractTypeCode("CDD")
+            .id(50L).contractTypeId("CDD")
             .cddRenouvellementCount(1) // already renewed
             .employeeProfile(profile).build();
 
@@ -243,7 +249,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void transitionState_validTransition_succeeds() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(200L).contractTypeCode("CDI")
+            .id(200L).contractTypeId("CDI")
             .currentStatusCode("RECRUTEMENT")
             .dossierLocked(false)
             .paysId(1L).employeeProfile(profile).build();
@@ -267,7 +273,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void transitionState_invalidTransition_throwsException() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(200L).contractTypeCode("CDI")
+            .id(200L).contractTypeId("CDI")
             .currentStatusCode("ACTIF")
             .dossierLocked(false)
             .paysId(1L).employeeProfile(profile).build();
@@ -288,7 +294,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void transitionState_lockedDossier_throwsException() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(200L).contractTypeCode("CDI")
+            .id(200L).contractTypeId("CDI")
             .currentStatusCode("FIN_CONTRAT")
             .dossierLocked(true)
             .paysId(1L).employeeProfile(profile).build();
@@ -309,7 +315,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void validateTrialPeriod_approved_setsActif() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(201L).contractTypeCode("CDI")
+            .id(201L).contractTypeId("CDI")
             .currentStatusCode("PERIODE_ESSAI")
             .dossierLocked(false)
             .paysId(1L).employeeProfile(profile).build();
@@ -333,7 +339,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void validateTrialPeriod_rejected_setsRupturePE() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(202L).contractTypeCode("CDI")
+            .id(202L).contractTypeId("CDI")
             .currentStatusCode("PERIODE_ESSAI")
             .dossierLocked(false)
             .paysId(1L).employeeProfile(profile).build();
@@ -357,7 +363,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void renewCDD_secondRenewal_throwsException() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(300L).contractTypeCode("CDD")
+            .id(300L).contractTypeId("CDD")
             .currentStatusCode("ACTIF")
             .cddRenouvellementCount(1) // already renewed once
             .dateFinPrevue(LocalDate.now().plusDays(60))
@@ -378,7 +384,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void convertToCDI_createsNewCDIContract() throws Exception {
         EmployeeContract cdd = EmployeeContract.builder()
-            .id(400L).contractTypeCode("CDD")
+            .id(400L).contractTypeId("CDD")
             .currentStatusCode("ACTIF")
             .dossierLocked(false)
             .paysId(1L).employeeProfile(profile).build();
@@ -408,7 +414,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void logTransition_neverThrowsOnFailure() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(500L).contractTypeCode("CDI")
+            .id(500L).contractTypeId("CDI")
             .employeeProfile(profile).build();
 
         when(transitionRepo.save(any())).thenThrow(new RuntimeException("DB down"));
@@ -425,7 +431,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void planContractAlerts_noDuplicate() throws Exception {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(600L).contractTypeCode("CDD")
+            .id(600L).contractTypeId("CDD")
             .dateFinPrevue(LocalDate.now().plusDays(60))
             .employeeProfile(profile).build();
 
@@ -446,7 +452,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void sendAlert_dispatchesContractExpiryEvent() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(700L).contractTypeCode("CDD")
+            .id(700L).contractTypeId("CDD")
             .paysId(1L).employeeProfile(profile).build();
 
         EmployeeLifecycleAlert alert = EmployeeLifecycleAlert.builder()

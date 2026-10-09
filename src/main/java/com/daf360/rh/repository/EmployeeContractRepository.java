@@ -16,13 +16,15 @@ public interface EmployeeContractRepository extends JpaRepository<EmployeeContra
 
     long countByEmployeeProfileIdAndIsActiveTrue(Long employeeProfileId);
 
-    /** D3-102: contracts expiring within the alert window (CDD/CIVP/STAGE/DETACHEMENT only). */
+    /**
+     * D3-102: contracts expiring within the alert window. The type filter (CDD/CIVP/STAGE/
+     * DETACHEMENT natures) is applied by the caller: contract_type_code holds a list id.
+     */
     @Query("""
         SELECT c FROM EmployeeContract c
         WHERE c.isActive = true
         AND c.dateFinPrevue IS NOT NULL
         AND c.dateFinPrevue BETWEEN :today AND :alertDate
-        AND c.contractTypeCode IN ('CDD', 'CIVP', 'STAGE', 'DETACHEMENT')
         """)
     List<EmployeeContract> findExpiringContracts(
         @Param("today") LocalDate today,

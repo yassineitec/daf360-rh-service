@@ -4,6 +4,7 @@ import com.daf360.rh.domain.Candidate;
 import com.daf360.rh.domain.CandidateCostApproval;
 import com.daf360.rh.domain.JobOffer;
 import com.daf360.rh.lifecycle.ContractTypeBridge;
+import com.daf360.rh.lists.ContractTypeRefs;
 import com.daf360.rh.dto.hiring.CandidateCostApprovalDto;
 import com.daf360.rh.dto.hiring.CandidateSimulationSummaryDto;
 import com.daf360.rh.dto.hiring.SubmitCostApprovalRequest;
@@ -28,6 +29,7 @@ public class CandidateCostApprovalService {
     private final CandidateRepository             candidateRepo;
     /** Resolves the candidate's CONTRACT_TYPE into the contract code the snapshot was run for. */
     private final ContractTypeBridge              contractTypeBridge;
+    private final ContractTypeRefs                contractTypeRefs;
 
     /**
      * The approval that gates one offer round (V98) — created with the round itself, in the
@@ -56,8 +58,7 @@ public class CandidateCostApprovalService {
                         ? candidate.getSalaireNetRh() : offer.getProposedSalary())
                 .salaireNetCandidat(candidate.getSalaireNetCandidat())
                 .proposedSalary(offer.getProposedSalary())
-                .contractTypeCode(contractTypeBridge.resolveContractTypeCode(
-                        candidate.getEmploymentTypeId()))
+                .contractTypeId(storedContractType(candidate, null, candidate.getPaysId()))
                 .simulationSnapshot(simulationSnapshot)
                 .status("PENDING")
                 .submittedBy(submittedBy)
@@ -78,6 +79,19 @@ public class CandidateCostApprovalService {
         return approvalRepo.existsByJobOfferIdAndStatus(jobOfferId, "APPROVED");
     }
 
+    /**
+     * The CONTRACT_TYPE list id to record: the candidate's own type (employment_type_id) when
+     * set — the exact type being approved, « contrat » included — else the code the client
+     * sent (a payroll code such as CDI) resolved in the list; kept as is if unknown.
+     */
+    private String storedContractType(Candidate candidate, String requestedCode, Long paysId) {
+        String ref = candidate != null && candidate.getEmploymentTypeId() != null
+                ? contractTypeBridge.resolveContractTypeRef(candidate.getEmploymentTypeId())
+                : (requestedCode != null && !requestedCode.isBlank() ? requestedCode : ContractTypeRefs.DEFAULT_NATURE);
+        Long id = contractTypeRefs.idOf(ref, paysId);
+        return id != null ? String.valueOf(id) : ref;
+    }
+
     public CandidateCostApprovalDto submit(SubmitCostApprovalRequest req, Long submittedBy) {
         Candidate candidate = candidateRepo.findById(req.getCandidateId())
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
@@ -89,7 +103,7 @@ public class CandidateCostApprovalService {
                 .fiscalYear(req.getFiscalYear())
                 .salaireNetRh(req.getSalaireNetRh())
                 .salaireNetCandidat(req.getSalaireNetCandidat())
-                .contractTypeCode(req.getContractTypeCode())
+                .contractTypeId(storedContractType(candidate, req.getContractTypeCode(), req.getPaysId()))
                 .simulationSnapshot(req.getSimulationSnapshot())
                 .status("PENDING")
                 .submittedBy(submittedBy)
@@ -210,7 +224,12 @@ public class CandidateCostApprovalService {
         dto.setFiscalYear(a.getFiscalYear());
         dto.setSalaireNetRh(a.getSalaireNetRh());
         dto.setSalaireNetCandidat(a.getSalaireNetCandidat());
-        dto.setContractTypeCode(a.getContractTypeCode());
+        // Stored: the CONTRACT_TYPE list id. Exposed: its nature (the payroll-facing code) + id + label.
+        dto.setContractTypeCode(contractTypeRefs.natureOf(a.getContractTypeId(), a.getPaysId()));
+        contractTypeRefs.find(a.getContractTypeId(), a.getPaysId()).ifPresent(v -> {
+            dto.setContractTypeId(v.getId());
+            dto.setContractTypeLabel(v.getLabelFr());
+        });
         dto.setSimulationSnapshot(a.getSimulationSnapshot());
         dto.setStatus(a.getStatus());
         dto.setSubmittedBy(a.getSubmittedBy());

@@ -80,6 +80,7 @@ public class CandidateService {
     private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
     private final EmployeeLifecycleService   lifecycleService;
     private final ContractTypeBridge         contractTypeBridge;
+    private final com.daf360.rh.lists.ContractTypeRefs contractTypeRefs;
     private final com.daf360.rh.security.TenantService tenantService;
 
     // ── Dimension repos for FK resolution ────────────────────────────────────
@@ -257,9 +258,11 @@ public class CandidateService {
         profile.setUpdatedAt(OffsetDateTime.now());
         profile = profileRepo.save(profile);
 
-        String contractTypeCode = req.getContractTypeCode() != null && !req.getContractTypeCode().isBlank()
+        // The contract stores the CONTRACT_TYPE list id; the rules follow its nature (CDI, CDD…).
+        String contractTypeRef = req.getContractTypeCode() != null && !req.getContractTypeCode().isBlank()
                 ? req.getContractTypeCode()
-                : contractTypeBridge.resolveContractTypeCode(candidate.getEmploymentTypeId());
+                : contractTypeBridge.resolveContractTypeRef(candidate.getEmploymentTypeId());
+        String contractTypeCode = contractTypeRefs.natureOf(contractTypeRef, candidate.getPaysId());
 
         if (NEEDS_END_DATE.contains(contractTypeCode) && req.getDateFinPrevue() == null) {
             throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
@@ -269,7 +272,7 @@ public class CandidateService {
         CreateContractRequest contractReq = new CreateContractRequest();
         contractReq.setEmployeeProfileId(profile.getId());
         contractReq.setPaysId(candidate.getPaysId());
-        contractReq.setContractTypeCode(contractTypeCode);
+        contractReq.setContractTypeCode(contractTypeRef);
         contractReq.setDateDebut(req.getHireDate());
         contractReq.setDateFinPrevue(req.getDateFinPrevue());
         contractReq.setManagerProfile(req.isManagerProfile());

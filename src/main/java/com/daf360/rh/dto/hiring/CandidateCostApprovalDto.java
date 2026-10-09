@@ -22,7 +22,12 @@ public class CandidateCostApprovalDto {
     private Integer         fiscalYear;
     private BigDecimal      salaireNetRh;
     private BigDecimal      salaireNetCandidat;
+    /** Nature of the approved contract type (CDI, CDD…) — the payroll-facing code. */
     private String          contractTypeCode;
+    /** configurable_list_values.id of the CONTRACT_TYPE value approved. */
+    private Long            contractTypeId;
+    /** Its label (« contrat », « CDI — Durée indéterminée »…). */
+    private String          contractTypeLabel;
     private String          simulationSnapshot;
     private String          status;
     private Long            submittedBy;

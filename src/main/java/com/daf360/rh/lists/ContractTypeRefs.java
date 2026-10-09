@@ -27,6 +27,15 @@ public class ContractTypeRefs {
     public static final String LIST_CODE = "CONTRACT_TYPE";
 
     /**
+     * The contract natures the lifecycle engine has rules for (contract_type_config rows,
+     * CDD renewal, CIVP eligibility, STAGE/FREELANCE initial status…). Every CONTRACT_TYPE
+     * value maps to one of them through {@link ConfigurableListValue#getLifecycleNature}.
+     */
+    public static final java.util.Set<String> NATURES =
+            java.util.Set.of("CDI", "CDD", "CIVP", "STAGE", "FREELANCE", "DETACHEMENT");
+    public static final String DEFAULT_NATURE = "CDI";
+
+    /**
      * For hand-written SQL: joins the list row of {@code <profileAlias>.contract_type} as
      * {@code <valueAlias>}. TRY_CAST, not CAST: a not-yet-migrated row still holds a code.
      */
@@ -57,6 +66,34 @@ public class ContractTypeRefs {
     public String codeOf(String stored, Long paysId) {
         if (stored == null || stored.isBlank()) return null;
         return find(stored, paysId).map(ConfigurableListValue::getValueCode).orElse(stored);
+    }
+
+    /**
+     * The lifecycle nature (CDI, CDD…) of a stored value — an id, or a legacy code. Falls back
+     * to the code itself when it is a nature, then to CDI: a contract is never left without rules.
+     */
+    public String natureOf(String stored, Long paysId) {
+        return find(stored, paysId).map(ContractTypeRefs::natureOf)
+                .orElseGet(() -> legacyNature(stored));
+    }
+
+    /** The nature of a list value: its lifecycle_nature, else its own code if it is one, else CDI. */
+    public static String natureOf(ConfigurableListValue v) {
+        String nature = v.getLifecycleNature();
+        if (nature != null && NATURES.contains(nature.trim().toUpperCase())) return nature.trim().toUpperCase();
+        return legacyNature(v.getValueCode());
+    }
+
+    private static String legacyNature(String code) {
+        if (code == null) return DEFAULT_NATURE;
+        String c = code.trim().toUpperCase();
+        if (NATURES.contains(c)) return c;
+        return switch (c) {
+            case "PORTAGE", "CONSULTANT" -> "FREELANCE";
+            case "FIXED_TERM"            -> "CDD";
+            case "INTERN"                -> "STAGE";
+            default                      -> DEFAULT_NATURE;
+        };
     }
 
     /** The list row id of a stored value, or null when it resolves to nothing. */
@@ -93,7 +130,8 @@ public class ContractTypeRefs {
                         .thenComparing(ConfigurableListValue::getId));
     }
 
-    private Long listTypeId() {
+    /** configurable_list_types.id of CONTRACT_TYPE. */
+    public Long listTypeId() {
         return typeRepo.findByCode(LIST_CODE)
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND, "Liste introuvable : code=" + LIST_CODE))
                 .getId();

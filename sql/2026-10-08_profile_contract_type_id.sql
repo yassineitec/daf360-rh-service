@@ -22,9 +22,11 @@ SET XACT_ABORT ON;
 SET NOCOUNT ON;
 
 DECLARE @listTypeId BIGINT = (SELECT id FROM dbo.configurable_list_types WHERE code = 'CONTRACT_TYPE');
+-- Liste absente de cette base : rien à convertir, on sort sans erreur (aucune donnée modifiée)
 IF @listTypeId IS NULL
 BEGIN
-    THROW 50001, 'Liste CONTRACT_TYPE introuvable dans configurable_list_types.', 1;
+    PRINT 'Liste CONTRACT_TYPE introuvable dans configurable_list_types (base ' + DB_NAME() + ') : script ignoré.';
+    RETURN;
 END;
 
 -- Profils à convertir et leur cible

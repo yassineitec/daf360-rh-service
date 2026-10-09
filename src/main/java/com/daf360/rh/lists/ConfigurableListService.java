@@ -97,6 +97,7 @@ public class ConfigurableListService {
                 .labelFr(dto.getLabelFr())
                 .labelEn(dto.getLabelEn())
                 .sortOrder(dto.getSortOrder() != null ? dto.getSortOrder() : 0)
+                .lifecycleNature(lifecycleNatureFor(dto.getListTypeId(), dto.getLifecycleNature(), dto.getValueCode()))
                 .isActive(true)
                 .isSystem(false)
                 .createdBy(createdBy)
@@ -116,6 +117,26 @@ public class ConfigurableListService {
         return toValueResponse(saved, saved.getListTypeId());
     }
 
+    /**
+     * CONTRACT_TYPE only: the lifecycle nature to store — the one asked for (validated), else
+     * the code's own (CDD → CDD), else CDI. Other lists carry no nature (null).
+     */
+    private String lifecycleNatureFor(Long listTypeId, String requested, String valueCode) {
+        boolean contractType = typeRepo.findById(listTypeId)
+                .map(t -> ContractTypeRefs.LIST_CODE.equals(t.getCode()))
+                .orElse(false);
+        if (!contractType) return null;
+        if (requested == null || requested.isBlank()) {
+            return ContractTypeRefs.natureOf(ConfigurableListValue.builder().valueCode(valueCode).build());
+        }
+        String nature = requested.trim().toUpperCase();
+        if (!ContractTypeRefs.NATURES.contains(nature)) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Nature de contrat inconnue : " + requested + " — attendu : " + ContractTypeRefs.NATURES);
+        }
+        return nature;
+    }
+
     @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ListValueResponse updateListValue(Long id, UpdateListValueRequest dto, Long updatedBy) {
         ConfigurableListValue value = valueRepo.findById(id)
@@ -130,6 +151,9 @@ public class ConfigurableListService {
         if (dto.getSortOrder() != null) value.setSortOrder(dto.getSortOrder());
         if (dto.getPayrollContractCode() != null) {
             value.setPayrollContractCode(dto.getPayrollContractCode().trim().toUpperCase());
+        }
+        if (dto.getLifecycleNature() != null) {
+            value.setLifecycleNature(lifecycleNatureFor(value.getListTypeId(), dto.getLifecycleNature(), value.getValueCode()));
         }
 
         if (dto.getIsActive() != null) {
@@ -256,6 +280,7 @@ public class ConfigurableListService {
         r.setIsActive(v.getIsActive());
         r.setIsSystem(v.getIsSystem());
         r.setPayrollContractCode(v.getPayrollContractCode());
+        r.setLifecycleNature(v.getLifecycleNature());
         r.setCreatedAt(v.getCreatedAt());
         r.setUpdatedAt(v.getUpdatedAt());
         return r;

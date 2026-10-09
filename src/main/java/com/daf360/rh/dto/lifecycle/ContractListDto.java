@@ -12,7 +12,12 @@ public class ContractListDto {
 
     private Long id;
     private Long employeeProfileId;
+    /** Lifecycle nature (CDI, CDD, CIVP, STAGE, FREELANCE, DETACHEMENT) — what the rules key on. */
     private String contractTypeCode;
+    /** configurable_list_values.id of the CONTRACT_TYPE value — what employee_contracts stores. */
+    private Long contractTypeId;
+    /** The CONTRACT_TYPE value's label (« contrat », « CDI — Durée indéterminée »…). */
+    private String contractTypeLabel;
     private String currentStatusCode;
     private LocalDate dateDebut;
     private LocalDate dateFinPrevue;

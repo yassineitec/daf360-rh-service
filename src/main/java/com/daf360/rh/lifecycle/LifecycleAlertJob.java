@@ -27,6 +27,9 @@ import java.util.*;
 @RequiredArgsConstructor
 public class LifecycleAlertJob {
 
+    /** D3-102: natures whose contracts carry an end date worth an expiry alert. */
+    private static final java.util.Set<String> EXPIRING_NATURES = java.util.Set.of("CDD", "CIVP", "STAGE", "DETACHEMENT");
+
 
     private final EmployeeContractRepository       contractRepo;
     private final EmployeeLifecycleAlertRepository alertRepo;
@@ -81,7 +84,7 @@ public class LifecycleAlertJob {
             .entityId(alert.getEmployeeProfileId())
             .templateVars(Map.of(
                 "employeeName", employeeName != null ? employeeName : "",
-                "contractType", contract.getContractTypeCode() != null ? contract.getContractTypeCode() : "",
+                "contractType", lifecycleService.contractTypeLabel(contract),
                 "targetDate",   targetDateFr,
                 "alertType",    alert.getAlertType() != null ? alert.getAlertType() : ""))
             .build());
@@ -92,7 +95,10 @@ public class LifecycleAlertJob {
         List<EmployeeContract> expiring = contractRepo.findExpiringContracts(today, alertWindow);
 
         for (EmployeeContract c : expiring) {
-            configRepo.findByPaysIdAndContractTypeCode(c.getPaysId(), c.getContractTypeCode())
+            // Only fixed-term natures expire; contract_type_code holds a list id, hence the nature.
+            String nature = lifecycleService.natureOf(c);
+            if (!EXPIRING_NATURES.contains(nature)) continue;
+            configRepo.findForNature(c.getPaysId(), nature)
                 .ifPresent(config -> lifecycleService.planContractAlerts(c, config));
         }
     }

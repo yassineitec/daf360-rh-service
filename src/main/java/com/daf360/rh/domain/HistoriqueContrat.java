@@ -19,9 +19,10 @@ public class HistoriqueContrat {
     @Column(name = "id_collaborateur", nullable = false)
     private Long idCollaborateur;
 
+    /** CONTRACT_TYPE value of configurable_list_values (was the separate type_contrat table). */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "id_type_contrat", nullable = false)
-    private TypeContrat typeContrat;
+    private com.daf360.rh.lists.ConfigurableListValue typeContrat;
 
     /** CONTRAT_INITIAL or AVENANT */
     @Column(name = "type_document", nullable = false, length = 20)

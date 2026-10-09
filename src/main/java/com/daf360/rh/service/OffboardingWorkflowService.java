@@ -40,7 +40,7 @@ public class OffboardingWorkflowService {
 
 
     private static final String CONTRACT_TYPE_SQL =
-        "SELECT contract_type_code FROM [dbo].[employee_contracts] WHERE id = ?";
+        "SELECT contract_type_code, pays_id FROM [dbo].[employee_contracts] WHERE id = ?";
 
     /**
      * The contract in force for a profile, newest first.
@@ -135,6 +135,7 @@ public class OffboardingWorkflowService {
     private final OffboardingAssetReturnRepository      assetRepo;
     private final ExitInterviewRepository               interviewRepo;
     private final OffboardingTaskCatalogRepository      catalogRepo;
+    private final com.daf360.rh.lists.ContractTypeRefs   contractTypeRefs;
     private final OffboardingChecklistItemRepository    checklistRepo;
     private final OffboardingSettlementLineRepository   settlementRepo;
     /** V66 — the role designated to give the RH validation, per pays. */
@@ -2316,8 +2317,12 @@ public class OffboardingWorkflowService {
                 "Tâche d'offboarding introuvable: id=" + taskId));
     }
 
+    /** The contract's nature (CDI, CDD…) — the catalogue key; contract_type_code holds a list id. */
     private String resolveContractType(Long contractId) {
-        return jdbc.queryForObject(CONTRACT_TYPE_SQL, String.class, contractId);
+        java.util.Map<String, Object> row = jdbc.queryForMap(CONTRACT_TYPE_SQL, contractId);
+        Object pays = row.get("pays_id");
+        return contractTypeRefs.natureOf((String) row.get("contract_type_code"),
+                pays != null ? ((Number) pays).longValue() : null);
     }
 
     /** Null when the profile has no contract in force — the caller then logs and uses CDI. */

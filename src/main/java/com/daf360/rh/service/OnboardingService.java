@@ -772,7 +772,8 @@ public class OnboardingService {
                     profile.getId(), profile.getCurrentContractId());
             return;
         }
-        String contractTypeCode = contractTypeBridge.resolveContractTypeCode(
+        // The list id (or CDI): the contract stores it and applies its nature's rules.
+        String contractTypeCode = contractTypeBridge.resolveContractTypeRef(
                 candidate.getEmploymentTypeId());
         if (contractTypeCode == null) {
             log.warn("No contract type resolvable for candidate {} (employmentTypeId={}) — "
