@@ -102,6 +102,7 @@ public class RoleService {
             RoleResponseDto dto = new RoleResponseDto();
             dto.setId(r.getId());
             dto.setFrenchName(r.getFrenchName());
+            dto.setEnglishName(r.getEnglishName());
             dto.setParentRoleId(r.getParentRoleId());
             dto.setShowAll(r.getShowAll());
             List<String> perms = permsByRole.getOrDefault(r.getId(), List.of());
@@ -123,6 +124,7 @@ public class RoleService {
             RoleResponseDto dto = new RoleResponseDto();
             dto.setId(r.getId());
             dto.setFrenchName(r.getFrenchName());
+            dto.setEnglishName(r.getEnglishName());
             dto.setParentRoleId(r.getParentRoleId());
             dto.setShowAll(r.getShowAll());
             dto.setPermissions(permRepo.findPermissionsByRoleId(r.getId()));
@@ -201,6 +203,7 @@ public class RoleService {
 
         Role role = Role.builder()
                 .frenchName(dto.getFrenchName())
+                .englishName(blankToNull(dto.getEnglishName()))
                 .parentRoleId(dto.getParentRoleId())
                 .showAll(mode == PaysScopeMode.ALL)
                 .paysScopeMode(mode)
@@ -241,6 +244,11 @@ public class RoleService {
                         "Ce rôle est assigné à " + count + " utilisateurs. Confirmez avec forceRename=true.");
             }
             role.setFrenchName(dto.getFrenchName());
+        }
+
+        // Display-only translation: renaming it needs no forceRename (nothing keys on it).
+        if (dto.getEnglishName() != null) {
+            role.setEnglishName(blankToNull(dto.getEnglishName()));
         }
 
         if (dto.getParentRoleId() != null) {
@@ -307,6 +315,11 @@ public class RoleService {
     private PaysScopeMode effectiveMode(Role role) {
         if (role.getPaysScopeMode() != null) return role.getPaysScopeMode();
         return Boolean.TRUE.equals(role.getShowAll()) ? PaysScopeMode.ALL : PaysScopeMode.OWN;
+    }
+
+    /** Trimmed value, or null when blank — an empty English name means "none". */
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     /**
