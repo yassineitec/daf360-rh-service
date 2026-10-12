@@ -443,7 +443,7 @@ public class RoleService {
 
     private static final String LIST_ROLE_USERS_SQL =
         "SELECT u.id AS userId, u.fullName, u.username AS email, u.pays_id AS paysId, " +
-        "       p.french_label AS paysLabel " +
+        "       p.french_label AS paysLabel, p.english_label AS paysLabelEn " +
         "FROM Users u " +
         "LEFT JOIN pays p ON p.id = u.pays_id " +
         "WHERE u.role_id = ? AND (u.isActive = 1 OR u.isActive IS NULL) " +
@@ -451,7 +451,8 @@ public class RoleService {
 
     private static final String SEARCH_USERS_SQL =
         "SELECT TOP 30 u.id AS userId, u.fullName, u.username AS email, u.pays_id AS paysId, " +
-        "       p.french_label AS paysLabel, r.frenchName AS currentRoleName " +
+        "       p.french_label AS paysLabel, p.english_label AS paysLabelEn, " +
+        "       r.frenchName AS currentRoleName, r.englishName AS currentRoleNameEn " +
         "FROM Users u " +
         "LEFT JOIN pays  p ON p.id = u.pays_id " +
         "LEFT JOIN Roles r ON r.id = u.role_id " +
@@ -472,6 +473,7 @@ public class RoleService {
                         .email(rs.getString("email"))
                         .paysId(rs.getLong("paysId"))
                         .paysLabel(rs.getString("paysLabel"))
+                        .paysLabelEn(rs.getString("paysLabelEn"))
                         .build(),
                 roleId);
     }
@@ -486,7 +488,9 @@ public class RoleService {
                         .email(rs.getString("email"))
                         .paysId(rs.getLong("paysId"))
                         .paysLabel(rs.getString("paysLabel"))
+                        .paysLabelEn(rs.getString("paysLabelEn"))
                         .currentRoleName(rs.getString("currentRoleName"))
+                        .currentRoleNameEn(rs.getString("currentRoleNameEn"))
                         .build(),
                 roleId, pattern, pattern);
     }

@@ -11,6 +11,7 @@ public class RequestTypeResponseDto {
     private String          displayNameFr;
     private String          displayNameEn;
     private String          description;
+    private String          descriptionEn;
     private RequestCategory category;
     private String          approvalLevel;
     private Integer         defaultSlaDays;

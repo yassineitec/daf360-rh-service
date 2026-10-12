@@ -44,6 +44,11 @@ public class RequestTypeCatalog {
     @Column(name = "description", length = 500, columnDefinition = "nvarchar(500)")
     private String description;
 
+    /** English description (sql/2026-10-12_request_type_description_en.sql). Null → the UI
+     *  shows `description`. */
+    @Column(name = "description_en", length = 500, columnDefinition = "nvarchar(500)")
+    private String descriptionEn;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "category", nullable = false, length = 50)
     private RequestCategory category;

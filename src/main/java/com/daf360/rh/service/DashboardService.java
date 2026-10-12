@@ -333,7 +333,7 @@ public class DashboardService {
         LocalDate limit = today.plusDays(joursMax);
         Long paysId = tenantService.getEffectivePaysId();
 
-        String sql = "SELECT TOP 2 ep.id, u.fullName, ep.photo_url, ep.probation_end_date, " +
+        String sql = "SELECT TOP 3 ep.id, u.fullName, ep.photo_url, ep.probation_end_date, " +
                      "       ep.contract_end_date, ep.gender, " +
                      "       d.label_fr AS department_label, r.frenchName AS role_name " +
                      "FROM [dbo].[employee_profiles] ep " +
@@ -558,7 +558,7 @@ public class DashboardService {
                         rs.getString("doc_type"),
                         rs.getInt("months_since_hire")));
 
-        // Group by employee, preserving urgency order; take first 2 employees
+        // Group by employee, preserving urgency order; take first 5 employees
         LinkedHashMap<Long, MissingDocumentDto> grouped = new LinkedHashMap<>();
         for (FlatRow row : rows) {
             grouped.computeIfAbsent(row.pid(), k -> {
@@ -568,7 +568,7 @@ public class DashboardService {
         }
 
         List<MissingDocumentDto> items = grouped.values().stream()
-                .limit(2)
+                .limit(5)
                 .collect(Collectors.toList());
 
         return new PreviewResponse<>(items, total != null ? total : 0L);
