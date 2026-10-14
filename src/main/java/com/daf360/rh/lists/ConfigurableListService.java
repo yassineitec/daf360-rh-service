@@ -83,21 +83,23 @@ public class ConfigurableListService {
     @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ListValueResponse createListValue(CreateListValueRequest dto, Long createdBy) {
         assertCanWritePays(dto.getPaysId());
+        // A code is matched by value elsewhere (ContractTypeRefs…): never store stray spaces.
+        String valueCode = dto.getValueCode() != null ? dto.getValueCode().trim() : null;
         boolean duplicate = valueRepo.existsByListTypeIdAndPaysIdAndValueCode(
-                dto.getListTypeId(), dto.getPaysId(), dto.getValueCode());
+                dto.getListTypeId(), dto.getPaysId(), valueCode);
         if (duplicate) {
             throw new AppException(ErrorCode.ALREADY_EXISTS,
-                    "Valeur déjà existante : code=" + dto.getValueCode());
+                    "Valeur déjà existante : code=" + valueCode);
         }
 
         ConfigurableListValue entity = ConfigurableListValue.builder()
                 .listTypeId(dto.getListTypeId())
                 .paysId(dto.getPaysId())
-                .valueCode(dto.getValueCode())
+                .valueCode(valueCode)
                 .labelFr(dto.getLabelFr())
                 .labelEn(dto.getLabelEn())
                 .sortOrder(dto.getSortOrder() != null ? dto.getSortOrder() : 0)
-                .lifecycleNature(lifecycleNatureFor(dto.getListTypeId(), dto.getLifecycleNature(), dto.getValueCode()))
+                .lifecycleNature(lifecycleNatureFor(dto.getListTypeId(), dto.getLifecycleNature(), valueCode))
                 .isActive(true)
                 .isSystem(false)
                 .createdBy(createdBy)

@@ -122,7 +122,8 @@ public class ContractTypeRefs {
     private Optional<ConfigurableListValue> findByCode(String code, Long paysId) {
         String wanted = code.trim();
         return valueRepo.findByListTypeIdOrderBySortOrderAscLabelFrAsc(listTypeId()).stream()
-                .filter(v -> wanted.equalsIgnoreCase(v.getValueCode()))
+                // Stored codes may carry stray spaces ('iheb ') typed in the admin: trim both sides.
+                .filter(v -> v.getValueCode() != null && wanted.equalsIgnoreCase(v.getValueCode().trim()))
                 .filter(v -> v.getPaysId() == null || Objects.equals(v.getPaysId(), paysId))
                 .min(Comparator
                         .comparing((ConfigurableListValue v) -> v.getPaysId() == null)
