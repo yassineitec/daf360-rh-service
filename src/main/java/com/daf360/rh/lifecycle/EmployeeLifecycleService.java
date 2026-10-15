@@ -49,6 +49,8 @@ public class EmployeeLifecycleService {
     /** contract_type_code stores the CONTRACT_TYPE list id; rules follow the value's nature. */
     private final com.daf360.rh.lists.ContractTypeRefs contractTypeRefs;
     private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
+    /** CIVP → CDI: the conversion must rest on an approved request (V119). */
+    private final CdiConversionService               cdiConversionService;
     private final JdbcTemplate                       jdbc;
     private final ObjectMapper                       objectMapper;
 
@@ -267,16 +269,23 @@ public class EmployeeLifecycleService {
         return mapToDetailDto(contract);
     }
 
-    // ── CDD: convert to CDI ───────────────────────────────────────────────────
+    // ── CDD / CIVP: convert to CDI ────────────────────────────────────────────
 
+    /**
+     * CDD → CDI stays a direct RH action. CIVP → CDI rests on an APPROVED conversion request
+     * (CdiConversionService: technical &amp; salary validation, escalation); the request is
+     * marked converted with the new CDI contract.
+     */
     @PreAuthorize("hasPermission(null, 'RH_MANAGE_LIFECYCLE')")
     public ContractDetailDto convertToCDI(Long contractId, ConvertToCDIRequest dto, Long convertedBy) {
         EmployeeContract cdd = contractRepo.findById(contractId)
             .orElseThrow(() -> new BusinessRuleException("D3-97", "Contrat introuvable."));
 
-        if (!"CDD".equals(natureOf(cdd))) {
-            throw new BusinessRuleException("D3-97", "Ce contrat n'est pas un CDD.");
+        String nature = natureOf(cdd);
+        if (!"CDD".equals(nature) && !"CIVP".equals(nature)) {
+            throw new BusinessRuleException("D3-97", "Seul un CDD ou un CIVP peut être converti en CDI.");
         }
+        CdiConversionRequest approved = "CIVP".equals(nature) ? cdiConversionService.requireApproved(contractId) : null;
 
         transitionState(contractId,
             TransitionRequest.builder()
@@ -292,7 +301,11 @@ public class EmployeeLifecycleService {
         cdiRequest.setContractTypeCode("CDI");
         cdiRequest.setDateDebut(dto.getCdiStartDate());
 
-        return createContract(cdiRequest, convertedBy);
+        ContractDetailDto cdi = createContract(cdiRequest, convertedBy);
+        if (approved != null) {
+            cdiConversionService.markConverted(approved, cdi.getId(), dto.getCdiStartDate(), convertedBy);
+        }
+        return cdi;
     }
 
     // ── Profile → contract date sync ──────────────────────────────────────────

@@ -22,7 +22,9 @@ public enum NotificationEntityType {
     RECRUITMENT_DEMAND,
     CONTRACT,
     /** An avance sur salaire (V103) — resolved by the frontend to the desk that can act on it. */
-    SALARY_ADVANCE;
+    SALARY_ADVANCE,
+    /** A CIVP → CDI conversion request (V119) — /rh/cdi-conversions/{id}. */
+    CDI_CONVERSION;
 
     /**
      * Parses a stored/configured value, tolerating null, blank and unknown names.
