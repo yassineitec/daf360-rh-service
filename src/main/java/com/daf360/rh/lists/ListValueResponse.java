@@ -17,6 +17,8 @@ public class ListValueResponse {
     private Boolean        isActive;
     private Boolean        isSystem;
     private String         payrollContractCode;
+    /** CONTRACT_TYPE only: CDI, CDD, CIVP, STAGE, FREELANCE or DETACHEMENT — see ContractTypeRefs. */
+    private String         lifecycleNature;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

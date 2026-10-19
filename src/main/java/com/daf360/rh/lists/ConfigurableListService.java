@@ -2,6 +2,8 @@ package com.daf360.rh.lists;
 
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.security.TenantContext;
+import com.daf360.rh.security.TenantService;
 import com.daf360.rh.service.AuditService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +29,8 @@ public class ConfigurableListService {
     private final ConfigurableListValueRepository valueRepo;
     private final ConfigurableListMapper          mapper;
     private final AuditService                    auditService;
+    private final TenantService                   tenantService;
+    private final com.daf360.rh.repository.EmployeeProfileRepository profileRepo;
 
     // ── In-memory TTL cache ──────────────────────────────────────────────────
 
@@ -78,20 +82,24 @@ public class ConfigurableListService {
 
     @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ListValueResponse createListValue(CreateListValueRequest dto, Long createdBy) {
+        assertCanWritePays(dto.getPaysId());
+        // A code is matched by value elsewhere (ContractTypeRefs…): never store stray spaces.
+        String valueCode = dto.getValueCode() != null ? dto.getValueCode().trim() : null;
         boolean duplicate = valueRepo.existsByListTypeIdAndPaysIdAndValueCode(
-                dto.getListTypeId(), dto.getPaysId(), dto.getValueCode());
+                dto.getListTypeId(), dto.getPaysId(), valueCode);
         if (duplicate) {
             throw new AppException(ErrorCode.ALREADY_EXISTS,
-                    "Valeur déjà existante : code=" + dto.getValueCode());
+                    "Valeur déjà existante : code=" + valueCode);
         }
 
         ConfigurableListValue entity = ConfigurableListValue.builder()
                 .listTypeId(dto.getListTypeId())
                 .paysId(dto.getPaysId())
-                .valueCode(dto.getValueCode())
+                .valueCode(valueCode)
                 .labelFr(dto.getLabelFr())
                 .labelEn(dto.getLabelEn())
                 .sortOrder(dto.getSortOrder() != null ? dto.getSortOrder() : 0)
+                .lifecycleNature(lifecycleNatureFor(dto.getListTypeId(), dto.getLifecycleNature(), valueCode))
                 .isActive(true)
                 .isSystem(false)
                 .createdBy(createdBy)
@@ -111,11 +119,32 @@ public class ConfigurableListService {
         return toValueResponse(saved, saved.getListTypeId());
     }
 
+    /**
+     * CONTRACT_TYPE only: the lifecycle nature to store — the one asked for (validated), else
+     * the code's own (CDD → CDD), else CDI. Other lists carry no nature (null).
+     */
+    private String lifecycleNatureFor(Long listTypeId, String requested, String valueCode) {
+        boolean contractType = typeRepo.findById(listTypeId)
+                .map(t -> ContractTypeRefs.LIST_CODE.equals(t.getCode()))
+                .orElse(false);
+        if (!contractType) return null;
+        if (requested == null || requested.isBlank()) {
+            return ContractTypeRefs.natureOf(ConfigurableListValue.builder().valueCode(valueCode).build());
+        }
+        String nature = requested.trim().toUpperCase();
+        if (!ContractTypeRefs.NATURES.contains(nature)) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Nature de contrat inconnue : " + requested + " — attendu : " + ContractTypeRefs.NATURES);
+        }
+        return nature;
+    }
+
     @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ListValueResponse updateListValue(Long id, UpdateListValueRequest dto, Long updatedBy) {
         ConfigurableListValue value = valueRepo.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
                         "Valeur de liste introuvable : id=" + id));
+        assertCanWritePays(value.getPaysId());
 
         String before = valueSnapshot(value);
 
@@ -124,6 +153,9 @@ public class ConfigurableListService {
         if (dto.getSortOrder() != null) value.setSortOrder(dto.getSortOrder());
         if (dto.getPayrollContractCode() != null) {
             value.setPayrollContractCode(dto.getPayrollContractCode().trim().toUpperCase());
+        }
+        if (dto.getLifecycleNature() != null) {
+            value.setLifecycleNature(lifecycleNatureFor(value.getListTypeId(), dto.getLifecycleNature(), value.getValueCode()));
         }
 
         if (dto.getIsActive() != null) {
@@ -157,10 +189,15 @@ public class ConfigurableListService {
         ConfigurableListValue value = valueRepo.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
                         "Valeur de liste introuvable : id=" + id));
+        assertCanWritePays(value.getPaysId());
 
         if (Boolean.TRUE.equals(value.getIsSystem())) {
             throw new AppException(ErrorCode.INVALID_TRANSITION,
                     "Valeur système non supprimable");
+        }
+        // employee_profiles.contract_type stores this row's id as varchar — no FK can protect it.
+        if (profileRepo.existsByContractTypeId(String.valueOf(id))) {
+            throw new AppException(ErrorCode.LIST_VALUE_IN_USE);
         }
 
         auditService.log(
@@ -200,6 +237,24 @@ public class ConfigurableListService {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    /**
+     * An entity's own values (CONTRACT_TYPE of Égypte…) may only be written by that entity's
+     * administrators or by a cross-country admin. ADMIN_LISTS alone used to open every
+     * entity's lists, because the screen had no way to target another one — it now does.
+     *
+     * Shared values (pays_id NULL) keep the old rule, ADMIN_LISTS alone: every global list is
+     * made of them today. A token with no pays claim is let through, like TenantService's own
+     * reads, rather than locking an incomplete session out of a screen it could use before.
+     */
+    private void assertCanWritePays(Long paysId) {
+        if (paysId == null || tenantService.isAdmin()) return;
+        Long own = TenantContext.get();
+        if (own != null && !own.equals(paysId)) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                    "Vous ne pouvez gérer que les valeurs de votre entité.");
+        }
+    }
+
     private void invalidateCacheForType(Long listTypeId) {
         typeRepo.findById(listTypeId).ifPresent(type -> invalidateCacheForCode(type.getCode()));
     }
@@ -227,6 +282,7 @@ public class ConfigurableListService {
         r.setIsActive(v.getIsActive());
         r.setIsSystem(v.getIsSystem());
         r.setPayrollContractCode(v.getPayrollContractCode());
+        r.setLifecycleNature(v.getLifecycleNature());
         r.setCreatedAt(v.getCreatedAt());
         r.setUpdatedAt(v.getUpdatedAt());
         return r;

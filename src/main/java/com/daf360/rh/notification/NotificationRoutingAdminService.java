@@ -34,7 +34,7 @@ public class NotificationRoutingAdminService {
     // ── SQL constants ─────────────────────────────────────────────────────────
 
     private static final String ROLES_SQL =
-        "SELECT id, frenchName FROM [dbo].[Roles] " +
+        "SELECT id, frenchName, englishName FROM [dbo].[Roles] " +
         "WHERE (deleted=0 OR deleted IS NULL) ORDER BY frenchName ASC";
 
     private static final String USERS_BY_ROLE_SQL =
@@ -159,7 +159,8 @@ public class NotificationRoutingAdminService {
         // Load all available roles
         List<RoleItem> allRoles = jdbc.query(
                 ROLES_SQL,
-                (rs, rowNum) -> new RoleItem(rs.getLong("id"), rs.getString("frenchName")));
+                (rs, rowNum) -> new RoleItem(rs.getLong("id"), rs.getString("frenchName"),
+                        rs.getString("englishName")));
 
         return RoutingRuleDetail.builder()
                 .ruleId(rule.getId())
@@ -647,7 +648,8 @@ public class NotificationRoutingAdminService {
     public record RecipientItemWithField(Long id, Long roleId, String roleName,
                                          String recipientField, String recipientMode,
                                          String permissionCode) {}
-    public record RoleItem(Long id, String frenchName) {}
+    /** englishName is null when the role has none — the UI then shows frenchName. */
+    public record RoleItem(Long id, String frenchName, String englishName) {}
     public record TestUserEntry(Long userId, String fullName, String email) {}
     public record TestEmailEntry(String email, String roleName) {}
 

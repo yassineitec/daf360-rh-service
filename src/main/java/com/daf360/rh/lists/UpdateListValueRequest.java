@@ -32,4 +32,8 @@ public class UpdateListValueRequest {
 
     @Size(max = 20)
     private String payrollContractCode;
+
+    /** CONTRACT_TYPE only: the lifecycle rules this type follows (CDI, CDD, CIVP, STAGE, FREELANCE, DETACHEMENT). */
+    @Size(max = 30)
+    private String lifecycleNature;
 }

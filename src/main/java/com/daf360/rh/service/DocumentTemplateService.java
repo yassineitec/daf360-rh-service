@@ -66,7 +66,7 @@ public class DocumentTemplateService {
 
     private static final String EMPLOYEE_CTX_SQL =
         "SELECT ep.national_id, ep.cin_city, ep.cin_date, ep.hire_date, " +
-        "       ep.probation_end_date, ep.contract_type, ep.salaire_net_rh, " +
+        "       ep.probation_end_date, " + com.daf360.rh.lists.ContractTypeRefs.sqlCode("ep", "ctv") + " AS contract_type, ep.salaire_net_rh, " +
         "       ep.gender, ep.rib, ep.iban, " +
         "       u.fullName AS full_name, u.username AS ms365_email, " +
         "       ISNULL(g.label_fr, '') AS grade, " +
@@ -81,6 +81,7 @@ public class DocumentTemplateService {
         "LEFT JOIN [dbo].[grades]       g ON g.id = ep.grade_id " +
         "LEFT JOIN [dbo].[disciplines]  d ON d.id = ep.discipline_id " +
         "LEFT JOIN [dbo].[banks]        b ON b.id = ep.bank_id " +
+        com.daf360.rh.lists.ContractTypeRefs.sqlJoin("ep", "ctv") +
         "WHERE ep.id = ?";
 
     private static final String DG_CTX_SQL =
@@ -532,16 +533,16 @@ public class DocumentTemplateService {
         if (ct == null) return isEnglish ? "indefinite" : "indeterminee";
         if (isEnglish) {
             return switch (ct.toUpperCase()) {
-                case "PERMANENT"  -> "indefinite (permanent)";
-                case "FIXED_TERM" -> "fixed";
-                case "INTERN"     -> "internship";
+                case "PERMANENT", "CDI"  -> "indefinite (permanent)";
+                case "FIXED_TERM", "CDD", "CIVP", "DETACHEMENT" -> "fixed";
+                case "INTERN", "STAGE"     -> "internship";
                 default           -> "indefinite";
             };
         }
         return switch (ct.toUpperCase()) {
-            case "PERMANENT"  -> "indeterminee (titulaire)";
-            case "FIXED_TERM" -> "determinee";
-            case "INTERN"     -> "stage";
+            case "PERMANENT", "CDI"  -> "indeterminee (titulaire)";
+            case "FIXED_TERM", "CDD", "CIVP", "DETACHEMENT" -> "determinee";
+            case "INTERN", "STAGE"     -> "stage";
             default           -> "indeterminee";
         };
     }

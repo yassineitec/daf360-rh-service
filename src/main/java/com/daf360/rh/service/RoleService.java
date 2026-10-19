@@ -102,6 +102,7 @@ public class RoleService {
             RoleResponseDto dto = new RoleResponseDto();
             dto.setId(r.getId());
             dto.setFrenchName(r.getFrenchName());
+            dto.setEnglishName(r.getEnglishName());
             dto.setParentRoleId(r.getParentRoleId());
             dto.setShowAll(r.getShowAll());
             List<String> perms = permsByRole.getOrDefault(r.getId(), List.of());
@@ -123,6 +124,7 @@ public class RoleService {
             RoleResponseDto dto = new RoleResponseDto();
             dto.setId(r.getId());
             dto.setFrenchName(r.getFrenchName());
+            dto.setEnglishName(r.getEnglishName());
             dto.setParentRoleId(r.getParentRoleId());
             dto.setShowAll(r.getShowAll());
             dto.setPermissions(permRepo.findPermissionsByRoleId(r.getId()));
@@ -201,6 +203,7 @@ public class RoleService {
 
         Role role = Role.builder()
                 .frenchName(dto.getFrenchName())
+                .englishName(blankToNull(dto.getEnglishName()))
                 .parentRoleId(dto.getParentRoleId())
                 .showAll(mode == PaysScopeMode.ALL)
                 .paysScopeMode(mode)
@@ -241,6 +244,11 @@ public class RoleService {
                         "Ce rôle est assigné à " + count + " utilisateurs. Confirmez avec forceRename=true.");
             }
             role.setFrenchName(dto.getFrenchName());
+        }
+
+        // Display-only translation: renaming it needs no forceRename (nothing keys on it).
+        if (dto.getEnglishName() != null) {
+            role.setEnglishName(blankToNull(dto.getEnglishName()));
         }
 
         if (dto.getParentRoleId() != null) {
@@ -307,6 +315,11 @@ public class RoleService {
     private PaysScopeMode effectiveMode(Role role) {
         if (role.getPaysScopeMode() != null) return role.getPaysScopeMode();
         return Boolean.TRUE.equals(role.getShowAll()) ? PaysScopeMode.ALL : PaysScopeMode.OWN;
+    }
+
+    /** Trimmed value, or null when blank — an empty English name means "none". */
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     /**
@@ -430,7 +443,7 @@ public class RoleService {
 
     private static final String LIST_ROLE_USERS_SQL =
         "SELECT u.id AS userId, u.fullName, u.username AS email, u.pays_id AS paysId, " +
-        "       p.french_label AS paysLabel " +
+        "       p.french_label AS paysLabel, p.english_label AS paysLabelEn " +
         "FROM Users u " +
         "LEFT JOIN pays p ON p.id = u.pays_id " +
         "WHERE u.role_id = ? AND (u.isActive = 1 OR u.isActive IS NULL) " +
@@ -438,7 +451,8 @@ public class RoleService {
 
     private static final String SEARCH_USERS_SQL =
         "SELECT TOP 30 u.id AS userId, u.fullName, u.username AS email, u.pays_id AS paysId, " +
-        "       p.french_label AS paysLabel, r.frenchName AS currentRoleName " +
+        "       p.french_label AS paysLabel, p.english_label AS paysLabelEn, " +
+        "       r.frenchName AS currentRoleName, r.englishName AS currentRoleNameEn " +
         "FROM Users u " +
         "LEFT JOIN pays  p ON p.id = u.pays_id " +
         "LEFT JOIN Roles r ON r.id = u.role_id " +
@@ -459,6 +473,7 @@ public class RoleService {
                         .email(rs.getString("email"))
                         .paysId(rs.getLong("paysId"))
                         .paysLabel(rs.getString("paysLabel"))
+                        .paysLabelEn(rs.getString("paysLabelEn"))
                         .build(),
                 roleId);
     }
@@ -473,7 +488,9 @@ public class RoleService {
                         .email(rs.getString("email"))
                         .paysId(rs.getLong("paysId"))
                         .paysLabel(rs.getString("paysLabel"))
+                        .paysLabelEn(rs.getString("paysLabelEn"))
                         .currentRoleName(rs.getString("currentRoleName"))
+                        .currentRoleNameEn(rs.getString("currentRoleNameEn"))
                         .build(),
                 roleId, pattern, pattern);
     }

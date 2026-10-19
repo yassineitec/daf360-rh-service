@@ -9,6 +9,9 @@ public class UpdateRoleRequest {
 
     private String  frenchName;
 
+    /** null = leave untouched; blank = clear it (the UI then falls back to frenchName). */
+    private String  englishName;
+
     private Long    parentRoleId;
 
     private Boolean showAll;

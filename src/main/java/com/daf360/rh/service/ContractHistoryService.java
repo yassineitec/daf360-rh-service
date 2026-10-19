@@ -1,13 +1,18 @@
 package com.daf360.rh.service;
 
 import com.daf360.rh.domain.HistoriqueContrat;
-import com.daf360.rh.domain.TypeContrat;
+import com.daf360.rh.lists.ConfigurableListService;
+import com.daf360.rh.lists.ConfigurableListValue;
+import com.daf360.rh.lists.ConfigurableListValueRepository;
+import com.daf360.rh.lists.ContractTypeRefs;
+import com.daf360.rh.lists.CreateListValueRequest;
+import com.daf360.rh.lists.ListValueResponse;
+import com.daf360.rh.lists.UpdateListValueRequest;
 import com.daf360.rh.dto.contract.*;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.repository.EmployeeProfileRepository;
 import com.daf360.rh.repository.HistoriqueContratRepository;
-import com.daf360.rh.repository.TypeContratRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
@@ -16,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -26,28 +32,45 @@ import java.util.stream.Collectors;
 public class ContractHistoryService {
 
     private final HistoriqueContratRepository histRepo;
-    private final TypeContratRepository       typeRepo;
     private final EmployeeProfileRepository   profileRepo;
+    /**
+     * Contract types are the CONTRACT_TYPE configurable list (Admin › Listes configurables ›
+     * Type de contrat) — the same list as profiles, candidates and lifecycle contracts. The
+     * separate type_contrat table is retired (sql/2026-10-09_historique_type_contrat_list.sql).
+     */
+    private final ConfigurableListValueRepository listValueRepo;
+    private final ConfigurableListService         listService;
+    private final ContractTypeRefs                contractTypeRefs;
 
-    // ── TypeContrat CRUD ──────────────────────────────────────────────────────
+    // ── Contract types (the CONTRACT_TYPE list) ───────────────────────────────
 
     @Transactional(readOnly = true)
     public List<TypeContratDto> getAllTypeContrats() {
-        return typeRepo.findByIsActiveTrueOrderByLabelFrAsc()
-                .stream().map(this::toTypeDto).collect(Collectors.toList());
+        return listValueRepo.findByListTypeIdOrderBySortOrderAscLabelFrAsc(contractTypeRefs.listTypeId())
+                .stream()
+                .filter(v -> Boolean.TRUE.equals(v.getIsActive()))
+                .sorted(Comparator.comparing(ConfigurableListValue::getLabelFr, String.CASE_INSENSITIVE_ORDER))
+                .map(this::toTypeDto)
+                .collect(Collectors.toList());
     }
 
+    /** Adds a shared (all entities) CONTRACT_TYPE value; it follows the CDI rules until changed. */
     public TypeContratDto createTypeContrat(TypeContratDto req) {
-        TypeContrat tc = TypeContrat.builder()
-                .code(req.getCode() != null ? req.getCode() : req.getLabelFr())
-                .labelFr(req.getLabelFr())
-                .labelEn(req.getLabelEn() != null ? req.getLabelEn() : req.getLabelFr())
-                .build();
-        return toTypeDto(typeRepo.save(tc));
+        CreateListValueRequest create = new CreateListValueRequest();
+        create.setListTypeId(contractTypeRefs.listTypeId());
+        create.setPaysId(null);
+        create.setValueCode(req.getCode() != null && !req.getCode().isBlank() ? req.getCode() : req.getLabelFr());
+        create.setLabelFr(req.getLabelFr());
+        create.setLabelEn(req.getLabelEn() != null && !req.getLabelEn().isBlank() ? req.getLabelEn() : req.getLabelFr());
+        ListValueResponse created = listService.createListValue(create, null);
+        return listValueRepo.findById(created.getId()).map(this::toTypeDto).orElseThrow();
     }
 
+    /** Deactivates — never deletes — so the contracts and history entries using it keep their type. */
     public void deleteTypeContrat(Long id) {
-        typeRepo.findById(id).ifPresent(tc -> { tc.setIsActive(false); typeRepo.save(tc); });
+        UpdateListValueRequest deactivate = new UpdateListValueRequest();
+        deactivate.setIsActive(false);
+        listService.updateListValue(id, deactivate, null);
     }
 
     // ── Contract History ──────────────────────────────────────────────────────
@@ -73,7 +96,8 @@ public class ContractHistoryService {
         }
 
         // Validate typeContrat
-        TypeContrat tc = typeRepo.findById(req.getIdTypeContrat())
+        ConfigurableListValue tc = listValueRepo.findById(req.getIdTypeContrat())
+                .filter(v -> v.getListTypeId().equals(contractTypeRefs.listTypeId()))
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
                         "Type de contrat introuvable: " + req.getIdTypeContrat()));
 
@@ -118,9 +142,9 @@ public class ContractHistoryService {
 
     // ── Mappers ───────────────────────────────────────────────────────────────
 
-    private TypeContratDto toTypeDto(TypeContrat tc) {
+    private TypeContratDto toTypeDto(ConfigurableListValue tc) {
         return TypeContratDto.builder()
-                .id(tc.getId()).code(tc.getCode())
+                .id(tc.getId()).code(tc.getValueCode())
                 .labelFr(tc.getLabelFr()).labelEn(tc.getLabelEn())
                 .isActive(tc.getIsActive()).build();
     }
@@ -131,7 +155,7 @@ public class ContractHistoryService {
                 .id(h.getId())
                 .idCollaborateur(h.getIdCollaborateur())
                 .idTypeContrat(h.getTypeContrat() != null ? h.getTypeContrat().getId() : null)
-                .typeContratCode(h.getTypeContrat() != null ? h.getTypeContrat().getCode() : null)
+                .typeContratCode(h.getTypeContrat() != null ? h.getTypeContrat().getValueCode() : null)
                 .typeContratLabelFr(h.getTypeContrat() != null ? h.getTypeContrat().getLabelFr() : null)
                 .typeDocument(h.getTypeDocument())
                 .dateEffet(h.getDateEffet())

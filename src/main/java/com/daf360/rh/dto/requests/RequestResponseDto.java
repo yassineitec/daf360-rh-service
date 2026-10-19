@@ -13,6 +13,7 @@ public class RequestResponseDto {
     private Long                    requestTypeId;
     private String                  typeCode;
     private String                  typeDisplayNameFr;
+    private String                  typeDisplayNameEn;
     private String                  employeeName;
     private Long                    paysId;
     private String                  paysName;

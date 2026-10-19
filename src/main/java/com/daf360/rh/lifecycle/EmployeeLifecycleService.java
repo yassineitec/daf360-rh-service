@@ -46,7 +46,11 @@ public class EmployeeLifecycleService {
     private final ContractTypeConfigRepository       configRepo;
     private final EmployeeProfileRepository          profileRepo;
     private final LifecycleStateMachine              stateMachine;
+    /** contract_type_code stores the CONTRACT_TYPE list id; rules follow the value's nature. */
+    private final com.daf360.rh.lists.ContractTypeRefs contractTypeRefs;
     private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
+    /** CIVP → CDI: the conversion must rest on an approved request (V119). */
+    private final CdiConversionService               cdiConversionService;
     private final JdbcTemplate                       jdbc;
     private final ObjectMapper                       objectMapper;
 
@@ -66,22 +70,27 @@ public class EmployeeLifecycleService {
         EmployeeProfile profile = profileRepo.findById(dto.getEmployeeProfileId())
             .orElseThrow(() -> new BusinessRuleException("D3-95", "Collaborateur introuvable."));
 
+        // dto.contractTypeCode is a CONTRACT_TYPE code (CDI…) or list id; the contract stores the
+        // id, and every rule below follows the value's nature (a « contrat » set to CDI → CDI rules).
+        String contractTypeId = contractTypeRefs.toStored(dto.getContractTypeCode(), dto.getPaysId());
+        String nature = contractTypeRefs.natureOf(contractTypeId, dto.getPaysId());
+
         ContractTypeConfig config = configRepo
-            .findByPaysIdAndContractTypeCode(dto.getPaysId(), dto.getContractTypeCode())
+            .findForNature(dto.getPaysId(), nature)
             .orElseThrow(() -> new BusinessRuleException("D3-95",
                 "Configuration de contrat introuvable pour ce pays et type de contrat."));
 
-        String initialStatus = switch (dto.getContractTypeCode()) {
+        String initialStatus = switch (nature) {
             case "STAGE"     -> "CONVENTION_SIGNEE";
             case "FREELANCE" -> "SOURCING_PRESTATAIRE";
             default          -> "RECRUTEMENT";
         };
 
-        if ("CIVP".equals(dto.getContractTypeCode())) {
+        if ("CIVP".equals(nature)) {
             validateCIVPEligibility(profile, dto, config);
         }
 
-        if ("CDD".equals(dto.getContractTypeCode()) && dto.getCddContratParentId() != null) {
+        if ("CDD".equals(nature) && dto.getCddContratParentId() != null) {
             EmployeeContract parent = contractRepo.findById(dto.getCddContratParentId())
                 .orElseThrow(() -> new BusinessRuleException("D3-97", "Contrat CDD parent introuvable."));
             if (parent.getCddRenouvellementCount() >= 1) {
@@ -90,15 +99,18 @@ public class EmployeeLifecycleService {
             }
         }
 
-        LocalDate trialEnd = calculateTrialEndDate(
-            dto.getDateDebut(), dto.getContractTypeCode(), dto.isManagerProfile(), config);
+        // A date RH typed (the onboarding's « fin de période d'essai ») wins over the computed
+        // one: it is the agreed date, and the trial-end alert must announce that one.
+        LocalDate trialEnd = dto.isNoTrialPeriod() ? null
+            : dto.getDateFinPeriodeEssai() != null ? dto.getDateFinPeriodeEssai()
+            : calculateTrialEndDate(dto.getDateDebut(), nature, dto.isManagerProfile(), config);
 
         ResolvedNotice notice = resolveNoticePeriod(dto, profile);
 
         EmployeeContract contract = EmployeeContract.builder()
             .employeeProfile(profile)
             .paysId(dto.getPaysId())
-            .contractTypeCode(dto.getContractTypeCode())
+            .contractTypeId(contractTypeId)
             .currentStatusCode(initialStatus)
             .dateDebut(dto.getDateDebut())
             .dateFinPrevue(dto.getDateFinPrevue())
@@ -134,7 +146,8 @@ public class EmployeeLifecycleService {
         profile.setLifecycleStatusCode(initialStatus);
         profileRepo.save(profile);
 
-        planContractAlerts(contract, config);
+        // No alert planning here any more: LifecycleAlertJob derives due alerts from the
+        // contract's dates on every run.
 
         return mapToDetailDto(contract);
     }
@@ -147,13 +160,13 @@ public class EmployeeLifecycleService {
             .orElseThrow(() -> new BusinessRuleException("D3-96", "Contrat introuvable."));
 
         if (!stateMachine.isTransitionAllowed(
-                contract.getContractTypeCode(),
+                natureOf(contract),
                 contract.getCurrentStatusCode(),
                 dto.getNewStatus())) {
             throw new BusinessRuleException("D3-96",
                 "Transition non autorisée : " + contract.getCurrentStatusCode()
                 + " → " + dto.getNewStatus()
-                + " pour contrat type " + contract.getContractTypeCode() + ".");
+                + " pour contrat type " + natureOf(contract) + ".");
         }
 
         if (Boolean.TRUE.equals(contract.getDossierLocked())) {
@@ -222,7 +235,7 @@ public class EmployeeLifecycleService {
         EmployeeContract contract = contractRepo.findById(contractId)
             .orElseThrow(() -> new BusinessRuleException("D3-97", "Contrat introuvable."));
 
-        if (!"CDD".equals(contract.getContractTypeCode())) {
+        if (!"CDD".equals(natureOf(contract))) {
             throw new BusinessRuleException("D3-97", "Ce contrat n'est pas un CDD.");
         }
         if (contract.getCddRenouvellementCount() >= 1) {
@@ -246,25 +259,33 @@ public class EmployeeLifecycleService {
 
         profileRepo.findById(contract.getEmployeeProfile().getId()).ifPresent(p -> {
             p.setLifecycleStatusCode("RENOUVELLEMENT_CDD");
+            p.setContractEndDate(dto.getNewDateFin());
             profileRepo.save(p);
         });
 
-        configRepo.findByPaysIdAndContractTypeCode(contract.getPaysId(), "CDD")
-            .ifPresent(config -> planContractAlerts(contract, config));
+        // The new end date is a new alert occurrence (the ledger is keyed by target date), so
+        // LifecycleAlertJob announces it without anything to plan here.
 
         return mapToDetailDto(contract);
     }
 
-    // ── CDD: convert to CDI ───────────────────────────────────────────────────
+    // ── CDD / CIVP: convert to CDI ────────────────────────────────────────────
 
+    /**
+     * CDD → CDI stays a direct RH action. CIVP → CDI rests on an APPROVED conversion request
+     * (CdiConversionService: technical &amp; salary validation, escalation); the request is
+     * marked converted with the new CDI contract.
+     */
     @PreAuthorize("hasPermission(null, 'RH_MANAGE_LIFECYCLE')")
     public ContractDetailDto convertToCDI(Long contractId, ConvertToCDIRequest dto, Long convertedBy) {
         EmployeeContract cdd = contractRepo.findById(contractId)
             .orElseThrow(() -> new BusinessRuleException("D3-97", "Contrat introuvable."));
 
-        if (!"CDD".equals(cdd.getContractTypeCode())) {
-            throw new BusinessRuleException("D3-97", "Ce contrat n'est pas un CDD.");
+        String nature = natureOf(cdd);
+        if (!"CDD".equals(nature) && !"CIVP".equals(nature)) {
+            throw new BusinessRuleException("D3-97", "Seul un CDD ou un CIVP peut être converti en CDI.");
         }
+        CdiConversionRequest approved = "CIVP".equals(nature) ? cdiConversionService.requireApproved(contractId) : null;
 
         transitionState(contractId,
             TransitionRequest.builder()
@@ -280,38 +301,45 @@ public class EmployeeLifecycleService {
         cdiRequest.setContractTypeCode("CDI");
         cdiRequest.setDateDebut(dto.getCdiStartDate());
 
-        return createContract(cdiRequest, convertedBy);
+        ContractDetailDto cdi = createContract(cdiRequest, convertedBy);
+        if (approved != null) {
+            cdiConversionService.markConverted(approved, cdi.getId(), dto.getCdiStartDate(), convertedBy);
+        }
+        return cdi;
     }
 
-    // ── Alert planning ────────────────────────────────────────────────────────
+    // ── Profile → contract date sync ──────────────────────────────────────────
 
-    public void planContractAlerts(EmployeeContract contract, ContractTypeConfig config) {
-        if (contract.getDateFinPrevue() == null) return;
-
-        int alertDays  = config.getAlertDaysBeforeExpiry() != null ? config.getAlertDaysBeforeExpiry() : 30;
-        LocalDate alertDate = contract.getDateFinPrevue().minusDays(alertDays);
-
-        if (alertDate.isBefore(LocalDate.now())) return;
-
-        if (alertRepo.existsByContractIdAndAlertType(contract.getId(), "CONTRACT_EXPIRY_30D")) return;
-
-        try {
-            List<String> recipientRoles = List.of("RH", "IT", "DIRECTEUR_PAYS");
-            String recipientsJson = objectMapper.writeValueAsString(recipientRoles);
-
-            EmployeeLifecycleAlert alert = EmployeeLifecycleAlert.builder()
-                .contract(contract)
-                .employeeProfileId(contract.getEmployeeProfile().getId())
-                .alertType("CONTRACT_EXPIRY_30D")
-                .alertDate(alertDate)
-                .targetDate(contract.getDateFinPrevue())
-                .recipients(recipientsJson)
-                .isSent(false)
-                .build();
-            alertRepo.save(alert);
-        } catch (Exception e) {
-            log.error("Failed to plan contract alert for contract {}: {}", contract.getId(), e.getMessage());
-        }
+    /**
+     * Copies the end dates edited on the profile onto the profile's current, active contract.
+     *
+     * The profile form edits employee_profiles.contract_end_date / probation_end_date, but the
+     * alerts read employee_contracts. Without this an HR correction on the profile left the
+     * alert announcing the old date — or nothing. Null means "not sent", never "clear".
+     * Security: the caller (profile update) is already permission-guarded.
+     */
+    public void syncContractDatesFromProfile(Long contractId, LocalDate contractEnd, LocalDate probationEnd) {
+        if (contractId == null || (contractEnd == null && probationEnd == null)) return;
+        contractRepo.findById(contractId)
+            .filter(c -> Boolean.TRUE.equals(c.getIsActive()))
+            .ifPresent(c -> {
+                boolean changed = false;
+                if (contractEnd != null && !contractEnd.equals(c.getDateFinPrevue())) {
+                    c.setDateFinPrevue(contractEnd);
+                    changed = true;
+                }
+                // Only while the trial is still running: once validated, the date is history.
+                if (probationEnd != null
+                        && List.of("RECRUTEMENT", "PERIODE_ESSAI").contains(c.getCurrentStatusCode())
+                        && !probationEnd.equals(c.getDateFinPeriodeEssai())) {
+                    c.setDateFinPeriodeEssai(probationEnd);
+                    changed = true;
+                }
+                if (changed) {
+                    c.setUpdatedAt(OffsetDateTime.now());
+                    contractRepo.save(c);
+                }
+            });
     }
 
     // ── Query methods ─────────────────────────────────────────────────────────
@@ -377,10 +405,58 @@ public class EmployeeLifecycleService {
 
     @Transactional(readOnly = true)
     public ContractTypeConfigDto getConfig(Long paysId, String contractTypeCode) {
-        return configRepo.findByPaysIdAndContractTypeCode(paysId, contractTypeCode)
+        // Accepts a code or a list id; the config is per nature, borrowed from Tunisie if missing.
+        return configRepo.findForNature(paysId, contractTypeRefs.natureOf(contractTypeCode, paysId))
             .map(this::mapToConfigDto)
             .orElseThrow(() -> new BusinessRuleException("D3-105",
                 "Configuration introuvable pour pays=" + paysId + " type=" + contractTypeCode));
+    }
+
+    /** Every configured contract type of one pays — the admin screen's grid. */
+    @Transactional(readOnly = true)
+    @PreAuthorize("hasPermission(null, 'ADMIN_ROLES')")
+    public List<ContractTypeConfigDto> listConfigs(Long paysId) {
+        return configRepo.findByPaysId(paysId).stream()
+            .sorted(Comparator.comparing(ContractTypeConfig::getContractTypeCode))
+            .map(this::mapToConfigDto)
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * Creates the row for a (pays, contract type) that has none.
+     *
+     * Only pays_id=1 was ever seeded, so every other entity had no row: contract creation
+     * threw D3-95 there and no expiry alert could be configured. The admin screen offers to
+     * create the missing types from here, with the entity defaults unless values are given.
+     */
+    @PreAuthorize("hasPermission(null, 'ADMIN_ROLES')")
+    public ContractTypeConfigDto createConfig(Long paysId, String contractTypeCode,
+                                              UpdateContractTypeConfigRequest dto, Long createdBy) {
+        if (paysId == null || contractTypeCode == null || contractTypeCode.isBlank()) {
+            throw new BusinessRuleException("D3-105", "Pays et type de contrat obligatoires.");
+        }
+        // Rows are keyed by nature (CDI, CDD…): a list value (id or code) is reduced to its
+        // nature, so the row is the one createContract / the alert job will actually read.
+        String requested = contractTypeCode.trim().toUpperCase();
+        String code = com.daf360.rh.lists.ContractTypeRefs.NATURES.contains(requested) ? requested
+            : contractTypeRefs.find(contractTypeCode.trim(), paysId)
+                .map(com.daf360.rh.lists.ContractTypeRefs::natureOf)
+                .orElseThrow(() -> new BusinessRuleException("D3-105",
+                    "Type de contrat inconnu : " + contractTypeCode + "."));
+        if (configRepo.findByPaysIdAndContractTypeCode(paysId, code).isPresent()) {
+            throw new BusinessRuleException("D3-105",
+                "Une configuration existe déjà pour ce pays et ce type de contrat.");
+        }
+        ContractTypeConfig config = ContractTypeConfig.builder()
+            .paysId(paysId)
+            .contractTypeCode(code)
+            .trialPeriodDaysStandard("CDI".equals(code) ? 90 : 0)
+            .trialPeriodDaysManager("CDI".equals(code) ? 180 : 0)
+            .updatedBy(createdBy)
+            .build();
+        config = configRepo.save(config);
+        // Same field-by-field rules as an edit, so a create can carry the lead times.
+        return dto != null ? updateConfig(config.getId(), dto, createdBy) : mapToConfigDto(config);
     }
 
     @PreAuthorize("hasPermission(null, 'ADMIN_ROLES')")
@@ -388,10 +464,14 @@ public class EmployeeLifecycleService {
         ContractTypeConfig config = configRepo.findById(configId)
             .orElseThrow(() -> new BusinessRuleException("D3-105", "Configuration introuvable."));
 
+        validateLeadDays(dto.getAlertDaysBeforeExpiry());
+        validateLeadDays(dto.getAlertDaysBeforeTrialEnd());
+
         if (dto.getTrialPeriodDaysStandard()    != null) config.setTrialPeriodDaysStandard(dto.getTrialPeriodDaysStandard());
         if (dto.getTrialPeriodDaysManager()     != null) config.setTrialPeriodDaysManager(dto.getTrialPeriodDaysManager());
         if (dto.getTrialPeriodRenewable()       != null) config.setTrialPeriodRenewable(dto.getTrialPeriodRenewable());
         if (dto.getAlertDaysBeforeExpiry()      != null) config.setAlertDaysBeforeExpiry(dto.getAlertDaysBeforeExpiry());
+        if (dto.getAlertDaysBeforeTrialEnd()    != null) config.setAlertDaysBeforeTrialEnd(dto.getAlertDaysBeforeTrialEnd());
         if (dto.getIndemnityRatePct()           != null) config.setIndemnityRatePct(dto.getIndemnityRatePct());
         if (dto.getIndemnityApplicable()        != null) config.setIndemnityApplicable(dto.getIndemnityApplicable());
         if (dto.getCivpMaxAge()                 != null) config.setCivpMaxAge(dto.getCivpMaxAge());
@@ -406,6 +486,14 @@ public class EmployeeLifecycleService {
 
         logConfigChange(config, updatedBy);
         return mapToConfigDto(config);
+    }
+
+    /** Also enforced by the DTO's @Min/@Max; repeated here because createConfig calls in directly. */
+    private static void validateLeadDays(Integer days) {
+        if (days != null && (days < 0 || days > LifecycleAlertJob.MAX_LEAD_DAYS)) {
+            throw new BusinessRuleException("D3-105",
+                "Le délai d'alerte doit être compris entre 0 et " + LifecycleAlertJob.MAX_LEAD_DAYS + " jours.");
+        }
     }
 
     // ── CIVP validation (D3-98, D3-105) ──────────────────────────────────────
@@ -577,7 +665,7 @@ public class EmployeeLifecycleService {
                     "employeeName",   loadEmployeeName(profileId),
                     "previousStatus", previousStatus != null ? previousStatus : "",
                     "newStatus",      newStatus != null ? newStatus : "",
-                    "contractType",   contract.getContractTypeCode() != null ? contract.getContractTypeCode() : ""))
+                    "contractType",   contractTypeLabel(contract)))
                 .build());
         } catch (Exception e) {
             log.error("triggerTransitionNotifications failed for contract {}: {}",
@@ -608,12 +696,26 @@ public class EmployeeLifecycleService {
 
     // ── Mappers ───────────────────────────────────────────────────────────────
 
+    /** Lifecycle nature (CDI, CDD…) of a contract — what the rules and the state machine key on. */
+    String natureOf(EmployeeContract c) {
+        return contractTypeRefs.natureOf(c.getContractTypeId(), c.getPaysId());
+    }
+
+    /** The contract type as people know it (« contrat », « CDI — Durée indéterminée »…). */
+    String contractTypeLabel(EmployeeContract c) {
+        return contractTypeRefs.find(c.getContractTypeId(), c.getPaysId())
+            .map(com.daf360.rh.lists.ConfigurableListValue::getLabelFr)
+            .orElseGet(() -> c.getContractTypeId() != null ? c.getContractTypeId() : "");
+    }
+
     ContractDetailDto mapToDetailDto(EmployeeContract c) {
         return ContractDetailDto.builder()
             .id(c.getId())
             .employeeProfileId(c.getEmployeeProfile().getId())
             .paysId(c.getPaysId())
-            .contractTypeCode(c.getContractTypeCode())
+            .contractTypeCode(natureOf(c))
+            .contractTypeId(contractTypeRefs.idOf(c.getContractTypeId(), c.getPaysId()))
+            .contractTypeLabel(contractTypeLabel(c))
             .currentStatusCode(c.getCurrentStatusCode())
             .dateDebut(c.getDateDebut())
             .dateFinPrevue(c.getDateFinPrevue())
@@ -653,7 +755,9 @@ public class EmployeeLifecycleService {
         return ContractListDto.builder()
             .id(c.getId())
             .employeeProfileId(c.getEmployeeProfile().getId())
-            .contractTypeCode(c.getContractTypeCode())
+            .contractTypeCode(natureOf(c))
+            .contractTypeId(contractTypeRefs.idOf(c.getContractTypeId(), c.getPaysId()))
+            .contractTypeLabel(contractTypeLabel(c))
             .currentStatusCode(c.getCurrentStatusCode())
             .dateDebut(c.getDateDebut())
             .dateFinPrevue(c.getDateFinPrevue())
@@ -708,6 +812,7 @@ public class EmployeeLifecycleService {
             .trialPeriodDaysManager(c.getTrialPeriodDaysManager())
             .trialPeriodRenewable(c.getTrialPeriodRenewable())
             .alertDaysBeforeExpiry(c.getAlertDaysBeforeExpiry())
+            .alertDaysBeforeTrialEnd(c.getAlertDaysBeforeTrialEnd())
             .indemnityRatePct(c.getIndemnityRatePct())
             .indemnityApplicable(c.getIndemnityApplicable())
             .civpMaxAge(c.getCivpMaxAge())

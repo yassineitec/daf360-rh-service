@@ -13,6 +13,9 @@ public class OnboardingListItem {
     private String candidateFullName;
     private String appliedPosition;
     private Long paysId;
+    /** Entity name in French / English (`pays.french_label` / `english_label`). */
+    private String paysLabel;
+    private String paysLabelEn;
     private LocalDate expectedStartDate;
     private CandidateStatus candidateStatus;
     private String ms365Email;

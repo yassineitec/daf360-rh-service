@@ -8,6 +8,8 @@ import java.util.List;
 public class RoleResponseDto {
     private Long         id;
     private String       frenchName;
+    /** Null when the role has no English name — the UI then shows frenchName. */
+    private String       englishName;
     private Long         parentRoleId;
     /** Legacy flag, kept in sync with paysScopeMode == ALL. */
     private Boolean      showAll;

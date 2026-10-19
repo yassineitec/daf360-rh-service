@@ -43,6 +43,8 @@ class EmployeeLifecycleServiceTest {
     @Mock NotificationRoutingService              notificationRoutingService;
     @Mock JdbcTemplate                            jdbc;
     @Mock ObjectMapper                            objectMapper;
+    /** Stands in for the CONTRACT_TYPE list: a code is stored as is and is its own nature. */
+    @Mock com.daf360.rh.lists.ContractTypeRefs     contractTypeRefs;
 
     @InjectMocks EmployeeLifecycleService service;
 
@@ -53,6 +55,10 @@ class EmployeeLifecycleServiceTest {
 
     @BeforeEach
     void setup() {
+        lenient().when(contractTypeRefs.toStored(anyString(), any())).thenAnswer(i -> i.getArgument(0));
+        lenient().when(contractTypeRefs.natureOf(anyString(), any())).thenAnswer(i -> i.getArgument(0));
+        lenient().when(configRepo.findForNature(any(), any())).thenCallRealMethod();
+
         profile = EmployeeProfile.builder()
             .id(10L)
             .dateOfBirth(LocalDate.of(1990, 1, 1))
@@ -97,7 +103,7 @@ class EmployeeLifecycleServiceTest {
         assertThat(result.getCurrentStatusCode()).isEqualTo("RECRUTEMENT");
         ArgumentCaptor<EmployeeContract> captor = ArgumentCaptor.forClass(EmployeeContract.class);
         verify(contractRepo, atLeastOnce()).save(captor.capture());
-        assertThat(captor.getAllValues().get(0).getContractTypeCode()).isEqualTo("CDI");
+        assertThat(captor.getAllValues().get(0).getContractTypeId()).isEqualTo("CDI");
     }
 
     // ── 2. Create CIVP — age over 30 → exception ─────────────────────────────
@@ -180,7 +186,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void createCDD_withParent_incrementsCount() throws Exception {
         EmployeeContract parentCdd = EmployeeContract.builder()
-            .id(50L).contractTypeCode("CDD")
+            .id(50L).contractTypeId("CDD")
             .cddRenouvellementCount(0)
             .employeeProfile(profile).build();
 
@@ -192,9 +198,6 @@ class EmployeeLifecycleServiceTest {
             c.setId(101L);
             return c;
         });
-        when(alertRepo.existsByContractIdAndAlertType(any(), any())).thenReturn(false);
-        when(objectMapper.writeValueAsString(any())).thenReturn("[]");
-
         CreateContractRequest dto = new CreateContractRequest();
         dto.setEmployeeProfileId(10L);
         dto.setPaysId(1L);
@@ -217,7 +220,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void createCDD_parentAlreadyRenewed_throwsException() {
         EmployeeContract parentCdd = EmployeeContract.builder()
-            .id(50L).contractTypeCode("CDD")
+            .id(50L).contractTypeId("CDD")
             .cddRenouvellementCount(1) // already renewed
             .employeeProfile(profile).build();
 
@@ -243,7 +246,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void transitionState_validTransition_succeeds() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(200L).contractTypeCode("CDI")
+            .id(200L).contractTypeId("CDI")
             .currentStatusCode("RECRUTEMENT")
             .dossierLocked(false)
             .paysId(1L).employeeProfile(profile).build();
@@ -267,7 +270,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void transitionState_invalidTransition_throwsException() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(200L).contractTypeCode("CDI")
+            .id(200L).contractTypeId("CDI")
             .currentStatusCode("ACTIF")
             .dossierLocked(false)
             .paysId(1L).employeeProfile(profile).build();
@@ -288,7 +291,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void transitionState_lockedDossier_throwsException() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(200L).contractTypeCode("CDI")
+            .id(200L).contractTypeId("CDI")
             .currentStatusCode("FIN_CONTRAT")
             .dossierLocked(true)
             .paysId(1L).employeeProfile(profile).build();
@@ -309,7 +312,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void validateTrialPeriod_approved_setsActif() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(201L).contractTypeCode("CDI")
+            .id(201L).contractTypeId("CDI")
             .currentStatusCode("PERIODE_ESSAI")
             .dossierLocked(false)
             .paysId(1L).employeeProfile(profile).build();
@@ -333,7 +336,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void validateTrialPeriod_rejected_setsRupturePE() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(202L).contractTypeCode("CDI")
+            .id(202L).contractTypeId("CDI")
             .currentStatusCode("PERIODE_ESSAI")
             .dossierLocked(false)
             .paysId(1L).employeeProfile(profile).build();
@@ -357,7 +360,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void renewCDD_secondRenewal_throwsException() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(300L).contractTypeCode("CDD")
+            .id(300L).contractTypeId("CDD")
             .currentStatusCode("ACTIF")
             .cddRenouvellementCount(1) // already renewed once
             .dateFinPrevue(LocalDate.now().plusDays(60))
@@ -378,7 +381,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void convertToCDI_createsNewCDIContract() throws Exception {
         EmployeeContract cdd = EmployeeContract.builder()
-            .id(400L).contractTypeCode("CDD")
+            .id(400L).contractTypeId("CDD")
             .currentStatusCode("ACTIF")
             .dossierLocked(false)
             .paysId(1L).employeeProfile(profile).build();
@@ -408,7 +411,7 @@ class EmployeeLifecycleServiceTest {
     @Test
     void logTransition_neverThrowsOnFailure() {
         EmployeeContract contract = EmployeeContract.builder()
-            .id(500L).contractTypeCode("CDI")
+            .id(500L).contractTypeId("CDI")
             .employeeProfile(profile).build();
 
         when(transitionRepo.save(any())).thenThrow(new RuntimeException("DB down"));
@@ -420,66 +423,137 @@ class EmployeeLifecycleServiceTest {
         ).doesNotThrowAnyException();
     }
 
-    // ── 15. planContractAlerts — dedup: no second alert if exists ────────────
+    // ── 15–21. LifecycleAlertJob — alerts derived from the contract dates each run ──
+
+    private static final LocalDate TODAY = LocalDate.of(2026, 10, 8);
+    private static final NotificationRoutingService.DispatchResult REACHED =
+        new NotificationRoutingService.DispatchResult(true, 2, 0, false);
+    private static final NotificationRoutingService.DispatchResult NOBODY =
+        new NotificationRoutingService.DispatchResult(true, 0, 0, false);
+
+    private LifecycleAlertJob job() {
+        lenient().when(jdbc.queryForObject(anyString(), eq(String.class), eq(10L))).thenReturn("Test User");
+        return new LifecycleAlertJob(contractRepo, alertRepo, configRepo, service, notificationRoutingService);
+    }
+
+    private EmployeeContract cdd(long id, LocalDate end) {
+        return EmployeeContract.builder()
+            .id(id).paysId(1L).contractTypeId("CDD").currentStatusCode("ACTIF")
+            .dateDebut(TODAY.minusMonths(6)).dateFinPrevue(end)
+            .isActive(true).employeeProfile(profile).build();
+    }
+
+    private void onlyExpiring(EmployeeContract... contracts) {
+        when(contractRepo.findExpiringContracts(TODAY, TODAY.plusDays(LifecycleAlertJob.MAX_LEAD_DAYS)))
+            .thenReturn(List.of(contracts));
+        when(contractRepo.findTrialPeriodsEnding(any(), any())).thenReturn(List.of());
+    }
 
     @Test
-    void planContractAlerts_noDuplicate() throws Exception {
-        EmployeeContract contract = EmployeeContract.builder()
-            .id(600L).contractTypeCode("CDD")
-            .dateFinPrevue(LocalDate.now().plusDays(60))
-            .employeeProfile(profile).build();
+    void job_shortCdd_insideWindowAtCreation_isAlerted() {
+        // The case the old planner dropped: alert date already in the past when planned.
+        onlyExpiring(cdd(600L, TODAY.plusDays(10)));
+        when(configRepo.findByPaysIdAndContractTypeCode(1L, "CDD")).thenReturn(Optional.of(cddConfig));
+        when(notificationRoutingService.dispatchNow(any())).thenReturn(REACHED);
 
-        ContractTypeConfig config = ContractTypeConfig.builder()
-            .alertDaysBeforeExpiry(30).build();
+        LifecycleAlertJob.RunSummary s = job().run(TODAY);
 
-        // Alert already exists
-        when(alertRepo.existsByContractIdAndAlertType(600L, "CONTRACT_EXPIRY_30D")).thenReturn(true);
+        ArgumentCaptor<RoutingContext> ctx = ArgumentCaptor.forClass(RoutingContext.class);
+        verify(notificationRoutingService).dispatchNow(ctx.capture());
+        assertThat(ctx.getValue().getEventCode()).isEqualTo("CONTRACT_EXPIRY");
+        assertThat(ctx.getValue().getPaysId()).isEqualTo(1L);
+        assertThat(ctx.getValue().getEntityType()).isEqualTo(NotificationEntityType.EMPLOYEE_PROFILE);
+        assertThat(ctx.getValue().getEntityId()).isEqualTo(10L);
+        assertThat(ctx.getValue().getTemplateVars())
+            .containsEntry("employeeName", "Test User")
+            .containsEntry("contractType", "CDD")
+            .containsEntry("targetDate", "18/10/2026")
+            .containsEntry("daysLeft", "10");
 
-        service.planContractAlerts(contract, config);
+        ArgumentCaptor<EmployeeLifecycleAlert> saved = ArgumentCaptor.forClass(EmployeeLifecycleAlert.class);
+        verify(alertRepo).save(saved.capture());
+        assertThat(saved.getValue().getIsSent()).isTrue();
+        assertThat(saved.getValue().getTargetDate()).isEqualTo(TODAY.plusDays(10));
+        assertThat(s.sent()).isEqualTo(1);
+    }
 
-        // No second alert should be saved
+    @Test
+    void job_notYetInsideLeadTime_sendsNothing() {
+        onlyExpiring(cdd(601L, TODAY.plusDays(60)));
+        when(configRepo.findByPaysIdAndContractTypeCode(1L, "CDD")).thenReturn(Optional.of(cddConfig)); // lead 30
+
+        job().run(TODAY);
+
+        verify(notificationRoutingService, never()).dispatchNow(any());
         verify(alertRepo, never()).save(any());
     }
 
-    // ── 16. sendAlert — raises CONTRACT_EXPIRY through the routing engine ──────
+    @Test
+    void job_leadTimeAbove30Days_isHonoured() {
+        cddConfig.setAlertDaysBeforeExpiry(60);
+        onlyExpiring(cdd(602L, TODAY.plusDays(45)));
+        when(configRepo.findByPaysIdAndContractTypeCode(1L, "CDD")).thenReturn(Optional.of(cddConfig));
+        when(notificationRoutingService.dispatchNow(any())).thenReturn(REACHED);
+
+        job().run(TODAY);
+
+        verify(notificationRoutingService).dispatchNow(any());
+    }
 
     @Test
-    void sendAlert_dispatchesContractExpiryEvent() {
-        EmployeeContract contract = EmployeeContract.builder()
-            .id(700L).contractTypeCode("CDD")
-            .paysId(1L).employeeProfile(profile).build();
+    void job_nobodyReached_staysPendingForRetry() {
+        onlyExpiring(cdd(603L, TODAY.plusDays(5)));
+        when(configRepo.findByPaysIdAndContractTypeCode(1L, "CDD")).thenReturn(Optional.of(cddConfig));
+        when(notificationRoutingService.dispatchNow(any())).thenReturn(NOBODY);
 
-        EmployeeLifecycleAlert alert = EmployeeLifecycleAlert.builder()
-            .id(1L).contract(contract)
-            .employeeProfileId(10L)
-            .alertType("CONTRACT_EXPIRY_30D")
-            .alertDate(LocalDate.now())
-            .targetDate(LocalDate.now().plusDays(30))
-            .recipients("[\"RH\",\"IT\",\"DIRECTEUR_PAYS\"]")
-            .isSent(false).build();
+        LifecycleAlertJob.RunSummary s = job().run(TODAY);
 
-        lenient().when(jdbc.queryForObject(anyString(), eq(String.class), eq(10L)))
-            .thenReturn("Test User");
+        ArgumentCaptor<EmployeeLifecycleAlert> saved = ArgumentCaptor.forClass(EmployeeLifecycleAlert.class);
+        verify(alertRepo).save(saved.capture());
+        assertThat(saved.getValue().getIsSent()).isFalse();
+        assertThat(s.pending()).isEqualTo(1);
+    }
 
-        LifecycleAlertJob job = new LifecycleAlertJob(
-            contractRepo, alertRepo, configRepo, service, notificationRoutingService);
+    @Test
+    void job_legacyRowAlreadySentForSameDate_isNotResent() {
+        EmployeeContract c = cdd(604L, TODAY.plusDays(20));
+        onlyExpiring(c);
+        when(configRepo.findByPaysIdAndContractTypeCode(1L, "CDD")).thenReturn(Optional.of(cddConfig));
+        when(alertRepo.findFirstByContractIdAndAlertTypeInAndTargetDateOrderByIdAsc(
+                eq(604L), anyCollection(), eq(TODAY.plusDays(20))))
+            .thenReturn(Optional.of(EmployeeLifecycleAlert.builder()
+                .alertType("CONTRACT_EXPIRY_30D").targetDate(TODAY.plusDays(20)).isSent(true).build()));
 
-        job.sendAlert(alert);
+        job().run(TODAY);
 
-        // Recipients are no longer resolved here — they are the CONTRACT_EXPIRY rule's
-        // business. What this job still owns is raising the right event, for the right
-        // entity, with the variables the templates interpolate.
-        ArgumentCaptor<RoutingContext> ctxCaptor = ArgumentCaptor.forClass(RoutingContext.class);
-        verify(notificationRoutingService).resolveAndDispatch(ctxCaptor.capture());
+        verify(notificationRoutingService, never()).dispatchNow(any());
+    }
 
-        RoutingContext ctx = ctxCaptor.getValue();
-        assertThat(ctx.getEventCode()).isEqualTo("CONTRACT_EXPIRY");
-        assertThat(ctx.getPaysId()).isEqualTo(1L);
-        assertThat(ctx.getEntityType()).isEqualTo(NotificationEntityType.EMPLOYEE_PROFILE);
-        assertThat(ctx.getEntityId()).isEqualTo(10L);
-        assertThat(ctx.getTemplateVars())
-            .containsEntry("employeeName", "Test User")
-            .containsEntry("contractType", "CDD")
-            .containsKey("targetDate");
+    @Test
+    void job_trialPeriodEnding_raisesTrialEvent() {
+        EmployeeContract c = EmployeeContract.builder()
+            .id(605L).paysId(1L).contractTypeId("CDI").currentStatusCode("PERIODE_ESSAI")
+            .dateDebut(TODAY.minusDays(85)).dateFinPeriodeEssai(TODAY.plusDays(5))
+            .isActive(true).employeeProfile(profile).build();
+        when(contractRepo.findExpiringContracts(any(), any())).thenReturn(List.of());
+        when(contractRepo.findTrialPeriodsEnding(any(), any())).thenReturn(List.of(c));
+        when(configRepo.findByPaysIdAndContractTypeCode(1L, "CDI")).thenReturn(Optional.of(cdiConfig)); // trial lead 15
+        when(notificationRoutingService.dispatchNow(any())).thenReturn(REACHED);
+
+        job().run(TODAY);
+
+        ArgumentCaptor<RoutingContext> ctx = ArgumentCaptor.forClass(RoutingContext.class);
+        verify(notificationRoutingService).dispatchNow(ctx.capture());
+        assertThat(ctx.getValue().getEventCode()).isEqualTo("TRIAL_PERIOD_END");
+        assertThat(ctx.getValue().getTemplateVars()).containsEntry("daysLeft", "5");
+    }
+
+    @Test
+    void job_renewedTrial_usesRenewedDate() {
+        EmployeeContract c = EmployeeContract.builder()
+            .dateFinPeriodeEssai(TODAY.minusDays(1))
+            .periodeEssaiRenouvelee(true).dateFinPeRenouvellement(TODAY.plusDays(40)).build();
+
+        assertThat(LifecycleAlertJob.effectiveTrialEnd(c)).isEqualTo(TODAY.plusDays(40));
     }
 }

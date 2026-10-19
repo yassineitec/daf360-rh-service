@@ -9,6 +9,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -122,12 +124,67 @@ public class NotificationRoutingService {
      */
     @Async
     public void resolveAndDispatch(RoutingContext ctx) {
+        dispatchNow(ctx);
+    }
+
+    /**
+     * Dispatches on the CALLING thread and reports what actually went out.
+     *
+     * For callers that must know whether anyone was reached — the lifecycle alert job marks an
+     * alert sent only when this says so. Through the async entry point an empty audience, a
+     * missing rule or a crash were all indistinguishable from success, so a due alert was
+     * flagged sent and never retried. Never throws.
+     */
+    public DispatchResult dispatchNow(RoutingContext ctx) {
         try {
-            doDispatch(ctx);
+            return doDispatch(ctx);
         } catch (Exception ex) {
             log.error("NotificationRoutingService failed for event={} pays={}: {}",
                 ctx.getEventCode(), ctx.getPaysId(), ex.getMessage(), ex);
+            return DispatchResult.FAILED;
         }
+    }
+
+    /**
+     * Dispatches once the caller's transaction has COMMITTED; immediately when there is none.
+     *
+     * A business service that raised its event inside its own transaction used to hand it to
+     * the async pool straight away, so the notification and the e-mail could leave before the
+     * commit — and still leave when the commit then failed, announcing a request that does not
+     * exist. A rolled-back transaction now sends nothing.
+     */
+    public void dispatchAfterCommit(RoutingContext ctx) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    // Through the proxy so @Async applies: the caller's thread is returning
+                    // its HTTP response and must not wait on SMTP.
+                    self().resolveAndDispatch(ctx);
+                }
+            });
+        } else {
+            self().resolveAndDispatch(ctx);
+        }
+    }
+
+    /** What one dispatch delivered. {@code delivered()} is true when at least one channel reached someone. */
+    public record DispatchResult(boolean ruleFound, int inappWritten, int emailRecipients, boolean failed) {
+        static final DispatchResult NO_RULE = new DispatchResult(false, 0, 0, false);
+        static final DispatchResult FAILED  = new DispatchResult(false, 0, 0, true);
+
+        public boolean delivered() {
+            return inappWritten > 0 || emailRecipients > 0;
+        }
+    }
+
+    // Self-reference so dispatchAfterCommit reaches the @Async proxy rather than `this`.
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private NotificationRoutingService selfProxy;
+
+    private NotificationRoutingService self() {
+        return selfProxy != null ? selfProxy : this;
     }
 
     // ── Private engine ────────────────────────────────────────────────────────
@@ -141,14 +198,16 @@ public class NotificationRoutingService {
             .orElse(null);
     }
 
-    private void doDispatch(RoutingContext ctx) {
+    private DispatchResult doDispatch(RoutingContext ctx) {
         // ── Step A: load rule ─────────────────────────────────────────────────
         NotificationRoutingRule rule = loadRule(ctx);
         if (rule == null) {
             log.warn("No routing rule found for event={} pays={} — notification skipped",
                 ctx.getEventCode(), ctx.getPaysId());
-            return;
+            return DispatchResult.NO_RULE;
         }
+        int inappWritten = 0;
+        int emailRecipients = 0;
 
         // ── Step B: resolve template variables ────────────────────────────────
         Map<String, String> vars = new HashMap<>(ctx.getTemplateVars());
@@ -164,18 +223,28 @@ public class NotificationRoutingService {
         NotificationTarget target = resolveTarget(rule, ctx);
 
         if (Boolean.TRUE.equals(rule.getSendInapp())) {
-            List<Long> recipientIds = resolveInappRecipients(rule, ctx);
-            int written = inAppNotifier.notifyUsers(
+            List<Long> recipientIds = new ArrayList<>(resolveInappRecipients(rule, ctx));
+            if (ctx.getActorUserId() != null) {
+                recipientIds.remove(ctx.getActorUserId());   // remove(Object), not remove(int)
+            }
+            inappWritten = inAppNotifier.notifyUsers(
                 recipientIds, module, resolvedTitle, resolvedBody, target);
             log.debug("Dispatched in-app notifications for event={} to {}/{} recipients",
-                ctx.getEventCode(), written, recipientIds.size());
+                ctx.getEventCode(), inappWritten, recipientIds.size());
         }
 
         // ── Step D: dispatch email ────────────────────────────────────────────
         if (Boolean.TRUE.equals(rule.getSendEmail())
+                && !Boolean.TRUE.equals(rule.getEventType().getSupportsEmail())) {
+            // The admin can tick "e-mail" on a rule whose event type has no e-mail support;
+            // that used to be skipped without a trace.
+            log.warn("Rule {} has send_email=1 but event type {} has supports_email=0 — e-mail skipped",
+                rule.getId(), ctx.getEventCode());
+        }
+        if (Boolean.TRUE.equals(rule.getSendEmail())
                 && Boolean.TRUE.equals(rule.getEventType().getSupportsEmail())) {
 
-            EmailAddresses addresses = resolveEmailRecipients(rule, ctx);
+            EmailAddresses addresses = withoutActor(resolveEmailRecipients(rule, ctx), ctx);
 
             if (!addresses.to.isEmpty()) {
                 try {
@@ -183,6 +252,7 @@ public class NotificationRoutingService {
                         addresses.to, addresses.cc, addresses.bcc,
                         resolvedSubject, resolvedHtml
                     );
+                    emailRecipients = addresses.to.size();
                     log.debug("Dispatched email for event={} to TO={}", ctx.getEventCode(), addresses.to.size());
                 } catch (Exception ex) {
                     log.error("Email dispatch failed for event={}: {}", ctx.getEventCode(), ex.getMessage());
@@ -199,6 +269,28 @@ public class NotificationRoutingService {
             null,
             "event=" + ctx.getEventCode() + " pays=" + ctx.getPaysId()
         );
+        return new DispatchResult(true, inappWritten, emailRecipients, false);
+    }
+
+    private static final String ACTOR_EMAIL_SQL =
+        "SELECT COALESCE(u.username, u.email) FROM [dbo].[Users] u WHERE u.id = ?";
+
+    /** Drops the actor's own address from every field — the e-mail twin of the in-app exclusion. */
+    private EmailAddresses withoutActor(EmailAddresses a, RoutingContext ctx) {
+        if (ctx.getActorUserId() == null) return a;
+        List<String> mine;
+        try {
+            mine = jdbc.queryForList(ACTOR_EMAIL_SQL, String.class, ctx.getActorUserId());
+        } catch (Exception ex) {
+            return a;
+        }
+        if (mine.isEmpty() || mine.get(0) == null) return a;
+        String me = mine.get(0);
+        java.util.function.Predicate<String> notMe = s -> !me.equalsIgnoreCase(s);
+        return new EmailAddresses(
+            a.to.stream().filter(notMe).toList(),
+            a.cc.stream().filter(notMe).toList(),
+            a.bcc.stream().filter(notMe).toList());
     }
 
     /**

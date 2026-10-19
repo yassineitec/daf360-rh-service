@@ -84,6 +84,10 @@ app:
   portal-url: ${PORTAL_URL:http://localhost:8080}
   mail-from: ${MAIL_FROM:noreply@daf360.com}
   pdf-service-url: ${PDF_SERVICE_URL:http://localhost:3000}
+  # CIVP -> CDI requests (V119): requester != decider, and the arbiter != the validator who
+  # escalated. Set CDI_CONVERSION_FOUR_EYES=false ONLY on a single-account test base.
+  cdi-conversion:
+    four-eyes: ${CDI_CONVERSION_FOUR_EYES:true}
   # Consommateurs a notifier lors d'un changement de compte (ModuleSyncService).
   #
   # Les placeholders sont OBLIGATOIRES ici : le prefixe des proprietes est `app`, donc une

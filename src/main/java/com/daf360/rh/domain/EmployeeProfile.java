@@ -47,8 +47,13 @@ public class EmployeeProfile {
     @Column(name = "hire_date")
     private LocalDate hireDate;
 
+    /**
+     * Id (as text — the column stays varchar) of the CONTRACT_TYPE row of configurable_list_values.
+     * Not a code: read the code through {@link com.daf360.rh.lists.ContractTypeRefs#codeOf}, and
+     * write through {@link com.daf360.rh.lists.ContractTypeRefs#toStored}.
+     */
     @Column(name = "contract_type", length = 50)
-    private String contractType;
+    private String contractTypeId;
 
     @Column(name = "contract_end_date")
     private LocalDate contractEndDate;
@@ -104,10 +109,10 @@ public class EmployeeProfile {
     private String personalPhone;
 
     /**
-     * Payroll register number — zero-padded decimal, min width 2 ("01", "10", "206").
-     * Allocated once, at activation, by {@code PayrollMatriculeService}; never
-     * regenerated and never gap-filled, because departed employees' numbers stay
-     * referenced by historical payslips. Distinct from {@code Users.employee_id}
+     * Payroll register number transmitted by the accounting firm ("01", "10", "206").
+     * Typed in by RH on the Emploi tab, write-once: editable while empty, locked once set
+     * (EmployeeProfileService.applyPayrollMatricule), because departed employees' numbers
+     * stay referenced by historical payslips. Distinct from {@code Users.employee_id}
      * (this app's own auto-generated "matricule", format [NOM3][PRE3][userId], see
      * EmployeeIdGeneratorService) — the two are unrelated numbering systems, do not
      * confuse them. Also the field {@code PayslipBatchService} matches against to find

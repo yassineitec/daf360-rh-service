@@ -64,7 +64,7 @@ public class UpdateCandidateRequest {
     private Long departmentId;
 
     /**
-     * Contract type — an EMPLOYMENT_TYPE `configurable_list_values.id`, the same FK
+     * Contract type — an CONTRACT_TYPE `configurable_list_values.id`, the same FK
      * `CreateCandidateRequest` sets.
      *
      * Editable after creation because a candidature is regularly reshaped during the

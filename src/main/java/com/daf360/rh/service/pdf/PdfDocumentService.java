@@ -50,7 +50,7 @@ public class PdfDocumentService {
             "ep.gender, ep.national_id, ep.cin_city, ep.cin_date, " +
             "ISNULL(g.label_fr,  '') AS grade, " +
             "ISNULL(d.label_fr,  '') AS discipline, " +
-            "ep.contract_type, " +
+            com.daf360.rh.lists.ContractTypeRefs.sqlCode("ep", "ctv") + " AS contract_type, " +
             "ep.hire_date, ep.probation_end_date, ep.contract_end_date, " +
             "ISNULL(b.label_fr, '') AS bank_name, ep.rib, ep.iban, " +
             "u.fullName, u.username as ms365_email, " +
@@ -65,6 +65,7 @@ public class PdfDocumentService {
             "LEFT JOIN [dbo].[grades]      g ON g.id = ep.grade_id " +
             "LEFT JOIN [dbo].[disciplines] d ON d.id = ep.discipline_id " +
             "LEFT JOIN [dbo].[banks]       b ON b.id = ep.bank_id " +
+            com.daf360.rh.lists.ContractTypeRefs.sqlJoin("ep", "ctv") +
             "WHERE ep.id = ?";
 
     private static final String DG_SQL =
@@ -841,9 +842,9 @@ public class PdfDocumentService {
     private String deriveContractDuration(String ct) {
         if (ct == null) return "indeterminee";
         return switch (ct.toUpperCase()) {
-            case "PERMANENT"   -> "indeterminee (titulaire)";
-            case "FIXED_TERM"  -> "determinee";
-            case "INTERN"      -> "stage";
+            case "PERMANENT", "CDI"   -> "indeterminee (titulaire)";
+            case "FIXED_TERM", "CDD", "CIVP", "DETACHEMENT"  -> "determinee";
+            case "INTERN", "STAGE"      -> "stage";
             default            -> "indeterminee";
         };
     }

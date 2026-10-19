@@ -30,6 +30,10 @@ public class Role {
     @Column(name = "`frenchName`", length = 100)
     private String frenchName;
 
+    /** The role's name shown when the UI is in English. Optional: null → the French name. */
+    @Column(name = "`englishName`", length = 100)
+    private String englishName;
+
     @Column(name = "parent_role_id")
     private Long parentRoleId;
 

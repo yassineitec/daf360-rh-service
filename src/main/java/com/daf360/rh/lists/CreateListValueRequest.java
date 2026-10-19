@@ -27,4 +27,8 @@ public class CreateListValueRequest {
     private String labelEn;
 
     private Integer sortOrder;
+
+    /** CONTRACT_TYPE only: the lifecycle rules this type follows. Absent → CDI. */
+    @Size(max = 30)
+    private String lifecycleNature;
 }
