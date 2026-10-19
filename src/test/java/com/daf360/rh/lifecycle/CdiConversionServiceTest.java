@@ -3,22 +3,27 @@ package com.daf360.rh.lifecycle;
 import com.daf360.rh.domain.CdiConversionRequest;
 import com.daf360.rh.domain.CdiConversionStep;
 import com.daf360.rh.domain.EmployeeContract;
+import com.daf360.rh.domain.EmployeeDocument;
 import com.daf360.rh.domain.EmployeeProfile;
 import com.daf360.rh.domain.enums.CdiConversionStatus;
 import com.daf360.rh.dto.lifecycle.CdiConversionDecisionRequest;
 import com.daf360.rh.dto.lifecycle.CdiConversionDto;
+import com.daf360.rh.dto.document.DocumentUploadResponseDto;
 import com.daf360.rh.dto.lifecycle.SubmitCdiConversionRequest;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.BusinessRuleException;
+import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.lists.ContractTypeRefs;
 import com.daf360.rh.notification.NotificationRoutingService;
 import com.daf360.rh.notification.RoutingContext;
 import com.daf360.rh.repository.CdiConversionRequestRepository;
 import com.daf360.rh.repository.CdiConversionStepRepository;
 import com.daf360.rh.repository.EmployeeContractRepository;
+import com.daf360.rh.repository.EmployeeDocumentRepository;
 import com.daf360.rh.security.PaysScopeContext;
 import com.daf360.rh.security.TenantService;
 import com.daf360.rh.service.AuditService;
+import com.daf360.rh.service.EmployeeDocumentService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,6 +34,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -56,17 +62,24 @@ class CdiConversionServiceTest {
     @Mock TenantService                  tenantService;
     @Mock AuditService                   auditService;
     @Mock JdbcTemplate                   jdbc;
+    @Mock EmployeeDocumentService        documents;
+    @Mock EmployeeDocumentRepository     documentRepo;
 
     CdiConversionService service;
 
-    static final long PAYS = 179L, CONTRACT = 5L, EMPLOYEE_USER = 900L;
+    static final long PAYS = 179L, CONTRACT = 5L, EMPLOYEE_USER = 900L, EVALUATION_DOC = 4242L;
     static final long REQUESTER = 10L, VALIDATOR = 20L, ARBITER = 30L, HR = 40L;
     EmployeeContract civp;
 
     @BeforeEach
-    void setup() {
+    void setup() throws Exception {
         service = new CdiConversionService(requestRepo, stepRepo, contractRepo, contractTypeRefs,
-                notifications, tenantService, auditService, jdbc);
+                notifications, tenantService, auditService, jdbc, documents, documentRepo);
+        DocumentUploadResponseDto uploaded = new DocumentUploadResponseDto();
+        uploaded.setId(EVALUATION_DOC);
+        when(documents.upload(any(), any(), any(), any(), any(), any())).thenReturn(uploaded);
+        when(documentRepo.findById(EVALUATION_DOC)).thenReturn(Optional.of(
+                EmployeeDocument.builder().id(EVALUATION_DOC).fileName("evaluation.pdf").isDeleted(false).build()));
         ReflectionTestUtils.setField(service, "fourEyes", true);
 
         EmployeeProfile profile = EmployeeProfile.builder().id(77L).userId(EMPLOYEE_USER).build();
@@ -102,6 +115,10 @@ class CdiConversionServiceTest {
         return d;
     }
 
+    private static MockMultipartFile evaluationPdf() {
+        return new MockMultipartFile("evaluation", "evaluation.pdf", "application/pdf", new byte[] {1, 2, 3});
+    }
+
     private static CdiConversionDecisionRequest decision(CdiConversionDecisionRequest.Action a, String comment) {
         CdiConversionDecisionRequest d = new CdiConversionDecisionRequest();
         d.setAction(a);
@@ -127,10 +144,10 @@ class CdiConversionServiceTest {
     // ── Submit ────────────────────────────────────────────────────────────────
 
     @Test
-    void submit_onAnActiveCivp_createsASubmittedRequest_andNotifiesTheValidators() {
+    void submit_onAnActiveCivp_createsASubmittedRequest_andNotifiesTheValidators() throws Exception {
         loginAs(REQUESTER, CdiConversionService.REQUEST);
 
-        CdiConversionDto dto = service.submit(CONTRACT, submitDto(), REQUESTER);
+        CdiConversionDto dto = service.submit(CONTRACT, submitDto(), evaluationPdf(), null, REQUESTER);
 
         assertEquals("SUBMITTED", dto.status());
         assertEquals(0, new BigDecimal("2500.000").compareTo(dto.proposedNetSalary()));
@@ -143,37 +160,86 @@ class CdiConversionServiceTest {
     }
 
     @Test
-    void submit_isRefused_forACdd_anInactiveCivp_aPendingRequest_orWithoutThePermission() {
+    void submit_isRefused_forACdd_anInactiveCivp_aPendingRequest_orWithoutThePermission() throws Exception {
         loginAs(REQUESTER);
-        assertThrows(AppException.class, () -> service.submit(CONTRACT, submitDto(), REQUESTER));
+        assertThrows(AppException.class, () -> service.submit(CONTRACT, submitDto(), evaluationPdf(), null, REQUESTER));
 
         loginAs(REQUESTER, CdiConversionService.REQUEST);
         when(contractTypeRefs.natureOf("301", PAYS)).thenReturn("CDD");
-        assertThrows(BusinessRuleException.class, () -> service.submit(CONTRACT, submitDto(), REQUESTER));
+        assertThrows(BusinessRuleException.class, () -> service.submit(CONTRACT, submitDto(), evaluationPdf(), null, REQUESTER));
 
         when(contractTypeRefs.natureOf("301", PAYS)).thenReturn("CIVP");
         civp.setCurrentStatusCode("PERIODE_ESSAI");
-        assertThrows(BusinessRuleException.class, () -> service.submit(CONTRACT, submitDto(), REQUESTER));
+        assertThrows(BusinessRuleException.class, () -> service.submit(CONTRACT, submitDto(), evaluationPdf(), null, REQUESTER));
 
         civp.setCurrentStatusCode("ACTIF");
         when(requestRepo.findByContractIdAndStatusIn(eq(CONTRACT), any()))
                 .thenReturn(List.of(CdiConversionRequest.builder().status(CdiConversionStatus.ESCALATED).build()));
-        BusinessRuleException e = assertThrows(BusinessRuleException.class, () -> service.submit(CONTRACT, submitDto(), REQUESTER));
+        BusinessRuleException e = assertThrows(BusinessRuleException.class, () -> service.submit(CONTRACT, submitDto(), evaluationPdf(), null, REQUESTER));
         assertTrue(e.getMessage().contains("déjà en cours"));
         verify(requestRepo, never()).save(any());
+        verify(documents, never()).upload(any(), any(), any(), any(), any(), any());   // no orphan file
+    }
+
+    // ── Evaluation file (V120) ────────────────────────────────────────────────
+
+    @Test
+    void submit_withoutTheEvaluationFile_isRefused_andNothingIsStored() throws Exception {
+        loginAs(REQUESTER, CdiConversionService.REQUEST);
+
+        BusinessRuleException e = assertThrows(BusinessRuleException.class,
+                () -> service.submit(CONTRACT, submitDto(), null, null, REQUESTER));
+        assertEquals("CDI-08", e.getRule());
+        assertThrows(BusinessRuleException.class, () -> service.submit(CONTRACT, submitDto(),
+                new MockMultipartFile("evaluation", "vide.pdf", "application/pdf", new byte[0]), null, REQUESTER));
+
+        verify(documents, never()).upload(any(), any(), any(), any(), any(), any());
+        verify(requestRepo, never()).save(any());
+    }
+
+    @Test
+    void submit_filesTheEvaluation_asAnEmployeeDocument_andLinksIt() throws Exception {
+        loginAs(REQUESTER, CdiConversionService.REQUEST);
+
+        CdiConversionDto dto = service.submit(CONTRACT, submitDto(), evaluationPdf(), null, REQUESTER);
+
+        verify(documents).upload(eq(77L), any(), eq(CdiConversionService.EVALUATION_DOC_TYPE), isNull(), anyString(), isNull());
+        ArgumentCaptor<CdiConversionRequest> saved = ArgumentCaptor.forClass(CdiConversionRequest.class);
+        verify(requestRepo, atLeastOnce()).save(saved.capture());
+        assertEquals(EVALUATION_DOC, saved.getValue().getEvaluationDocumentId());
+        assertEquals(EVALUATION_DOC, dto.evaluationDocumentId());
+        assertEquals("evaluation.pdf", dto.evaluationFileName());
+    }
+
+    @Test
+    void evaluationDownload_isOpenToTheValidator_andADeletedFileReadsAsNoFile() throws Exception {
+        CdiConversionRequest r = pending(CdiConversionStatus.SUBMITTED, null);
+        r.setEvaluationDocumentId(EVALUATION_DOC);
+        EmployeeDocumentService.DownloadPayload payload =
+                new EmployeeDocumentService.DownloadPayload(null, "evaluation.pdf", "application/pdf");
+        when(documents.download(77L, EVALUATION_DOC)).thenReturn(payload);
+
+        loginAs(VALIDATOR, CdiConversionService.VALIDATE);
+        assertSame(payload, service.evaluation(1L, VALIDATOR).orElseThrow());
+
+        when(documents.download(77L, EVALUATION_DOC)).thenThrow(new AppException(ErrorCode.NOT_FOUND, "Document supprimé"));
+        assertTrue(service.evaluation(1L, VALIDATOR).isEmpty());
+
+        loginAs(99L);   // no CDI permission at all
+        assertThrows(AppException.class, () -> service.evaluation(1L, 99L));
     }
 
     @Test
     void submit_forOneself_isForbidden() {
         loginAs(EMPLOYEE_USER, CdiConversionService.REQUEST);
-        assertThrows(AppException.class, () -> service.submit(CONTRACT, submitDto(), EMPLOYEE_USER));
+        assertThrows(AppException.class, () -> service.submit(CONTRACT, submitDto(), evaluationPdf(), null, EMPLOYEE_USER));
     }
 
     @Test
     void submit_outsideThePaysScope_isForbidden() {
         loginAs(REQUESTER, CdiConversionService.REQUEST);
         when(tenantService.getPaysScope()).thenReturn(new PaysScopeContext.Scope(false, Set.of(1L)));
-        assertThrows(AppException.class, () -> service.submit(CONTRACT, submitDto(), REQUESTER));
+        assertThrows(AppException.class, () -> service.submit(CONTRACT, submitDto(), evaluationPdf(), null, REQUESTER));
     }
 
     // ── Validator ─────────────────────────────────────────────────────────────

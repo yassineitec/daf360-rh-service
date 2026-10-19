@@ -62,7 +62,8 @@ public class EmployeeDocumentService {
             "ID_CARD", "PASSPORT", "RESIDENCE_PERMIT",
             "DIPLOMA", "CV", "MEDICAL_CERTIFICATE",
             "RIB", "CNSS", "TAX_FORM",
-            "PHOTO", "RESIGNATION", "DISCHARGE", "OTHER");
+            "PHOTO", "RESIGNATION", "DISCHARGE", "OTHER",
+            "EVALUATION_CIVP");
 
 
     private static final String USER_NAME_SQL =

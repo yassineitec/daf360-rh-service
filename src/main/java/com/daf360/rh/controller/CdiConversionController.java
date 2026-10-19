@@ -6,11 +6,18 @@ import com.daf360.rh.dto.lifecycle.SubmitCdiConversionRequest;
 import com.daf360.rh.lifecycle.CdiConversionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -25,13 +32,38 @@ public class CdiConversionController {
 
     private final CdiConversionService service;
 
-    /** Files a request on an active CIVP contract. */
-    @PostMapping("/api/hr/contracts/{contractId}/cdi-conversion")
+    /**
+     * Files a request on an active CIVP contract, WITH its evaluation file (V120).
+     *
+     * Multipart and atomic, unlike the leave justificatif's separate call: the file is
+     * mandatory here, so a request must never exist without it — and this endpoint has one
+     * client, the request modal. Parts: {@code request} (JSON) and {@code evaluation} (file).
+     */
+    @PostMapping(value = "/api/hr/contracts/{contractId}/cdi-conversion", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
     public CdiConversionDto submit(@PathVariable Long contractId,
-                                   @Valid @RequestBody SubmitCdiConversionRequest dto,
-                                   Authentication auth) {
-        return service.submit(contractId, dto, actorId(auth));
+                                   @Valid @RequestPart("request") SubmitCdiConversionRequest dto,
+                                   @RequestPart(value = "evaluation", required = false) MultipartFile evaluation,
+                                   Authentication auth) throws IOException {
+        return service.submit(contractId, dto, evaluation, auth, actorId(auth));
+    }
+
+    /**
+     * Streams the evaluation file, {@code inline} with an RFC 5987 filename like the other
+     * document downloads. 404 when nothing is attached or the document was deleted.
+     */
+    @GetMapping("/api/hr/cdi-conversions/{id}/evaluation")
+    public ResponseEntity<Resource> evaluation(@PathVariable Long id, Authentication auth) {
+        return service.evaluation(id, actorId(auth))
+                .map(payload -> {
+                    String encoded = URLEncoder.encode(payload.fileName(), StandardCharsets.UTF_8)
+                            .replace("+", "%20");
+                    return ResponseEntity.ok()
+                            .header(HttpHeaders.CONTENT_TYPE, payload.contentType())
+                            .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encoded)
+                            .body(payload.resource());
+                })
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     /** Latest request of a contract — 204 when there is none. */

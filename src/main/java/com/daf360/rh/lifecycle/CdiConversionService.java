@@ -3,6 +3,7 @@ package com.daf360.rh.lifecycle;
 import com.daf360.rh.domain.CdiConversionRequest;
 import com.daf360.rh.domain.CdiConversionStep;
 import com.daf360.rh.domain.EmployeeContract;
+import com.daf360.rh.domain.EmployeeDocument;
 import com.daf360.rh.domain.enums.CdiConversionStatus;
 import com.daf360.rh.dto.lifecycle.CdiConversionDecisionRequest;
 import com.daf360.rh.dto.lifecycle.CdiConversionDto;
@@ -17,9 +18,11 @@ import com.daf360.rh.notification.RoutingContext;
 import com.daf360.rh.repository.CdiConversionRequestRepository;
 import com.daf360.rh.repository.CdiConversionStepRepository;
 import com.daf360.rh.repository.EmployeeContractRepository;
+import com.daf360.rh.repository.EmployeeDocumentRepository;
 import com.daf360.rh.security.PaysScopeContext;
 import com.daf360.rh.security.TenantService;
 import com.daf360.rh.service.AuditService;
+import com.daf360.rh.service.EmployeeDocumentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,7 +31,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
@@ -51,6 +56,11 @@ import java.util.*;
  * <p>Four-eyes: nobody decides a request they filed, the arbiter is not the validator who
  * escalated, and nobody files or decides their own conversion. {@code app.cdi-conversion.four-eyes}
  * (default true) switches the first two off for a single-account test environment only.
+ *
+ * <p>Evaluation file (V120): a request is filed WITH the CIVP's evaluation, so the validator
+ * decides on evidence. It is an ordinary employee document of type {@link #EVALUATION_DOC_TYPE}
+ * — stored locally, mirrored to the employee's SharePoint folder, kept in the dossier after the
+ * request closes — linked by id, the same way a leave request links its justificatif (V110).
  */
 @Slf4j
 @Service
@@ -63,6 +73,9 @@ public class CdiConversionService {
     public static final String ARBITRATE = "RH_ARBITRATE_CDI_CONVERSION";
     public static final String HR        = "RH_MANAGE_LIFECYCLE";
     private static final String VIEW_CONTRACTS = "RH_VIEW_CONTRACTS";
+
+    /** The {@code document_types} code every evaluation file is filed under (V120). */
+    public static final String EVALUATION_DOC_TYPE = "EVALUATION_CIVP";
 
     private static final String ENTITY = "CDI_CONVERSION_REQUEST";
     private static final List<CdiConversionStatus> OPEN =
@@ -77,6 +90,8 @@ public class CdiConversionService {
     private final TenantService                  tenantService;
     private final AuditService                   auditService;
     private final JdbcTemplate                   jdbc;
+    private final EmployeeDocumentService        documents;
+    private final EmployeeDocumentRepository     documentRepo;
 
     /** Requester ≠ decider and validator ≠ arbiter. Off only for a single-account test base. */
     @Value("${app.cdi-conversion.four-eyes:true}")
@@ -84,7 +99,12 @@ public class CdiConversionService {
 
     // ── Submit ────────────────────────────────────────────────────────────────
 
-    public CdiConversionDto submit(Long contractId, SubmitCdiConversionRequest dto, Long actor) {
+    /**
+     * Files the request with its evaluation file. Every rule is checked BEFORE the file is
+     * stored, so a refused request leaves no orphan document in the dossier.
+     */
+    public CdiConversionDto submit(Long contractId, SubmitCdiConversionRequest dto, MultipartFile evaluation,
+                                   Authentication auth, Long actor) throws IOException {
         require(REQUEST);
         EmployeeContract contract = contractRepo.findById(contractId)
                 .orElseThrow(() -> new BusinessRuleException("CDI-01", "Contrat introuvable."));
@@ -108,6 +128,13 @@ public class CdiConversionService {
         if (contract.getDateDebut() != null && dto.getRequestedStartDate().isBefore(contract.getDateDebut())) {
             throw new BusinessRuleException("CDI-03", "La date de début du CDI ne peut pas précéder le début du CIVP.");
         }
+        if (evaluation == null || evaluation.isEmpty()) {
+            throw new BusinessRuleException("CDI-08", "Le fichier d'évaluation du CIVP est obligatoire.");
+        }
+
+        // Type, MIME (PDF / JPEG / PNG) and the 10 MB cap are enforced by the document service.
+        Long evaluationDocId = documents.upload(contract.getEmployeeProfile().getId(), evaluation,
+                EVALUATION_DOC_TYPE, null, "Évaluation — demande de passage en CDI", auth).getId();
 
         CdiConversionRequest req = requestRepo.save(CdiConversionRequest.builder()
                 .contractId(contractId)
@@ -118,6 +145,7 @@ public class CdiConversionService {
                 .requestedStartDate(dto.getRequestedStartDate())
                 .proposedNetSalary(scale(dto.getProposedNetSalary()))
                 .justification(dto.getJustification().trim())
+                .evaluationDocumentId(evaluationDocId)
                 .build());
         step(req, "SUBMIT", actor, req.getJustification(), req.getProposedNetSalary(), req.getRequestedStartDate());
         auditService.log(String.valueOf(actor), "CREATE", ENTITY, req.getId(), null,
@@ -246,6 +274,25 @@ public class CdiConversionService {
         return toDto(req, new Names());
     }
 
+    /**
+     * The evaluation file, for download — readable by whoever may read the request: the
+     * validator has to open the evaluation they are asked to decide on. Empty when nothing is
+     * attached (pre-V120) or the document was since deleted: "no file", never a 500.
+     */
+    @Transactional(readOnly = true)
+    public Optional<EmployeeDocumentService.DownloadPayload> evaluation(Long id, Long actor) {
+        get(id, actor);   // same permission, pays and requester checks as reading the request
+        CdiConversionRequest req = find(id);
+        if (req.getEvaluationDocumentId() == null) return Optional.empty();
+        try {
+            return Optional.of(documents.download(req.getEmployeeProfileId(), req.getEvaluationDocumentId()));
+        } catch (AppException e) {
+            log.info("CDI request {} points at evaluation document {}, which is gone: {}",
+                    id, req.getEvaluationDocumentId(), e.getMessage());
+            return Optional.empty();
+        }
+    }
+
     /** Latest request of a contract (profile contract card), empty when there is none. */
     @Transactional(readOnly = true)
     public Optional<CdiConversionDto> latestForContract(Long contractId) {
@@ -292,10 +339,16 @@ public class CdiConversionService {
                 .map(s -> new CdiConversionDto.Step(s.getId(), s.getAction(), s.getActorUserId(),
                         names.user(s.getActorUserId()), s.getComment(), s.getNetSalary(), s.getStartDate(), s.getCreatedAt()))
                 .toList();
+        // A soft-deleted document reads as "no file", like a pre-V120 request.
+        Optional<EmployeeDocument> evaluation = Optional.ofNullable(r.getEvaluationDocumentId())
+                .flatMap(documentRepo::findById)
+                .filter(d -> !Boolean.TRUE.equals(d.getIsDeleted()));
         return new CdiConversionDto(r.getId(), r.getContractId(), r.getEmployeeProfileId(),
                 names.employee(r.getEmployeeProfileId()), r.getPaysId(), r.getStatus().name(),
                 r.getRequestedBy(), names.user(r.getRequestedBy()), r.getCreatedAt(),
                 r.getRequestedStartDate(), r.getProposedNetSalary(), r.getJustification(),
+                evaluation.map(EmployeeDocument::getId).orElse(null),
+                evaluation.map(EmployeeDocument::getFileName).orElse(null),
                 r.getValidatedNetSalary(), r.getValidatedStartDate(),
                 r.getDecidedBy(), names.user(r.getDecidedBy()), r.getDecidedAt(),
                 r.getConvertedContractId(), r.getConvertedAt(),

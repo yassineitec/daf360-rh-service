@@ -23,6 +23,9 @@ public record CdiConversionDto(
         LocalDate requestedStartDate,
         BigDecimal proposedNetSalary,
         String justification,
+        /** Null when no file is attached (pre-V120 request) or it was since deleted. */
+        Long evaluationDocumentId,
+        String evaluationFileName,
         BigDecimal validatedNetSalary,
         LocalDate validatedStartDate,
         Long decidedBy,

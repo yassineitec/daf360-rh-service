@@ -60,6 +60,14 @@ public class CdiConversionRequest {
     @Column(name = "justification", nullable = false, length = 2000, columnDefinition = "nvarchar(2000)")
     private String justification;
 
+    /**
+     * The CIVP's evaluation file (V120), an {@code employee_documents} row of type
+     * EVALUATION_CIVP, required at submit. No FK: the document is soft-deleted, and a request
+     * whose file was removed must still render ("no file"). Null on requests filed before V120.
+     */
+    @Column(name = "evaluation_document_id")
+    private Long evaluationDocumentId;
+
     /** The salary retained by the decision (the validator / arbiter may change the proposal). */
     @Column(name = "validated_net_salary", precision = 14, scale = 3)
     private BigDecimal validatedNetSalary;

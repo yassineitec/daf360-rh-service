@@ -31,10 +31,8 @@ public final class DocumentFolderMapping {
     /** Unmapped types land here. Created on demand by the upload's mkdir -p. */
     public static final String DEFAULT_SUBFOLDER = "Administrative Documents";
 
-    // "Evaluations & Performance Reviews" is intentionally absent: no code in
-    // DOCUMENT_TYPES corresponds to an evaluation today. Add the constant and the entry
-    // together when a type for it exists.
     private static final String CONTRACTS = "Employment Contracts & Amendments";
+    private static final String EVALUATIONS = "Evaluations & Performance Reviews";
     private static final String IDENTITY  = "Identity Documents";
     private static final String LEAVES    = "Time Off & Leaves";
 
@@ -59,7 +57,10 @@ public final class DocumentFolderMapping {
             Map.entry("PHOTO",            IDENTITY),
 
             // A sick note is the justification for an absence, so it files with leave.
-            Map.entry("MEDICAL_CERTIFICATE", LEAVES));
+            Map.entry("MEDICAL_CERTIFICATE", LEAVES),
+
+            // The evaluation a CIVP → CDI request is filed with (V120).
+            Map.entry("EVALUATION_CIVP",  EVALUATIONS));
 
     private DocumentFolderMapping() {}
 
