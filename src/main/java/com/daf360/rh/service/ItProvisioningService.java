@@ -126,6 +126,9 @@ public class ItProvisioningService {
             assetsByProv.put(provId, assetRepo.findByProvisioningId(provId));
         }
 
+        Map<Long, String> completedByNames = loadUserNames(provs.stream()
+                .map(ItProvisioning::getCompletedBy).filter(Objects::nonNull).collect(Collectors.toSet()));
+
         return provs.stream()
                 .sorted(Comparator.comparing(p -> {
                     Candidate c = candidateMap.get(p.getCandidateId());
@@ -134,8 +137,20 @@ public class ItProvisioningService {
                             : OffsetDateTime.MIN;
                 }))
                 .map(p -> toListItem(p, candidateMap.get(p.getCandidateId()),
-                        assetsByProv.getOrDefault(p.getId(), List.of())))
+                        assetsByProv.getOrDefault(p.getId(), List.of()),
+                        completedByNames.get(p.getCompletedBy())))
                 .collect(Collectors.toList());
+    }
+
+    /** Users.fullName of whoever completed each file — shown by the history page. */
+    private Map<Long, String> loadUserNames(Set<Long> userIds) {
+        Map<Long, String> names = new HashMap<>();
+        if (userIds.isEmpty()) return names;
+        String placeholders = userIds.stream().map(id -> "?").collect(Collectors.joining(","));
+        jdbc.query("SELECT id, fullName FROM [dbo].[Users] WHERE id IN (" + placeholders + ")",
+                (org.springframework.jdbc.core.RowCallbackHandler) rs -> names.put(rs.getLong("id"), rs.getString("fullName")),
+                userIds.toArray());
+        return names;
     }
 
     public ProvisioningResponse getProvisioning(Long id) {
@@ -389,6 +404,11 @@ public class ItProvisioningService {
     }
 
     private ProvisioningListItem toListItem(ItProvisioning p, Candidate c, List<ItAsset> assets) {
+        return toListItem(p, c, assets, null);
+    }
+
+    private ProvisioningListItem toListItem(ItProvisioning p, Candidate c, List<ItAsset> assets,
+                                            String completedByName) {
         return ProvisioningListItem.builder()
                 .id(p.getId())
                 .candidateId(p.getCandidateId())
@@ -406,6 +426,10 @@ public class ItProvisioningService {
                 .licenseAutodesk(p.getLicenseAutodesk())
                 .licenseKaspersky(p.getLicenseKaspersky())
                 .licenseOther(p.getLicenseOther())
+                .adProfileType(p.getAdProfileType())
+                .completedAt(p.getCompletedAt())
+                .completedBy(p.getCompletedBy())
+                .completedByName(completedByName)
                 .createdAt(p.getCreatedAt())
                 .build();
     }
