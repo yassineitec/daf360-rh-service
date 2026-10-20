@@ -28,6 +28,9 @@ public class EmployeeProfileResponseDto {
      *  every row in prod — the field rendered blank on the detail page for all 158
      *  profiles. Kept under the name `matricule` so the frontend binding is unchanged. */
     private String matricule;
+    /** True when the caller holds HR_ADMIN_ROLES — the only permission allowed to set or
+     *  change the matricule (EmployeeProfileService.applyPayrollMatricule). */
+    private boolean canEditMatricule;
     private String fullName;   // Users.fullName
 
     // ── Contract ──────────────────────────────────────────────────────────

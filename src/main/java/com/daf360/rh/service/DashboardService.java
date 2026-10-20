@@ -28,13 +28,49 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class DashboardService {
 
-    /**
-     * The document types every profile must have on file. Same list and same
-     * "anything but REJECTED counts" rule as {@link #getMissingDocuments()}, so the
-     * dashboard's per-employee completeness bar and its missing-documents watchlist
-     * can never disagree.
+    /*
+     * The document types every profile must have on file are chosen by RH, per country
+     * (document_types.required_for_completion, V121) — DocumentTypeService#requiredCodes.
+     * Same list and same "on file = not deleted, not REJECTED" rule for the per-employee
+     * completeness bar and the missing-documents watchlist, so the two can never disagree.
      */
-    private static final List<String> REQUIRED_DOC_TYPES = List.of("CONTRACT", "ID_CARD", "RIB");
+
+    /**
+     * A second code that also fills a required slot. The onboarding wizard files the signed
+     * contract as {@code CONTRACT_SIGNED} ({@code OnboardingSideEffects.linkContractDocument}),
+     * so checking {@code CONTRACT} alone flagged every wizard-onboarded employee as missing
+     * their contract.
+     */
+    private static final Map<String, String> DOC_TYPE_ALIAS = Map.of("CONTRACT", "CONTRACT_SIGNED");
+
+    /** {@code 'CODE','ALIAS'} — the codes accepted for one required slot, as SQL literals.
+     *  Safe to inline: codes are constrained to {@code [A-Z0-9_]} by DocumentTypeService. */
+    private static String acceptedDocCodesSql(String docType) {
+        return "'" + docType + "','" + DOC_TYPE_ALIAS.getOrDefault(docType, docType) + "'";
+    }
+
+    /** Whether {@code onFile} (codes present in a dossier) fills the required slot {@code code}. */
+    private static boolean fills(java.util.Set<String> onFile, String code) {
+        return onFile.contains(code) || onFile.contains(DOC_TYPE_ALIAS.getOrDefault(code, code));
+    }
+
+    /**
+     * {@code (VALUES (pays, code, alias), …) AS req(pays_id, doc_type, alias_type)} — every
+     * country's required list, to JOIN on {@code ep.pays_id}. Null when nothing is required
+     * anywhere in scope (the caller then has nothing to report).
+     */
+    private String requirementsSql(Long scopedPaysId) {
+        List<Long> paysIds = scopedPaysId != null
+                ? List.of(scopedPaysId)
+                : jdbcTemplate.queryForList(
+                        "SELECT DISTINCT pays_id FROM [dbo].[employee_profiles] " +
+                        "WHERE deleted = 0 AND pays_id IS NOT NULL", Long.class);
+        String rows = paysIds.stream()
+                .flatMap(p -> documentTypeService.requiredCodes(p).stream()
+                        .map(code -> "(" + p + "," + acceptedDocCodesSql(code) + ")"))
+                .collect(Collectors.joining(","));
+        return rows.isEmpty() ? null : "(VALUES " + rows + ") AS req(pays_id, doc_type, alias_type) ";
+    }
 
     /**
      * L'EFFECTIF : les trois statuts qui veulent dire « cette personne fait partie de
@@ -60,7 +96,8 @@ public class DashboardService {
      * columns each step writes. Order matches the frontend's {@code STEPS}, so the
      * dashboard's per-section bars line up with what RH sees in the wizard.
      *
-     * <p>Documents are appended as a seventh section from {@link #REQUIRED_DOC_TYPES};
+     * <p>Documents are appended as a seventh section from the country's required list
+     * ({@code DocumentTypeService#requiredCodes});
      * they live in {@code employee_documents}, not on the profile row.
      *
      * <p>Deliberately <em>not</em> derived from the wizard's own validators: it has
@@ -89,6 +126,7 @@ public class DashboardService {
     private final CandidateRepository       candidateRepository;
     private final JdbcTemplate              jdbcTemplate;
     private final TenantService             tenantService;
+    private final com.daf360.rh.service.document.DocumentTypeService documentTypeService;
 
     /**
      * Le pays des cartes de /rh/accueil. Un admin multi-pays (mêmes permissions que
@@ -598,13 +636,20 @@ public class DashboardService {
                 .collect(Collectors.joining(" + ", "(", ") AS sec_" + section.key()));
     }
 
-    /** A 0/1 column telling whether the profile has a non-rejected doc of {@code docType}. */
-    private static String hasDocumentColumn(String docType, String alias) {
-        return "CASE WHEN EXISTS (SELECT 1 FROM [dbo].[employee_documents] ed " +
-               "                  WHERE ed.employee_profile_id = ep.id " +
-               "                    AND ed.document_type = '" + docType + "' " +
-               "                    AND ed.verification_status <> 'REJECTED') " +
-               "     THEN 1 ELSE 0 END AS " + alias;
+    /** Codes on file (not deleted, not REJECTED) per profile, in one query for the whole page. */
+    private Map<Long, java.util.Set<String>> documentsOnFile(List<Long> profileIds) {
+        Map<Long, java.util.Set<String>> onFile = new java.util.HashMap<>();
+        if (profileIds.isEmpty()) return onFile;
+        String in = profileIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+        jdbcTemplate.query(
+                "SELECT employee_profile_id, document_type FROM [dbo].[employee_documents] " +
+                "WHERE employee_profile_id IN (" + in + ") " +
+                "  AND is_deleted = 0 AND verification_status <> 'REJECTED'",
+                rs -> {
+                    onFile.computeIfAbsent(rs.getLong("employee_profile_id"), k -> new java.util.HashSet<>())
+                          .add(rs.getString("document_type"));
+                });
+        return onFile;
     }
 
     public List<NouvelEmployeDto> getNouveauxEmployes(int limit, Long requestedPaysId) {
@@ -617,9 +662,7 @@ public class DashboardService {
                      "       ep.onboarding_completed, " +
                      "       d.label_fr AS department_label, g.label_fr AS grade_label, " +
                      "       disc.label_fr AS discipline_label, p.french_label AS pays_label, " +
-                     REQUIRED_DOC_TYPES.stream()
-                             .map(t -> hasDocumentColumn(t, "has_" + t))
-                             .collect(Collectors.joining(", ", "", ", ")) +
+                     "       ep.pays_id, " +
                      ONBOARDING_SECTIONS.stream()
                              .map(DashboardService::sectionFilledColumn)
                              .collect(Collectors.joining(", ", "", " ")) +
@@ -641,16 +684,13 @@ public class DashboardService {
         params.add(Date.valueOf(threeMonthsAgo));
         if (paysId != null) params.add(paysId);
 
-        return jdbcTemplate.query(sql,
+        // Two passes: the profile rows, then one documents query for the whole page — the
+        // required list is per country now, so it can no longer be a fixed set of columns.
+        record Row(long pid, Long paysId, String fullName, Date hireDate, String dept, String grade,
+                   String gender, boolean onboardingCompleted, String paysLabel, String discipline,
+                   String contractType, List<OnboardingSectionDto> sections) {}
+        List<Row> rows = jdbcTemplate.query(sql,
                 (rs, rowNum) -> {
-                    long pid = rs.getLong("id");
-                    Date d   = rs.getDate("hire_date");
-
-                    List<String> missing = new ArrayList<>();
-                    for (String docType : REQUIRED_DOC_TYPES) {
-                        if (rs.getInt("has_" + docType) == 0) missing.add(docType);
-                    }
-
                     List<OnboardingSectionDto> sections = new ArrayList<>();
                     for (OnboardingSection section : ONBOARDING_SECTIONS) {
                         sections.add(new OnboardingSectionDto(
@@ -658,42 +698,58 @@ public class DashboardService {
                                 rs.getInt("sec_" + section.key()),
                                 section.columns().size()));
                     }
-                    // Documents last: they come from employee_documents, not the profile row.
-                    sections.add(new OnboardingSectionDto(
-                            DOCUMENTS_SECTION_KEY,
-                            REQUIRED_DOC_TYPES.size() - missing.size(),
-                            REQUIRED_DOC_TYPES.size()));
-
-                    return new NouvelEmployeDto(
-                            pid,
-                            rs.getString("fullName"),
-                            "/api/hr/profiles/" + pid + "/photo",
-                            d != null ? d.toLocalDate() : null,
-                            rs.getString("department_label"),
-                            rs.getString("grade_label"),
-                            rs.getString("gender"),
-                            rs.getBoolean("onboarding_completed"),
-                            rs.getString("pays_label"),
-                            rs.getString("discipline_label"),
-                            rs.getString("contract_type"),
-                            REQUIRED_DOC_TYPES.size() - missing.size(),
-                            REQUIRED_DOC_TYPES.size(),
-                            missing,
-                            sections);
+                    long paysRaw = rs.getLong("pays_id");
+                    return new Row(rs.getLong("id"), rs.wasNull() ? null : paysRaw,
+                            rs.getString("fullName"), rs.getDate("hire_date"),
+                            rs.getString("department_label"), rs.getString("grade_label"),
+                            rs.getString("gender"), rs.getBoolean("onboarding_completed"),
+                            rs.getString("pays_label"), rs.getString("discipline_label"),
+                            rs.getString("contract_type"), sections);
                 },
                 params.toArray());
+
+        Map<Long, java.util.Set<String>> onFile = documentsOnFile(rows.stream().map(Row::pid).toList());
+        return rows.stream().map(r -> {
+            List<String> required = documentTypeService.requiredCodes(r.paysId());
+            java.util.Set<String> present = onFile.getOrDefault(r.pid(), java.util.Set.of());
+            List<String> missing = required.stream().filter(c -> !fills(present, c)).toList();
+
+            List<OnboardingSectionDto> sections = new ArrayList<>(r.sections());
+            // Documents last: they come from employee_documents, not the profile row.
+            sections.add(new OnboardingSectionDto(
+                    DOCUMENTS_SECTION_KEY, required.size() - missing.size(), required.size()));
+
+            return new NouvelEmployeDto(
+                    r.pid(),
+                    r.fullName(),
+                    "/api/hr/profiles/" + r.pid() + "/photo",
+                    r.hireDate() != null ? r.hireDate().toLocalDate() : null,
+                    r.dept(),
+                    r.grade(),
+                    r.gender(),
+                    r.onboardingCompleted(),
+                    r.paysLabel(),
+                    r.discipline(),
+                    r.contractType(),
+                    required.size() - missing.size(),
+                    required.size(),
+                    missing,
+                    sections);
+        }).toList();
     }
 
     // ── /missing-documents ────────────────────────────────────────────────────
-    // Required doc types every active profile should have
+    // The required doc types of each profile's country (RH's choice, V121)
 
     public PreviewResponse<MissingDocumentDto> getMissingDocuments(Long requestedPaysId) {
         Long paysId = scopePaysId(requestedPaysId);
         Object[] params = paysId != null ? new Object[]{ paysId } : new Object[0];
+        String requirements = requirementsSql(paysId);
+        if (requirements == null) return new PreviewResponse<>(List.of(), 0L);
         String fromWhere =
                 "FROM [dbo].[employee_profiles] ep " +
                 "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
-                "CROSS JOIN (VALUES ('CONTRACT'),('ID_CARD'),('RIB')) AS req(doc_type) " +
+                "JOIN " + requirements + "ON req.pays_id = ep.pays_id " +
                 // Même ensemble que l'effectif : un contrat manquant ne cesse pas de
                 // manquer parce que la personne est partie en mission ce matin.
                 "WHERE ep.lifecycle_status IN " + IN_SERVICE_SQL + " " +
@@ -702,7 +758,10 @@ public class DashboardService {
                 "  AND NOT EXISTS ( " +
                 "    SELECT 1 FROM [dbo].[employee_documents] ed " +
                 "    WHERE ed.employee_profile_id = ep.id " +
-                "      AND ed.document_type = req.doc_type " +
+                "      AND ed.document_type IN (req.doc_type, req.alias_type) " +
+                // Soft-deleted (V77) rows stay in the table for the audit trail; they are
+                // not on file.
+                "      AND ed.is_deleted = 0 " +
                 "      AND ed.verification_status <> 'REJECTED' " +
                 "  ) ";
 
@@ -711,26 +770,32 @@ public class DashboardService {
                 "SELECT COUNT(DISTINCT ep.id) " + fromWhere, Long.class, params);
 
         // Flat rows ordered by urgency desc so most-urgent employees come first
-        record FlatRow(long pid, String fullName, String docType, int months) {}
+        record FlatRow(long pid, long paysId, String fullName, String docType, int months) {}
         List<FlatRow> rows = jdbcTemplate.query(
-                "SELECT ep.id AS profile_id, u.fullName, req.doc_type, " +
+                "SELECT ep.id AS profile_id, ep.pays_id, u.fullName, req.doc_type, " +
                 "       DATEDIFF(month, ep.hire_date, GETDATE()) AS months_since_hire " +
                 fromWhere +
                 "ORDER BY months_since_hire DESC, ep.id ASC",
                 (rs, rowNum) -> new FlatRow(
                         rs.getLong("profile_id"),
+                        rs.getLong("pays_id"),
                         rs.getString("fullName"),
                         rs.getString("doc_type"),
                         rs.getInt("months_since_hire")),
                 params);
 
-        // Group by employee, preserving urgency order; take first 5 employees
+        // Group by employee, preserving urgency order; take first 5 employees. Labels come
+        // from the country's own vocabulary: the list is configurable, so the card can no
+        // longer hold a code → label map of its own.
         LinkedHashMap<Long, MissingDocumentDto> grouped = new LinkedHashMap<>();
         for (FlatRow row : rows) {
-            grouped.computeIfAbsent(row.pid(), k -> {
+            MissingDocumentDto dto = grouped.computeIfAbsent(row.pid(), k -> {
                 String urgency = row.months() >= 3 ? "HIGH" : row.months() >= 1 ? "MEDIUM" : "LOW";
-                return new MissingDocumentDto(row.pid(), row.fullName(), new ArrayList<>(), urgency);
-            }).missingDocs().add(row.docType());
+                return new MissingDocumentDto(row.pid(), row.fullName(), new ArrayList<>(),
+                        new ArrayList<>(), urgency);
+            });
+            dto.missingDocs().add(row.docType());
+            dto.missingDocLabels().add(documentTypeService.labelFr(row.paysId(), row.docType()));
         }
 
         List<MissingDocumentDto> items = grouped.values().stream()

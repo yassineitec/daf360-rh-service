@@ -62,7 +62,8 @@ public class EmployeeDocumentService {
             "ID_CARD", "PASSPORT", "RESIDENCE_PERMIT",
             "DIPLOMA", "CV", "MEDICAL_CERTIFICATE",
             "RIB", "CNSS", "TAX_FORM",
-            "PHOTO", "RESIGNATION", "DISCHARGE", "OTHER");
+            "PHOTO", "RESIGNATION", "DISCHARGE", "OTHER",
+            "EVALUATION_CIVP");
 
 
     private static final String USER_NAME_SQL =
@@ -206,9 +207,20 @@ public class EmployeeDocumentService {
         String folder = remoteFolder(profile, documentType);
         if (folder == null) return List.of();
 
+        // Files the nightly sync already imported (V121) have a row too: pair them by name, the
+        // same way the {docId}_ prefix pairs the app's own uploads, so the tab shows one entry.
+        Map<String, Long> imported = new java.util.HashMap<>();
+        for (EmployeeDocument d : documentRepository
+                .findByEmployeeProfileIdAndDocumentTypeAndIsDeletedFalse(profileId,
+                        documentType.trim().toUpperCase(java.util.Locale.ROOT))) {
+            if ("SHAREPOINT".equals(d.getStorageProvider()) && d.getFileName() != null) {
+                imported.putIfAbsent(d.getFileName(), d.getId());
+            }
+        }
         return graphSharePointService.listFiles(folder).stream()
                 .map(f -> {
                     Long docId = parseDocIdPrefix(f.name());
+                    if (docId == null) docId = imported.get(f.name());
                     return new RemoteDocument(f.name(), f.lastModified(), f.sizeBytes(),
                             f.webUrl(), docId != null, docId);
                 })
@@ -430,10 +442,19 @@ public class EmployeeDocumentService {
         if (Boolean.TRUE.equals(doc.getIsDeleted())) {
             throw new AppException(ErrorCode.NOT_FOUND, "Document supprimé: id=" + docId);
         }
+        if ("SHAREPOINT".equals(doc.getStorageProvider())) {
+            // A row the nightly sync imported (SharePointDocumentSyncService, V121): the file
+            // only exists in SharePoint. Streamed through this app by its drive item id — never
+            // a redirect to webUrl, so the permission check stays ours. The id comes from the
+            // row, which was just checked to belong to this profile: never from the caller.
+            byte[] content = graphSharePointService.downloadItem(doc.getExternalId()).orElseThrow(() ->
+                    new AppException(ErrorCode.NOT_FOUND, "Fichier introuvable sur SharePoint"));
+            String name = doc.getFileName() != null && !doc.getFileName().isBlank()
+                    ? doc.getFileName() : "document-" + doc.getId();
+            return new DownloadPayload(new org.springframework.core.io.ByteArrayResource(content),
+                    name, contentTypeFor(name));
+        }
         if (!"LOCAL".equals(doc.getStorageProvider())) {
-            // Reserved for the SharePoint seam: there the controller should redirect to the
-            // Graph webUrl rather than stream. Refusing loudly beats streaming a path that
-            // does not exist on this disk.
             throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
                     "Stockage non pris en charge pour le téléchargement direct: "
                             + doc.getStorageProvider());

@@ -265,7 +265,7 @@ public class EmployeeProfileService {
         if (dto.getSalaireNetCandidat() != null) profile.setSalaireNetCandidat(dto.getSalaireNetCandidat());
         if (dto.getSalaireNetRh()       != null) profile.setSalaireNetRh(dto.getSalaireNetRh());
 
-        applyPayrollMatricule(profile, dto.getPayrollMatricule());
+        applyPayrollMatricule(profile, dto.getPayrollMatricule(), auth);
 
         profile.setUpdatedAt(OffsetDateTime.now(PARIS));
         EmployeeProfile saved = profileRepository.save(profile);
@@ -1355,23 +1355,24 @@ public class EmployeeProfileService {
     // reports WHY it failed instead of returning a bare null.
 
     /**
-     * Records the matricule transmitted by the accounting firm — write-once.
+     * Records the matricule transmitted by the accounting firm — HR_ADMIN_ROLES only.
      *
-     * <p>The field stays editable while empty and locks as soon as it holds a value: it is
-     * the key PayslipBatchService matches the monthly payroll PDF against, so changing it
-     * afterwards would detach the employee from their payslips. Re-sending the stored
-     * value is a no-op (the edit form echoes it back), anything else is refused.
-     * Uniqueness is per pays, like the external payroll register itself.
+     * <p>It is the key PayslipBatchService matches the monthly payroll PDF against, so a
+     * wrong value detaches the employee from their payslips: setting or correcting it is
+     * reserved to HR_ADMIN_ROLES holders, HR_UPDATE_PROFILE alone is not enough.
+     * Re-sending the stored value is a no-op (the edit form echoes it back), so other
+     * roles can still save the rest of the profile. Uniqueness is per pays, like the
+     * external payroll register itself.
      */
-    private void applyPayrollMatricule(EmployeeProfile profile, String requested) {
+    private void applyPayrollMatricule(EmployeeProfile profile, String requested, Authentication auth) {
         if (requested == null || requested.isBlank()) return;
         String value = requested.trim();
 
         String current = profile.getPayrollMatricule();
-        if (current != null && !current.isBlank()) {
-            if (current.equals(value)) return;
-            throw new AppException(com.daf360.rh.exception.ErrorCode.PAYROLL_MATRICULE_LOCKED,
-                    "Le matricule " + current + " est déjà renseigné et ne peut plus être modifié");
+        if (value.equals(current)) return;
+        if (!canEditMatricule(auth)) {
+            throw new AppException(com.daf360.rh.exception.ErrorCode.PAYROLL_MATRICULE_ADMIN_ONLY,
+                    "Vous n'avez pas la permission de saisir ou modifier le matricule");
         }
 
         profileRepository.findByPaysIdAndPayrollMatricule(profile.getPaysId(), value)
@@ -1382,7 +1383,17 @@ public class EmployeeProfileService {
                 });
 
         profile.setPayrollMatricule(value);
-        log.info("Payroll matricule={} set on profileId={}", value, profile.getId());
+        log.info("Payroll matricule {} -> {} on profileId={} by userId={}",
+                current, value, profile.getId(), auth != null ? auth.getName() : null);
+    }
+
+    /** Permission that unlocks the payroll matricule (granted to Administrateur and PDG today). */
+    private static final String MATRICULE_EDIT_PERMISSION = "HR_ADMIN_ROLES";
+
+    private boolean canEditMatricule(Authentication auth) {
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> MATRICULE_EDIT_PERMISSION.equals(a.getAuthority()));
     }
 
     private EmployeeProfile findOrThrow(Long id) {
@@ -1401,6 +1412,7 @@ public class EmployeeProfileService {
         // miss was swallowed — and since that column is NULL for every profile in prod,
         // the detail page rendered a blank Matricule for all 158 of them, silently.
         dto.setMatricule(profile.getPayrollMatricule());
+        dto.setCanEditMatricule(canEditMatricule(auth));
         // The column holds the list row id; the API keeps exposing the code (CDI…) next to it.
         contractTypeRefs.find(profile.getContractTypeId(), profile.getPaysId()).ifPresentOrElse(v -> {
             dto.setContractType(v.getValueCode());

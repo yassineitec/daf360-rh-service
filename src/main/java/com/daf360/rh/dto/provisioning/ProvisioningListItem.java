@@ -33,5 +33,11 @@ public class ProvisioningListItem {
     private Boolean licenseKaspersky;
     private String licenseOther;
 
+    // Historique : profil AD choisi et clôture du dossier
+    private String adProfileType;
+    private OffsetDateTime completedAt;
+    private Long completedBy;
+    private String completedByName;
+
     private OffsetDateTime createdAt;
 }
