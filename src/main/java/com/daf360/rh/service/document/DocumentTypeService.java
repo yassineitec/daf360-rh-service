@@ -86,6 +86,84 @@ public class DocumentTypeService {
      *  than up to {@link #CACHE_TTL} later. */
     public void evictAll() {
         cache.clear();
+        requiredCache.clear();
+    }
+
+    // ── Required for a complete dossier (V121) ───────────────────────────────
+
+    /**
+     * The rule before V121, and the answer for a country RH has not configured: a contract,
+     * an ID card and a RIB.
+     */
+    public static final List<String> DEFAULT_REQUIRED = List.of("CONTRACT", "ID_CARD", "RIB");
+
+    private record RequiredEntry(List<String> codes, Instant loadedAt) {}
+    private final Map<Long, RequiredEntry> requiredCache = new ConcurrentHashMap<>();
+
+    /**
+     * The document types that make this country's dossiers complete, in display order — chosen
+     * by RH in Administration › SharePoint. Drives the « Documents manquants » card, the
+     * per-employee documents bar and the nightly SharePoint sync. Never throws, never null.
+     *
+     * <ul>
+     *   <li>V121 not applied, or a country without any {@code document_types} row →
+     *       {@link #DEFAULT_REQUIRED}, so a server is never left with "nothing is required"
+     *       by accident;</li>
+     *   <li>a configured country where RH flagged nothing → empty: that is a choice.</li>
+     * </ul>
+     */
+    public List<String> requiredCodes(Long paysId) {
+        if (paysId == null) return DEFAULT_REQUIRED;
+        RequiredEntry hit = requiredCache.get(paysId);
+        if (hit != null && Duration.between(hit.loadedAt(), Instant.now()).compareTo(CACHE_TTL) < 0) {
+            return hit.codes();
+        }
+        List<String> loaded = loadRequired(paysId);
+        requiredCache.put(paysId, new RequiredEntry(loaded, Instant.now()));
+        return loaded;
+    }
+
+    private List<String> loadRequired(Long paysId) {
+        try {
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                    "SELECT code, required_for_completion FROM [dbo].[document_types] " +
+                    "WHERE pays_id = ? AND is_active = 1 ORDER BY sort_order, code", paysId);
+            if (rows.isEmpty()) return DEFAULT_REQUIRED;
+            return rows.stream()
+                    .filter(r -> Boolean.TRUE.equals(r.get("required_for_completion")))
+                    .map(r -> (String) r.get("code"))
+                    .toList();
+        } catch (Exception e) {
+            log.debug("required_for_completion illisible ({}) — V121 non appliquee, regle par defaut",
+                    e.getMessage());
+            return DEFAULT_REQUIRED;
+        }
+    }
+
+    /** French label of a code for this country, or the code itself. */
+    public String labelFr(Long paysId, String code) {
+        return forPays(paysId).stream()
+                .filter(t -> t.code().equals(code))
+                .map(DocumentType::labelFr)
+                .findFirst()
+                .orElse(code);
+    }
+
+    /**
+     * Marks one type required (or not) for a complete dossier. Separate from {@link #save} so the
+     * admin checklist can toggle a type without resending its labels.
+     *
+     * @return false when the row does not exist for this country (nothing updated)
+     */
+    public boolean setRequired(Long paysId, String rawCode, boolean required, Long actorId) {
+        String code = rawCode == null ? "" : rawCode.trim().toUpperCase(Locale.ROOT);
+        int updated = jdbc.update(
+                "UPDATE [dbo].[document_types] SET required_for_completion = ?, " +
+                "updated_at = SYSDATETIMEOFFSET(), updated_by = ? WHERE pays_id = ? AND code = ?",
+                required, actorId, paysId, code);
+        evictAll();
+        log.info("Type de document {} / pays {} : requis={} (utilisateur {})", code, paysId, required, actorId);
+        return updated > 0;
     }
 
     // ── Administration ────────────────────────────────────────────────────────
@@ -99,19 +177,33 @@ public class DocumentTypeService {
      * — editing a row that does not exist would silently create one.
      */
     public List<AdminRow> listForAdmin(Long paysId) {
-        return jdbc.query(
-                "SELECT id, code, label_fr, label_en, is_active, sort_order " +
-                "FROM [dbo].[document_types] WHERE pays_id = ? ORDER BY sort_order, code",
-                (rs, i) -> new AdminRow(
-                        rs.getLong("id"), rs.getString("code"),
-                        rs.getString("label_fr"), rs.getString("label_en"),
-                        rs.getBoolean("is_active"), rs.getInt("sort_order")),
-                paysId);
+        try {
+            return jdbc.query(
+                    "SELECT id, code, label_fr, label_en, is_active, sort_order, required_for_completion " +
+                    "FROM [dbo].[document_types] WHERE pays_id = ? ORDER BY sort_order, code",
+                    (rs, i) -> new AdminRow(
+                            rs.getLong("id"), rs.getString("code"),
+                            rs.getString("label_fr"), rs.getString("label_en"),
+                            rs.getBoolean("is_active"), rs.getInt("sort_order"),
+                            rs.getBoolean("required_for_completion")),
+                    paysId);
+        } catch (org.springframework.jdbc.BadSqlGrammarException beforeV121) {
+            // Column absent: list the types, none flagged — the screen still works and the
+            // checklist simply cannot be saved until V121 is applied.
+            return jdbc.query(
+                    "SELECT id, code, label_fr, label_en, is_active, sort_order " +
+                    "FROM [dbo].[document_types] WHERE pays_id = ? ORDER BY sort_order, code",
+                    (rs, i) -> new AdminRow(
+                            rs.getLong("id"), rs.getString("code"),
+                            rs.getString("label_fr"), rs.getString("label_en"),
+                            rs.getBoolean("is_active"), rs.getInt("sort_order"), false),
+                    paysId);
+        }
     }
 
     /** One row as the admin screen sees it, including deactivated ones. */
     public record AdminRow(Long id, String code, String labelFr, String labelEn,
-                           boolean active, int sortOrder) {}
+                           boolean active, int sortOrder, boolean requiredForCompletion) {}
 
     /**
      * Creates or updates one type for one country.
