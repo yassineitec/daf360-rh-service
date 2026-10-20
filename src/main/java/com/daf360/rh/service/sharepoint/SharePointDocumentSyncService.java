@@ -70,6 +70,13 @@ public class SharePointDocumentSyncService {
      *  as complete, and nothing is removed from it. */
     private static final int MAX_FILES_PER_FOLDER = 500;
 
+    /**
+     * The type folder plus two levels below it ("Identity Documents/CIN/2024/…"): files were
+     * first read at the top level only, so anything HR filed in a subfolder was missed. Each
+     * level costs one Graph call per subfolder.
+     */
+    private static final int MAX_DEPTH = 3;
+
     private static final String IN_SERVICE_SQL = "('ACTIVE','ON_LEAVE','ON_MISSION')";
 
     @Value("${app.sharepoint.document-sync-enabled:true}")
@@ -252,6 +259,11 @@ public class SharePointDocumentSyncService {
             }
             if (report.profilesFailed > 0) {
                 report.lastError = report.profilesFailed + " dossier(s) en échec — dernier : " + lastFailure;
+            } else if (report.profilesTotal > 0 && report.foldersListed == 0) {
+                // Not a success: nothing was read. Almost always no SharePoint path configured
+                // for the required documents (Administration › SharePoint › Chemins par pays).
+                report.lastError = "Aucun dossier SharePoint n'a été lu : vérifiez qu'un chemin est configuré "
+                        + "pour chaque document requis (onglet « Documents requis », colonne dossier).";
             }
             log.info("Synchro documents SharePoint terminee : {}", report);
             return report;
@@ -300,6 +312,16 @@ public class SharePointDocumentSyncService {
             if (d.getExternalId() != null) byExternalId.put(d.getExternalId(), d);
         }
 
+        // Every folder configured for ANY type of this country (required or not). A type folder is
+        // walked into its subfolders — HR files scans as "Identity Documents/CIN/…" — but a
+        // subfolder that is itself another type's folder belongs to that type, not this one.
+        List<String> configuredFolders = new ArrayList<>();
+        for (DocumentTypeService.DocumentType t : documentTypeService.forPays(paysId)) {
+            locationService.templateForCode(paysId, t.code()).ifPresent(template -> configuredFolders.add(
+                    template.replace(SharePointPaths.EMPLOYEE_FOLDER_TOKEN, folder.employeeFolder())
+                            .toLowerCase(Locale.ROOT)));
+        }
+
         Set<String> listedTypes = new HashSet<>();   // types whose folder was answered in full
         Set<String> seenIds     = new HashSet<>();
 
@@ -311,7 +333,8 @@ public class SharePointDocumentSyncService {
                 continue;
             }
             String code = entry.getValue().get(0);
-            var listing = graph.listTree(pathByKey.get(entry.getKey()), 1, MAX_FILES_PER_FOLDER);
+            String root = entry.getKey();                       // lower-cased configured path
+            var listing = graph.listTree(pathByKey.get(root), MAX_DEPTH, MAX_FILES_PER_FOLDER);
             if (listing.isEmpty()) {
                 report.foldersUnreadable++;
                 continue;
@@ -321,9 +344,11 @@ public class SharePointDocumentSyncService {
             if (files.size() < MAX_FILES_PER_FOLDER) listedTypes.add(code);
 
             for (GraphSharePointService.TreeFile file : files) {
-                // listTree with depth 1 still reports files of the folder itself only.
-                if (file.folderPath() != null && !file.folderPath().isEmpty()) continue;
                 if (file.id() == null) continue;
+                if (insideOtherTypeFolder(root, file.folderPath(), configuredFolders)) continue;
+                // "Identity Documents" also holds the profile photo (the app mirrors it there as
+                // Photo.jpg). Imported as ID_CARD it would mark every CIN as on file.
+                if (isPortrait(file.name())) continue;
                 seenIds.add(file.id());
                 if (isFiledByApp(file.name(), ownIds)) continue;
 
@@ -356,6 +381,34 @@ public class SharePointDocumentSyncService {
             documentRepository.save(d);
             report.removed++;
         }
+    }
+
+    /**
+     * A file that declares itself a portrait: an image named "photo…"/"portrait…" — the same
+     * signal {@code EmployeeProfileService} trusts for the avatar, so the two never disagree on
+     * what the profile photo is.
+     */
+    private static boolean isPortrait(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        boolean image = lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+                     || lower.endsWith(".png") || lower.endsWith(".webp");
+        return image && (lower.startsWith("photo") || lower.startsWith("portrait"));
+    }
+
+    /**
+     * Whether a file found under {@code root} (at {@code relativeFolder}) sits in — or under —
+     * a folder configured for ANOTHER type, nested inside this one. Compared on the configured
+     * spelling, lower-cased; SharePoint is case-insensitive.
+     */
+    private static boolean insideOtherTypeFolder(String root, String relativeFolder, List<String> configured) {
+        if (relativeFolder == null || relativeFolder.isEmpty()) return false;
+        String folder = (root + "/" + relativeFolder).toLowerCase(Locale.ROOT);
+        for (String other : configured) {
+            if (other.equals(root) || !other.startsWith(root + "/")) continue;
+            if (folder.equals(other) || folder.startsWith(other + "/")) return true;
+        }
+        return false;
     }
 
     private EmployeeDocument newRow(long profileId, String code, GraphSharePointService.TreeFile file) {

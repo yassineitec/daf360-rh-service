@@ -203,7 +203,7 @@ public class SharePointAdminController {
      */
     /** Live state of the run in flight — what the progress bar shows. */
     public record SyncProgressDto(int total, int done, String current, OffsetDateTime startedAt,
-                                  int imported, int restored, int removed,
+                                  int imported, int restored, int removed, int foldersListed,
                                   int foldersUnreadable, int foldersAmbiguous, int failed) {}
 
     /**
@@ -221,7 +221,7 @@ public class SharePointAdminController {
         var live = documentSync.liveProgress();
         SyncProgressDto progress = live == null ? null : new SyncProgressDto(
                 live.profilesTotal, live.profilesScanned, live.current, live.startedAt,
-                live.imported, live.restored, live.removed,
+                live.imported, live.restored, live.removed, live.foldersListed,
                 live.foldersUnreadable, live.foldersAmbiguous, live.profilesFailed);
         return ResponseEntity.ok(new DocumentSyncStatusDto(documentSync.isRunning(), progress, documentSync.lastRun()));
     }
@@ -240,15 +240,22 @@ public class SharePointAdminController {
 
     @PutMapping("/document-types/required")
     @PreAuthorize(ADMIN)
-    public ResponseEntity<Void> setRequired(@jakarta.validation.Valid @RequestBody SetRequiredRequest req,
+    public ResponseEntity<?> setRequired(@jakarta.validation.Valid @RequestBody SetRequiredRequest req,
                                             Authentication auth) {
         try {
             return documentTypeService.setRequired(req.getPaysId(), req.getCode(), req.getRequired(), actorId(auth))
                     ? ResponseEntity.noContent().build()
                     : ResponseEntity.notFound().build();
-        } catch (org.springframework.dao.DataAccessException beforeV121) {
-            // Column (V121) or table (V87) absent — same reason as listForAdmin's broad catch.
-            return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT).build();
+        } catch (org.springframework.dao.DataAccessException dbError) {
+            // Usually V121 (or V87) absent from THIS database — but say what the database said
+            // rather than assume it: "V121 not applied" on a server where it is sends people
+            // re-running a script that already succeeded.
+            String cause = dbError.getMostSpecificCause().getMessage();
+            org.slf4j.LoggerFactory.getLogger(SharePointAdminController.class)
+                    .warn("Enregistrement de required_for_completion impossible ({} / {}) : {}",
+                          req.getPaysId(), req.getCode(), cause);
+            return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT)
+                    .body(java.util.Map.of("message", cause == null ? "" : cause));
         }
     }
 
