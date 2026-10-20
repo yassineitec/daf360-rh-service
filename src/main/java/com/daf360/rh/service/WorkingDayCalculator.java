@@ -189,7 +189,8 @@ public class WorkingDayCalculator {
     }
 
     /** Public holidays for that country inside the range, as dates. */
-    private Set<LocalDate> holidaysBetween(Long paysId, LocalDate from, LocalDate to) {
+    /** Public so the internal working-calendar endpoint answers with the exact same days. */
+    public Set<LocalDate> holidaysBetween(Long paysId, LocalDate from, LocalDate to) {
         if (paysId == null) {
             return Set.of();
         }
