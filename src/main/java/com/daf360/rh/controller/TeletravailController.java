@@ -3,6 +3,8 @@ package com.daf360.rh.controller;
 import com.daf360.rh.domain.Teletravail;
 import com.daf360.rh.domain.enums.DemandeEtat;
 import com.daf360.rh.dto.leave.LeaveWithdrawRequest;
+import com.daf360.rh.export.XlsxExport;
+import org.springframework.http.ResponseEntity;
 import com.daf360.rh.dto.teletravail.TeletravailCreate;
 import com.daf360.rh.dto.teletravail.TeletravailDecision;
 import com.daf360.rh.dto.teletravail.TeletravailDto;
@@ -178,6 +180,30 @@ public class TeletravailController {
                                       @RequestParam(required = false) String dir,
                                       @RequestParam(defaultValue = "fr") String lang) {
         return envelope(service.global(etat, from, to, PageRequest.of(page, size, sortOf(sort, dir))), lang);
+    }
+
+    /** The global list as an Excel file — same filters and scope, unpaged up to MAX_ROWS. */
+    @GetMapping("/global/export")
+    @PreAuthorize("hasAuthority('GET_GLOBAL_LEAVES')")
+    public ResponseEntity<byte[]> exportGlobal(@RequestParam(required = false) DemandeEtat etat,
+                                               @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                               @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+                                               @RequestParam(required = false) String sort,
+                                               @RequestParam(required = false) String dir,
+                                               @RequestParam(defaultValue = "fr") String lang) {
+        List<TeletravailDto> rows = mapper.toDtos(service.global(etat, from, to,
+                PageRequest.of(0, XlsxExport.MAX_ROWS, sortOf(sort, dir))).getContent(), lang);
+        boolean fr = !"en".equalsIgnoreCase(lang);
+        return XlsxExport.response("teletravail.xlsx", fr ? "Télétravail" : "Remote work",
+                fr ? List.of("Collaborateur", "Date", "Durée", "Jours", "État", "Responsable",
+                             "Décidé le", "Décidé par", "Motif", "Motif de refus", "Motif d'annulation", "Saisi par")
+                   : List.of("Employee", "Date", "Duration", "Days", "State", "Manager",
+                             "Decided on", "Decided by", "Reason", "Rejection reason", "Cancellation reason", "Filed by"),
+                rows.stream().map(d -> java.util.Arrays.<Object>asList(
+                        d.getCollaborateurNom(), d.getDateTeletravail(), d.getCategoryLabel(), d.getJours(),
+                        XlsxExport.stateLabel(d.getEtatDemande(), lang), d.getResponsableNom(),
+                        d.getDateValidation(), d.getDecidedByNom(), d.getReason(), d.getMotifRefus(),
+                        d.getMotifAnnulation(), d.getCreatedByNom())).toList());
     }
 
     @GetMapping("/counts")

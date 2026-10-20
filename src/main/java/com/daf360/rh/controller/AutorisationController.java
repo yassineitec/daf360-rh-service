@@ -8,6 +8,8 @@ import com.daf360.rh.dto.autorisation.AutorisationDto;
 import com.daf360.rh.dto.autorisation.AutorisationQuotaDto;
 import com.daf360.rh.dto.autorisation.AutorisationRulesDto;
 import com.daf360.rh.dto.leave.LeaveWithdrawRequest;
+import com.daf360.rh.export.XlsxExport;
+import org.springframework.http.ResponseEntity;
 import com.daf360.rh.mapper.AutorisationMapper;
 import com.daf360.rh.service.AutorisationRulesAdminService;
 import com.daf360.rh.service.AutorisationService;
@@ -178,6 +180,30 @@ public class AutorisationController {
                                       @RequestParam(defaultValue = "fr") String lang) {
         return envelope(service.global(etat, from, to,
                 PageRequest.of(page, size, sortOf(sort, dir))), lang);
+    }
+
+    /** The global list as an Excel file — same filters and scope, unpaged up to MAX_ROWS. */
+    @GetMapping("/global/export")
+    @PreAuthorize("hasAuthority('GET_GLOBAL_LEAVES')")
+    public ResponseEntity<byte[]> exportGlobal(@RequestParam(required = false) DemandeEtat etat,
+                                               @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                               @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+                                               @RequestParam(required = false) String sort,
+                                               @RequestParam(required = false) String dir,
+                                               @RequestParam(defaultValue = "fr") String lang) {
+        List<AutorisationDto> rows = mapper.toDtos(service.global(etat, from, to,
+                PageRequest.of(0, XlsxExport.MAX_ROWS, sortOf(sort, dir))).getContent(), lang);
+        boolean fr = !"en".equalsIgnoreCase(lang);
+        return XlsxExport.response("autorisations.xlsx", fr ? "Autorisations" : "Short absences",
+                fr ? List.of("Collaborateur", "Date", "Début", "Fin", "Durée (min)", "État", "Responsable",
+                             "Décidé le", "Décidé par", "Motif", "Motif de refus", "Motif d'annulation", "Saisi par")
+                   : List.of("Employee", "Date", "Start", "End", "Duration (min)", "State", "Manager",
+                             "Decided on", "Decided by", "Reason", "Rejection reason", "Cancellation reason", "Filed by"),
+                rows.stream().map(d -> java.util.Arrays.<Object>asList(
+                        d.getCollaborateurNom(), d.getDateAutorisation(), d.getStartTime(), d.getEndTime(),
+                        d.getDureeMinutes(), XlsxExport.stateLabel(d.getEtatDemande(), lang), d.getResponsableNom(),
+                        d.getDateValidation(), d.getDecidedByNom(), d.getReason(), d.getMotifRefus(),
+                        d.getMotifAnnulation(), d.getCreatedByNom())).toList());
     }
 
     /** KPI counts for whichever queue is open. */
