@@ -187,9 +187,16 @@ public class DocumentTypeService {
                             rs.getBoolean("is_active"), rs.getInt("sort_order"),
                             rs.getBoolean("required_for_completion")),
                     paysId);
-        } catch (org.springframework.jdbc.BadSqlGrammarException beforeV121) {
-            // Column absent: list the types, none flagged — the screen still works and the
-            // checklist simply cannot be saved until V121 is applied.
+        } catch (org.springframework.dao.DataAccessException withFlag) {
+            // Any DataAccessException, not only BadSqlGrammarException: how SQL Server's
+            // "Invalid column/object name" is translated depends on the driver's error-code
+            // mapping, and a 500 here blanks the whole admin tab.
+            log.warn("document_types illisible avec required_for_completion (V121 appliquee ?) : {}",
+                    withFlag.getMostSpecificCause().getMessage());
+        }
+        try {
+            // Before V121: the types without the flag — the screen works, the checklist cannot
+            // be saved until V121 is applied (setRequired answers 409).
             return jdbc.query(
                     "SELECT id, code, label_fr, label_en, is_active, sort_order " +
                     "FROM [dbo].[document_types] WHERE pays_id = ? ORDER BY sort_order, code",
@@ -198,6 +205,11 @@ public class DocumentTypeService {
                             rs.getString("label_fr"), rs.getString("label_en"),
                             rs.getBoolean("is_active"), rs.getInt("sort_order"), false),
                     paysId);
+        } catch (org.springframework.dao.DataAccessException noTable) {
+            // Before V87: there is no table at all; uploads run on the Java fallback list.
+            log.warn("dbo.document_types illisible (V87 appliquee ?) : {}",
+                    noTable.getMostSpecificCause().getMessage());
+            return List.of();
         }
     }
 

@@ -201,15 +201,29 @@ public class SharePointAdminController {
      * « Documents manquants » card, the documents bar and the nightly SharePoint sync.
      * 404 when the type has no row for this country (or V121 is not applied).
      */
-    /** @param lastRun null before the first run (or without V121) */
-    public record DocumentSyncStatusDto(boolean running,
+    /** Live state of the run in flight — what the progress bar shows. */
+    public record SyncProgressDto(int total, int done, String current, OffsetDateTime startedAt,
+                                  int imported, int restored, int removed,
+                                  int foldersUnreadable, int foldersAmbiguous, int failed) {}
+
+    /**
+     * @param progress null when no run is going
+     * @param lastRun  null before the first run (or without V121); its {@code outcome} is the
+     *                 answer to "did it work?"
+     */
+    public record DocumentSyncStatusDto(boolean running, SyncProgressDto progress,
             com.daf360.rh.service.sharepoint.SharePointDocumentSyncService.RunDto lastRun) {}
 
     /** State of the SharePoint → dossier sync: polled by the screen while a run is going. */
     @GetMapping("/document-sync")
     @PreAuthorize(ADMIN)
     public ResponseEntity<DocumentSyncStatusDto> documentSyncStatus() {
-        return ResponseEntity.ok(new DocumentSyncStatusDto(documentSync.isRunning(), documentSync.lastRun()));
+        var live = documentSync.liveProgress();
+        SyncProgressDto progress = live == null ? null : new SyncProgressDto(
+                live.profilesTotal, live.profilesScanned, live.current, live.startedAt,
+                live.imported, live.restored, live.removed,
+                live.foldersUnreadable, live.foldersAmbiguous, live.profilesFailed);
+        return ResponseEntity.ok(new DocumentSyncStatusDto(documentSync.isRunning(), progress, documentSync.lastRun()));
     }
 
     /**
@@ -232,7 +246,8 @@ public class SharePointAdminController {
             return documentTypeService.setRequired(req.getPaysId(), req.getCode(), req.getRequired(), actorId(auth))
                     ? ResponseEntity.noContent().build()
                     : ResponseEntity.notFound().build();
-        } catch (org.springframework.jdbc.BadSqlGrammarException beforeV121) {
+        } catch (org.springframework.dao.DataAccessException beforeV121) {
+            // Column (V121) or table (V87) absent — same reason as listForAdmin's broad catch.
             return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT).build();
         }
     }

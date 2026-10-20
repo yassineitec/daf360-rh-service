@@ -84,17 +84,43 @@ public class SharePointDocumentSyncService {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
-    /** Counts for one run, persisted in {@code sharepoint_document_sync_runs}. */
+    /**
+     * Counts for one run, persisted in {@code sharepoint_document_sync_runs}. Also the LIVE
+     * progress of the run in flight: the worker writes it, the status endpoint reads it from
+     * another thread — hence volatile (a slightly stale number is fine, a never-visible one
+     * is not).
+     */
     public static final class Report {
-        public int profilesScanned, foldersListed, foldersUnreadable, foldersAmbiguous;
-        public int imported, restored, removed;
-        public String lastError;
+        public volatile int profilesScanned, foldersListed, foldersUnreadable, foldersAmbiguous;
+        public volatile int imported, restored, removed;
+        /** Employees whose pass threw — the run goes on without them. */
+        public volatile int profilesFailed;
+        /** Employees in scope, known once the list is loaded (0 before). */
+        public volatile int profilesTotal;
+        /** Who is being processed right now — shown under the progress bar. */
+        public volatile String current;
+        public volatile String lastError;
+        /** The whole pass could not run (SharePoint unconfigured, profile query failed…). */
+        public volatile boolean fatal;
+        public final OffsetDateTime startedAt = OffsetDateTime.now();
 
         @Override public String toString() {
-            return "profils=" + profilesScanned + " dossiers=" + foldersListed
+            return "profils=" + profilesScanned + "/" + profilesTotal + " echecs=" + profilesFailed
+                    + " dossiers=" + foldersListed
                     + " illisibles=" + foldersUnreadable + " ambigus=" + foldersAmbiguous
                     + " importes=" + imported + " restaures=" + restored + " retires=" + removed;
         }
+    }
+
+    /** Prefix of {@code last_error} for a run that could not run at all (vs a few failed dossiers). */
+    static final String FATAL_PREFIX = "[ÉCHEC] ";
+
+    /** The run in flight, null when idle. */
+    private volatile Report live;
+
+    /** The run in flight, or null when idle. */
+    public Report liveProgress() {
+        return running.get() ? live : null;
     }
 
     /**
@@ -124,25 +150,41 @@ public class SharePointDocumentSyncService {
         return running.get();
     }
 
+    /**
+     * How a run ended, as the screen states it:
+     * SUCCESS — every dossier processed; PARTIAL — finished, some dossiers failed;
+     * FAILED — the pass could not run; INTERRUPTED — started, never finished (service restarted
+     * mid-run); RUNNING — the run in flight.
+     */
+    public enum Outcome { RUNNING, SUCCESS, PARTIAL, FAILED, INTERRUPTED }
+
     /** One run as the admin screen shows it. */
     public record RunDto(Long id, OffsetDateTime startedAt, OffsetDateTime finishedAt,
                          int profilesScanned, int foldersListed, int foldersUnreadable,
                          int foldersAmbiguous, int imported, int restored, int removed,
-                         String lastError) {}
+                         String lastError, Outcome outcome) {}
 
     /** The most recent run, or null (none yet, or V121 not applied). */
     public RunDto lastRun() {
         try {
             List<RunDto> rows = jdbc.query(
                     "SELECT TOP 1 * FROM [dbo].[sharepoint_document_sync_runs] ORDER BY id DESC",
-                    (rs, i) -> new RunDto(
-                            rs.getLong("id"),
-                            rs.getObject("started_at", OffsetDateTime.class),
-                            rs.getObject("finished_at", OffsetDateTime.class),
-                            rs.getInt("profiles_scanned"), rs.getInt("folders_listed"),
-                            rs.getInt("folders_unreadable"), rs.getInt("folders_ambiguous"),
-                            rs.getInt("imported"), rs.getInt("restored"), rs.getInt("removed"),
-                            rs.getString("last_error")));
+                    (rs, i) -> {
+                        OffsetDateTime finished = rs.getObject("finished_at", OffsetDateTime.class);
+                        String error = rs.getString("last_error");
+                        Outcome outcome =
+                                finished == null ? (running.get() ? Outcome.RUNNING : Outcome.INTERRUPTED)
+                              : error == null    ? Outcome.SUCCESS
+                              : error.startsWith(FATAL_PREFIX) ? Outcome.FAILED
+                              : Outcome.PARTIAL;
+                        return new RunDto(
+                                rs.getLong("id"),
+                                rs.getObject("started_at", OffsetDateTime.class), finished,
+                                rs.getInt("profiles_scanned"), rs.getInt("folders_listed"),
+                                rs.getInt("folders_unreadable"), rs.getInt("folders_ambiguous"),
+                                rs.getInt("imported"), rs.getInt("restored"), rs.getInt("removed"),
+                                error, outcome);
+                    });
             return rows.isEmpty() ? null : rows.get(0);
         } catch (Exception e) {
             log.debug("sharepoint_document_sync_runs illisible ({})", e.getMessage());
@@ -176,16 +218,24 @@ public class SharePointDocumentSyncService {
     /** One full pass; the caller holds {@link #running}. */
     private Report runPass() {
         Report report = new Report();
+        live = report;
         Long runId = startRun();
+        String lastFailure = null;
         try {
             if (!graph.isConfigured()) {
-                report.lastError = "SharePoint non configuré";
+                report.fatal = true;
+                report.lastError = "SharePoint non configuré (MS_GRAPH_* absents) — rien n'a été synchronisé.";
                 return report;
             }
             List<Map<String, Object>> profiles = jdbc.queryForList(
-                    "SELECT id, pays_id, user_id FROM [dbo].[employee_profiles] " +
-                    "WHERE deleted = 0 AND pays_id IS NOT NULL AND lifecycle_status IN " + IN_SERVICE_SQL);
+                    "SELECT ep.id, ep.pays_id, ep.user_id, u.fullName " +
+                    "FROM [dbo].[employee_profiles] ep LEFT JOIN [dbo].[Users] u ON u.id = ep.user_id " +
+                    "WHERE ep.deleted = 0 AND ep.pays_id IS NOT NULL AND ep.lifecycle_status IN " + IN_SERVICE_SQL +
+                    " ORDER BY u.fullName");
+            report.profilesTotal = profiles.size();
+            int sinceSave = 0;
             for (Map<String, Object> p : profiles) {
+                report.current = p.get("fullName") != null ? (String) p.get("fullName") : "#" + p.get("id");
                 try {
                     syncProfile(((Number) p.get("id")).longValue(),
                                 ((Number) p.get("pays_id")).longValue(),
@@ -193,14 +243,26 @@ public class SharePointDocumentSyncService {
                                 report);
                 } catch (Exception e) {
                     // One dossier must never stop the others.
-                    report.lastError = "profil " + p.get("id") + ": " + e.getMessage();
+                    report.profilesFailed++;   // already counted in profilesScanned by syncProfile
+                    lastFailure = report.current + " : " + e.getMessage();
                     log.warn("Synchro SharePoint du profil {} en echec: {}", p.get("id"), e.getMessage());
                 }
+                // Counts on disk as the run goes: a restart mid-run still leaves a readable record.
+                if (++sinceSave >= 10) { saveRun(runId, report, false); sinceSave = 0; }
+            }
+            if (report.profilesFailed > 0) {
+                report.lastError = report.profilesFailed + " dossier(s) en échec — dernier : " + lastFailure;
             }
             log.info("Synchro documents SharePoint terminee : {}", report);
             return report;
+        } catch (Exception e) {
+            report.fatal = true;
+            report.lastError = "La synchronisation s'est arrêtée : " + e.getMessage();
+            log.error("Synchro documents SharePoint interrompue", e);
+            return report;
         } finally {
-            finishRun(runId, report);
+            report.current = null;
+            saveRun(runId, report, true);
         }
     }
 
@@ -352,16 +414,22 @@ public class SharePointDocumentSyncService {
         }
     }
 
-    private void finishRun(Long runId, Report r) {
+    /**
+     * Writes the counts. {@code finished} stamps {@code finished_at} — until then the row reads
+     * as RUNNING (or INTERRUPTED once the service is no longer running it).
+     */
+    private void saveRun(Long runId, Report r, boolean finished) {
         if (runId == null) return;
+        String error = r.lastError == null ? null : (r.fatal ? FATAL_PREFIX : "") + r.lastError;
         try {
             jdbc.update(
-                    "UPDATE [dbo].[sharepoint_document_sync_runs] SET finished_at = SYSDATETIMEOFFSET(), " +
+                    "UPDATE [dbo].[sharepoint_document_sync_runs] SET " +
+                    (finished ? "finished_at = SYSDATETIMEOFFSET(), " : "") +
                     "profiles_scanned = ?, folders_listed = ?, folders_unreadable = ?, folders_ambiguous = ?, " +
                     "imported = ?, restored = ?, removed = ?, last_error = ? WHERE id = ?",
                     r.profilesScanned, r.foldersListed, r.foldersUnreadable, r.foldersAmbiguous,
                     r.imported, r.restored, r.removed,
-                    r.lastError == null ? null : r.lastError.substring(0, Math.min(1000, r.lastError.length())),
+                    error == null ? null : error.substring(0, Math.min(1000, error.length())),
                     runId);
         } catch (Exception e) {
             log.debug("Ecriture du bilan de synchro impossible: {}", e.getMessage());
