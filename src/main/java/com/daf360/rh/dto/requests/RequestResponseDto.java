@@ -17,6 +17,8 @@ public class RequestResponseDto {
     private String                  employeeName;
     private Long                    paysId;
     private String                  paysName;
+    /** `pays.english_label` — null when absent (the UI then shows `paysName`). */
+    private String                  paysNameEn;
     private OffsetDateTime          submissionDate;
     private String                  submissionChannel;
     private RequestStatus           status;
