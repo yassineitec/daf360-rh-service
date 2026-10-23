@@ -46,5 +46,12 @@ public record KanbanCandidateDto(
          * The applied grade's default préavis (V64) — what the offer form starts from, so RH
          * can see when a négociation is a derogation. Null when the grade has no default.
          */
-        Integer gradeNoticePeriodDays
+        Integer gradeNoticePeriodDays,
+        /**
+         * Raw parts of {@code nextEvent} (which stays French-formatted for older consumers):
+         * the card rebuilds the label in the UI language from these.
+         */
+        String nextInterviewAt,
+        String nextInterviewType,
+        String nextInterviewTypeEn
 ) {}
