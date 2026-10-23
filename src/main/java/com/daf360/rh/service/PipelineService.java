@@ -87,7 +87,7 @@ public class PipelineService {
             -- CandidateService.demandTitle uses, so a card and a detail page never disagree.
             COALESCE(NULLIF(LTRIM(RTRIM(rd.job_exact_title)), ''), rd.job_title) AS demand_title,
             CONVERT(datetime2, ni.scheduled_at) AS next_interview_at, ni.location AS next_interview_location,
-            itp.name AS next_interview_type,
+            itp.name AS next_interview_type, itp.name_en AS next_interview_type_en,
             ipv.status AS prov_status,
             jo.asked_salary AS offer_asked_salary, jo.proposed_salary AS offer_salary,
             jo.expiry_date AS offer_expiry, jo.status AS offer_status,
@@ -484,8 +484,19 @@ public class PipelineService {
                 toLong(r.get("demand_id")),
                 str(r, "demand_title"),
                 toIntOrNull(r.get("offer_notice_period_days")),
-                toIntOrNull(r.get("grade_notice_period_days"))
+                toIntOrNull(r.get("grade_notice_period_days")),
+                toIsoLocal(r.get("next_interview_at")),
+                str(r, "next_interview_type"),
+                str(r, "next_interview_type_en")
         );
+    }
+
+    /** ISO local date-time (no zone) so the front formats it in the UI language. */
+    private static String toIsoLocal(Object v) {
+        if (v instanceof java.sql.Timestamp ts) return ts.toLocalDateTime().toString();
+        if (v instanceof java.time.LocalDateTime ldt) return ldt.toString();
+        if (v instanceof OffsetDateTime odt) return odt.toLocalDateTime().toString();
+        return null;
     }
 
     /** Parses a JSON array string (e.g. {@code ["Java","AWS"]}) into a list; empty on any failure. */
