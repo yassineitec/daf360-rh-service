@@ -24,6 +24,10 @@ public class InterviewType {
     @Column(name = "name", nullable = false, length = 150, columnDefinition = "nvarchar(150)")
     private String name;
 
+    /** Libellé anglais facultatif ; l'écran retombe sur {@code name} quand il est vide. */
+    @Column(name = "name_en", length = 150, columnDefinition = "nvarchar(150)")
+    private String nameEn;
+
     @Column(name = "description", length = 500, columnDefinition = "nvarchar(500)")
     private String description;
 

@@ -74,7 +74,7 @@ class InterviewTypeServiceTest {
 
     @Test
     void create_validRequest_persistsAndReturnsDto() {
-        CreateInterviewTypeRequest req = new CreateInterviewTypeRequest(PAYS_ID, "Entretien RH", "desc", 1);
+        CreateInterviewTypeRequest req = new CreateInterviewTypeRequest(PAYS_ID, "Entretien RH", "HR interview", "desc", 1);
         InterviewType saved = type(10L, PAYS_ID, true);
         when(typeRepo.save(any())).thenReturn(saved);
 
@@ -94,10 +94,11 @@ class InterviewTypeServiceTest {
         when(typeRepo.findById(5L)).thenReturn(Optional.of(existing));
         when(typeRepo.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        UpdateInterviewTypeRequest req = new UpdateInterviewTypeRequest("Updated Name", "new desc", 2);
+        UpdateInterviewTypeRequest req = new UpdateInterviewTypeRequest("Updated Name", "Updated EN", "new desc", 2);
         InterviewTypeDto result = service.update(5L, req, ACTOR_ID);
 
         assertEquals("Updated Name", result.name());
+        assertEquals("Updated EN", result.nameEn());
         assertEquals(2, result.orderIndex());
     }
 
@@ -108,7 +109,7 @@ class InterviewTypeServiceTest {
         when(typeRepo.findById(5L)).thenReturn(Optional.of(existing));
 
         assertThrows(BusinessRuleException.class,
-                () -> service.update(5L, new UpdateInterviewTypeRequest("X", null, null), ACTOR_ID));
+                () -> service.update(5L, new UpdateInterviewTypeRequest("X", null, null, null), ACTOR_ID));
     }
 
     @Test
@@ -116,7 +117,7 @@ class InterviewTypeServiceTest {
         when(typeRepo.findById(99L)).thenReturn(Optional.empty());
 
         assertThrows(ResourceNotFoundException.class,
-                () -> service.update(99L, new UpdateInterviewTypeRequest("X", null, null), ACTOR_ID));
+                () -> service.update(99L, new UpdateInterviewTypeRequest("X", null, null, null), ACTOR_ID));
     }
 
     // ── deactivate ────────────────────────────────────────────────────────────
