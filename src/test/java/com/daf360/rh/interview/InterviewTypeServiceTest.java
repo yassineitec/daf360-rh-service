@@ -5,10 +5,12 @@ import com.daf360.rh.domain.enums.InterviewStatus;
 import com.daf360.rh.dto.interview.CreateInterviewTypeRequest;
 import com.daf360.rh.dto.interview.InterviewTypeDto;
 import com.daf360.rh.dto.interview.UpdateInterviewTypeRequest;
+import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.BusinessRuleException;
 import com.daf360.rh.exception.ResourceNotFoundException;
 import com.daf360.rh.repository.CandidateInterviewRepository;
 import com.daf360.rh.repository.InterviewTypeRepository;
+import com.daf360.rh.security.PaysScopeContext;
 import com.daf360.rh.security.TenantService;
 import com.daf360.rh.service.InterviewTypeService;
 import org.junit.jupiter.api.Test;
@@ -20,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -52,7 +55,7 @@ class InterviewTypeServiceTest {
         when(typeRepo.findByPaysIdOrderByOrderIndexAsc(PAYS_ID))
                 .thenReturn(List.of(type(1L, PAYS_ID, true)));
 
-        List<InterviewTypeDto> result = service.list();
+        List<InterviewTypeDto> result = service.list(null);
 
         assertEquals(1, result.size());
         assertEquals(PAYS_ID, result.get(0).paysId());
@@ -60,11 +63,31 @@ class InterviewTypeServiceTest {
     }
 
     @Test
+    void list_requestedPaysInScope_filtersOnThatPays() {
+        when(tenantService.getPaysScope()).thenReturn(new PaysScopeContext.Scope(false, Set.of(PAYS_ID, 2L)));
+        when(typeRepo.findByPaysIdOrderByOrderIndexAsc(2L)).thenReturn(List.of(type(3L, 2L, true)));
+
+        List<InterviewTypeDto> result = service.list(2L);
+
+        assertEquals(1, result.size());
+        assertEquals(2L, result.get(0).paysId());
+        verify(typeRepo, never()).findAll();
+    }
+
+    @Test
+    void list_requestedPaysOutOfScope_throwsForbidden() {
+        when(tenantService.getPaysScope()).thenReturn(new PaysScopeContext.Scope(false, Set.of(PAYS_ID)));
+
+        assertThrows(AppException.class, () -> service.list(99L));
+        verify(typeRepo, never()).findByPaysIdOrderByOrderIndexAsc(any());
+    }
+
+    @Test
     void list_adminNull_returnsAll() {
         when(tenantService.getEffectivePaysId()).thenReturn(null);
         when(typeRepo.findAll()).thenReturn(List.of(type(1L, PAYS_ID, true), type(2L, 2L, true)));
 
-        List<InterviewTypeDto> result = service.list();
+        List<InterviewTypeDto> result = service.list(null);
 
         assertEquals(2, result.size());
         verify(typeRepo).findAll();

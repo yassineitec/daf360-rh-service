@@ -5,10 +5,13 @@ import com.daf360.rh.domain.enums.InterviewStatus;
 import com.daf360.rh.dto.interview.CreateInterviewTypeRequest;
 import com.daf360.rh.dto.interview.InterviewTypeDto;
 import com.daf360.rh.dto.interview.UpdateInterviewTypeRequest;
+import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.BusinessRuleException;
+import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.exception.ResourceNotFoundException;
 import com.daf360.rh.repository.CandidateInterviewRepository;
 import com.daf360.rh.repository.InterviewTypeRepository;
+import com.daf360.rh.security.PaysScopeContext;
 import com.daf360.rh.security.TenantService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,7 +33,16 @@ public class InterviewTypeService {
     private final TenantService                tenantService;
 
     @PreAuthorize("hasPermission(null, 'RH_ADMIN_INTERVIEW_TYPES')")
-    public List<InterviewTypeDto> list() {
+    /**
+     * {@code paysId} = le pays choisi dans l'écran admin. Absent (anciens appelants), on
+     * retombe sur l'ancien comportement : pays du jeton, ou tous les pays pour un admin global.
+     */
+    public List<InterviewTypeDto> list(Long requestedPaysId) {
+        if (requestedPaysId != null) {
+            assertInScope(requestedPaysId);
+            return typeRepo.findByPaysIdOrderByOrderIndexAsc(requestedPaysId)
+                    .stream().map(this::toDto).toList();
+        }
         Long paysId = tenantService.getEffectivePaysId();
         List<InterviewType> types = (paysId == null)
                 ? typeRepo.findAll()
@@ -94,6 +106,16 @@ public class InterviewTypeService {
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    /** Même règle que {@code HolidayService} : un pays hors du périmètre de l'appelant est refusé. */
+    private void assertInScope(Long paysId) {
+        PaysScopeContext.Scope scope = tenantService.getPaysScope();
+        if (scope.unfiltered()) return;
+        if (!scope.paysIds().contains(paysId)) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                    "Cette entité n'est pas dans votre périmètre.");
+        }
+    }
 
     private InterviewType findAndCheckTenant(Long id) {
         InterviewType type = typeRepo.findById(id)
