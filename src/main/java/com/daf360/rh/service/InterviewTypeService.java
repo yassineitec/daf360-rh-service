@@ -49,6 +49,7 @@ public class InterviewTypeService {
         InterviewType type = InterviewType.builder()
                 .paysId(req.paysId())
                 .name(req.name())
+                .nameEn(blankToNull(req.nameEn()))
                 .description(req.description())
                 .orderIndex(req.orderIndex() != null ? req.orderIndex() : 0)
                 .isActive(true)
@@ -61,6 +62,7 @@ public class InterviewTypeService {
     public InterviewTypeDto update(Long id, UpdateInterviewTypeRequest req, Long actorId) {
         InterviewType type = findAndCheckTenant(id);
         type.setName(req.name());
+        type.setNameEn(blankToNull(req.nameEn()));
         type.setDescription(req.description());
         if (req.orderIndex() != null) {
             type.setOrderIndex(req.orderIndex());
@@ -103,9 +105,13 @@ public class InterviewTypeService {
         return type;
     }
 
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
     private InterviewTypeDto toDto(InterviewType t) {
         return new InterviewTypeDto(
-                t.getId(), t.getPaysId(), t.getName(),
+                t.getId(), t.getPaysId(), t.getName(), t.getNameEn(),
                 t.getDescription(), t.getOrderIndex(), t.getIsActive());
     }
 }

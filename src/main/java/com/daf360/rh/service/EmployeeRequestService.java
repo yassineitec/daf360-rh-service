@@ -345,7 +345,9 @@ public class EmployeeRequestService {
         }
         dto.setEmployeeName(resolveEmployeeName(r.getEmployeeProfileId()));
         dto.setPaysId(r.getPaysId());
-        dto.setPaysName(resolvePaysName(r.getPaysId()));
+        String[] paysLabels = resolvePaysLabels(r.getPaysId());
+        dto.setPaysName(paysLabels[0]);
+        dto.setPaysNameEn(paysLabels[1]);
         dto.setSubmissionDate(r.getSubmissionDate());
         dto.setSubmissionChannel(r.getSubmissionChannel());
         dto.setStatus(r.getStatus());
@@ -375,14 +377,16 @@ public class EmployeeRequestService {
                 ? auth.getPrincipal().toString() : "SYSTEM";
     }
 
-    /** Resolves the entity (pays) display name. Null-safe. */
-    private String resolvePaysName(Long paysId) {
-        if (paysId == null) return null;
+    /** Resolves the entity (pays) display names, { french, english }. Null-safe. */
+    private String[] resolvePaysLabels(Long paysId) {
+        if (paysId == null) return new String[2];
         try {
             return jdbc.queryForObject(
-                    "SELECT french_label FROM [dbo].[pays] WHERE id = ?", String.class, paysId);
+                    "SELECT french_label, english_label FROM [dbo].[pays] WHERE id = ?",
+                    (rs, i) -> new String[] { rs.getString("french_label"), rs.getString("english_label") },
+                    paysId);
         } catch (Exception e) {
-            return null;
+            return new String[2];
         }
     }
 

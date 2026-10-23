@@ -72,8 +72,8 @@ public class CandidateInterviewService {
         Set<Long> typeIds = interviews.stream()
                 .map(CandidateInterview::getInterviewTypeId)
                 .collect(Collectors.toSet());
-        Map<Long, String> typeNames = typeRepo.findAllById(typeIds).stream()
-                .collect(Collectors.toMap(InterviewType::getId, InterviewType::getName));
+        Map<Long, InterviewType> types = typeRepo.findAllById(typeIds).stream()
+                .collect(Collectors.toMap(InterviewType::getId, t -> t));
         // Panels for the whole timeline in one query + one name lookup (no N+1).
         Map<Long, List<Long>> panels = panelsByInterview(
                 interviews.stream().map(CandidateInterview::getId).toList());
@@ -89,7 +89,7 @@ public class CandidateInterviewService {
                 .forEach(nameIds::add);
         Map<Long, String> names = userNames(nameIds);
         return interviews.stream()
-                .map(ci -> toDto(ci, typeNames.get(ci.getInterviewTypeId()),
+                .map(ci -> toDto(ci, types.get(ci.getInterviewTypeId()),
                                  panels.getOrDefault(ci.getId(), List.of()), names))
                 .toList();
     }
@@ -129,7 +129,7 @@ public class CandidateInterviewService {
             savePanel(saved.getId(), panel);
             syncCalendarEvent(saved, panel, candidate);
         }
-        return toDto(saved, type.getName(), panel, userNames(panel));
+        return toDto(saved, type, panel, userNames(panel));
     }
 
     @PreAuthorize("hasPermission(null, 'RH_MANAGE_INTERVIEWS')")
@@ -201,9 +201,8 @@ public class CandidateInterviewService {
             }
         }
 
-        String typeName = typeRepo.findById(saved.getInterviewTypeId())
-                .map(InterviewType::getName).orElse(null);
-        return toDto(saved, typeName, panel, userNames(panel));
+        InterviewType type = typeRepo.findById(saved.getInterviewTypeId()).orElse(null);
+        return toDto(saved, type, panel, userNames(panel));
     }
 
     /**
@@ -392,7 +391,7 @@ public class CandidateInterviewService {
         return ci.getInterviewerUserId() != null ? List.of(ci.getInterviewerUserId()) : List.of();
     }
 
-    private CandidateInterviewDto toDto(CandidateInterview ci, String typeName,
+    private CandidateInterviewDto toDto(CandidateInterview ci, InterviewType type,
                                         List<Long> panel, Map<Long, String> names) {
         List<UserPickerDto> interviewers = effectivePanel(ci, panel).stream()
                 .map(uid -> new UserPickerDto(uid, names.get(uid)))
@@ -404,7 +403,8 @@ public class CandidateInterviewService {
                 ci.getId(),
                 ci.getCandidateId(),
                 ci.getInterviewTypeId(),
-                typeName,
+                type != null ? type.getName() : null,
+                type != null ? type.getNameEn() : null,
                 ci.getScheduledAt(),
                 ci.getLocation(),
                 ci.getInterviewerNotes(),
