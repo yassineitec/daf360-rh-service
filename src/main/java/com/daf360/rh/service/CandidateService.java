@@ -24,6 +24,7 @@ import com.daf360.rh.repository.DisciplineRepository;
 import com.daf360.rh.repository.EmployeeProfileRepository;
 import com.daf360.rh.repository.GradeRepository;
 import com.daf360.rh.repository.HrDepartmentRepository;
+import com.daf360.rh.repository.ItAssetRepository;
 import com.daf360.rh.repository.ItProvisioningRepository;
 import com.daf360.rh.lists.ConfigurableListValueRepository;
 import com.daf360.rh.repository.NationalityRepository;
@@ -72,6 +73,7 @@ public class CandidateService {
     private final CandidateInterviewRepository interviewRepo;
     private final RecruitmentDemandRepository  recruitmentDemandRepo;
     private final ItProvisioningRepository   itProvRepo;
+    private final ItAssetRepository          itAssetRepo;
     private final EmployeeProfileRepository  profileRepo;
     private final CandidateMapper            mapper;
     private final AuditService               auditService;
@@ -789,7 +791,15 @@ public class CandidateService {
     private CandidateResponse toFullResponse(Candidate candidate) {
         CandidateResponse response = mapper.toResponse(candidate);
         itProvRepo.findByCandidateId(candidate.getId())
-                .map(mapper::toItSummary)
+                .map(prov -> {
+                    ItProvisioningSummary summary = mapper.toItSummary(prov);
+                    // The mapper ignores assetsProvided (it lives in it_assets, not on the
+                    // provisioning row), so the candidate's IT tab always showed "null / 6".
+                    summary.setAssetsProvided((int) itAssetRepo.findByProvisioningId(prov.getId()).stream()
+                            .filter(a -> Boolean.TRUE.equals(a.getProvided()))
+                            .count());
+                    return summary;
+                })
                 .ifPresent(response::setItProvisioning);
         // The mapper ignores this (recruitmentDemandId is a plain Long, not an association it
         // can navigate), so it was always null. Filled here, where the repo is available.
