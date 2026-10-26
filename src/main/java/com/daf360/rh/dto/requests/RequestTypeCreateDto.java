@@ -20,6 +20,9 @@ public class RequestTypeCreateDto {
 
     @Size(max = 500) private String description;
 
+    /** Optional. On update: null = untouched, blank = cleared. */
+    @Size(max = 500) private String descriptionEn;
+
     @NotNull  private RequestCategory category;
 
     @Pattern(regexp = "L1|L2", message = "approval_level must be L1 or L2")

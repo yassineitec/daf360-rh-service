@@ -28,11 +28,17 @@ public class EmployeeProfileResponseDto {
      *  every row in prod — the field rendered blank on the detail page for all 158
      *  profiles. Kept under the name `matricule` so the frontend binding is unchanged. */
     private String matricule;
+    /** True when the caller holds HR_ADMIN_ROLES — the only permission allowed to set or
+     *  change the matricule (EmployeeProfileService.applyPayrollMatricule). */
+    private boolean canEditMatricule;
     private String fullName;   // Users.fullName
 
     // ── Contract ──────────────────────────────────────────────────────────
     private LocalDate hireDate;
+    /** Code of the CONTRACT_TYPE list value (CDI…), resolved from {@link #contractTypeId}. */
     private String    contractType;
+    /** configurable_list_values.id — what employee_profiles.contract_type stores. */
+    private Long      contractTypeId;
     private LocalDate contractEndDate;
     private LocalDate probationEndDate;
     private Boolean   isOnProbation;

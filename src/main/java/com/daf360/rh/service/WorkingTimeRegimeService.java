@@ -36,6 +36,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -346,17 +347,21 @@ public class WorkingTimeRegimeService {
         for (EmployeeProfile profile : profiles) {
             String fullName = null;
             String roleName = null;
+            String roleNameEn = null;
             try {
                 fullName = jdbc.queryForObject(
                     "SELECT fullName FROM [dbo].[Users] WHERE id=?", String.class, profile.getUserId());
             } catch (Exception ignored) {}
             try {
-                roleName = jdbc.queryForObject(
-                    "SELECT r.frenchName FROM [dbo].[Roles] r " +
+                Map<String, Object> role = jdbc.queryForMap(
+                    "SELECT r.frenchName, r.englishName FROM [dbo].[Roles] r " +
                     "JOIN [dbo].[Users] u ON u.role_id = r.id WHERE u.id=?",
-                    String.class, profile.getUserId());
+                    profile.getUserId());
+                roleName   = (String) role.get("frenchName");
+                roleNameEn = (String) role.get("englishName");
             } catch (Exception ignored) {}
-            if (fullName == null) fullName = "Profil " + profile.getId();
+            // No user name → fullName stays null; the UI labels it "Profil N" / "Profile N" in the
+            // viewer's language (a French fallback built here showed in English too).
             ResolvedRegimeDto resolved = null;
             try { resolved = resolutionService.resolveForEmployee(profile.getId()); } catch (Exception ignored) {}
             result.add(EmployeeRegimeOverview.builder()
@@ -364,6 +369,7 @@ public class WorkingTimeRegimeService {
                 .userId(profile.getUserId())
                 .fullName(fullName)
                 .roleName(roleName)
+                .roleNameEn(roleNameEn)
                 .resolvedRegimeId(resolved != null ? resolved.getRegimeId() : null)
                 .resolvedRegimeLabelFr(resolved != null ? resolved.getRegimeLabelFr() : null)
                 .assignmentLevel(resolved != null ? resolved.getAssignmentLevel() : null)

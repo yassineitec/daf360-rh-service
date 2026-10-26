@@ -28,13 +28,49 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class DashboardService {
 
-    /**
-     * The document types every profile must have on file. Same list and same
-     * "anything but REJECTED counts" rule as {@link #getMissingDocuments()}, so the
-     * dashboard's per-employee completeness bar and its missing-documents watchlist
-     * can never disagree.
+    /*
+     * The document types every profile must have on file are chosen by RH, per country
+     * (document_types.required_for_completion, V121) — DocumentTypeService#requiredCodes.
+     * Same list and same "on file = not deleted, not REJECTED" rule for the per-employee
+     * completeness bar and the missing-documents watchlist, so the two can never disagree.
      */
-    private static final List<String> REQUIRED_DOC_TYPES = List.of("CONTRACT", "ID_CARD", "RIB");
+
+    /**
+     * A second code that also fills a required slot. The onboarding wizard files the signed
+     * contract as {@code CONTRACT_SIGNED} ({@code OnboardingSideEffects.linkContractDocument}),
+     * so checking {@code CONTRACT} alone flagged every wizard-onboarded employee as missing
+     * their contract.
+     */
+    private static final Map<String, String> DOC_TYPE_ALIAS = Map.of("CONTRACT", "CONTRACT_SIGNED");
+
+    /** {@code 'CODE','ALIAS'} — the codes accepted for one required slot, as SQL literals.
+     *  Safe to inline: codes are constrained to {@code [A-Z0-9_]} by DocumentTypeService. */
+    private static String acceptedDocCodesSql(String docType) {
+        return "'" + docType + "','" + DOC_TYPE_ALIAS.getOrDefault(docType, docType) + "'";
+    }
+
+    /** Whether {@code onFile} (codes present in a dossier) fills the required slot {@code code}. */
+    private static boolean fills(java.util.Set<String> onFile, String code) {
+        return onFile.contains(code) || onFile.contains(DOC_TYPE_ALIAS.getOrDefault(code, code));
+    }
+
+    /**
+     * {@code (VALUES (pays, code, alias), …) AS req(pays_id, doc_type, alias_type)} — every
+     * country's required list, to JOIN on {@code ep.pays_id}. Null when nothing is required
+     * anywhere in scope (the caller then has nothing to report).
+     */
+    private String requirementsSql(Long scopedPaysId) {
+        List<Long> paysIds = scopedPaysId != null
+                ? List.of(scopedPaysId)
+                : jdbcTemplate.queryForList(
+                        "SELECT DISTINCT pays_id FROM [dbo].[employee_profiles] " +
+                        "WHERE deleted = 0 AND pays_id IS NOT NULL", Long.class);
+        String rows = paysIds.stream()
+                .flatMap(p -> documentTypeService.requiredCodes(p).stream()
+                        .map(code -> "(" + p + "," + acceptedDocCodesSql(code) + ")"))
+                .collect(Collectors.joining(","));
+        return rows.isEmpty() ? null : "(VALUES " + rows + ") AS req(pays_id, doc_type, alias_type) ";
+    }
 
     /**
      * L'EFFECTIF : les trois statuts qui veulent dire « cette personne fait partie de
@@ -60,7 +96,8 @@ public class DashboardService {
      * columns each step writes. Order matches the frontend's {@code STEPS}, so the
      * dashboard's per-section bars line up with what RH sees in the wizard.
      *
-     * <p>Documents are appended as a seventh section from {@link #REQUIRED_DOC_TYPES};
+     * <p>Documents are appended as a seventh section from the country's required list
+     * ({@code DocumentTypeService#requiredCodes});
      * they live in {@code employee_documents}, not on the profile row.
      *
      * <p>Deliberately <em>not</em> derived from the wizard's own validators: it has
@@ -89,13 +126,24 @@ public class DashboardService {
     private final CandidateRepository       candidateRepository;
     private final JdbcTemplate              jdbcTemplate;
     private final TenantService             tenantService;
+    private final com.daf360.rh.service.document.DocumentTypeService documentTypeService;
+
+    /**
+     * Le pays des cartes de /rh/accueil. Un admin multi-pays (mêmes permissions que
+     * {@link TenantService#isAdmin()}) choisit dans le sélecteur : un pays, ou
+     * {@code null} pour tous. Pour tout autre utilisateur le paramètre est ignoré — il
+     * reste sur son propre pays, comme avant, et ne peut pas lire celui d'un autre.
+     */
+    private Long scopePaysId(Long requestedPaysId) {
+        return tenantService.isAdmin() ? requestedPaysId : tenantService.getEffectivePaysId();
+    }
 
     // ── ① /stats ─────────────────────────────────────────────────────────────
 
-    public DashboardStatsDto getStats() {
+    public DashboardStatsDto getStats(Long requestedPaysId) {
         LocalDate today      = LocalDate.now();
         LocalDate monthStart = today.withDayOfMonth(1);
-        Long paysId          = tenantService.getEffectivePaysId();
+        Long paysId          = scopePaysId(requestedPaysId);
 
         long totalActifs = paysId != null
                 ? profileRepository.countByPaysIdAndLifecycleStatus(paysId, LifecycleStatus.ACTIVE)
@@ -116,8 +164,9 @@ public class DashboardService {
         long newThisMonth = newThisMonthRaw != null ? newThisMonthRaw : 0L;
 
         Long pendingRaw = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM [dbo].[employee_requests] WHERE status = 'SUBMITTED'",
-                Long.class);
+                "SELECT COUNT(*) FROM [dbo].[employee_requests] WHERE status = 'SUBMITTED'" +
+                (paysId != null ? " AND pays_id = ?" : ""),
+                Long.class, paysId != null ? new Object[]{ paysId } : new Object[0]);
         long pendingRequests = pendingRaw != null ? pendingRaw : 0L;
 
         long contratsARenouveler = paysId != null
@@ -125,7 +174,7 @@ public class DashboardService {
                 : profileRepository.countContractsEndingSoon(today, today.plusDays(60), LifecycleStatus.ACTIVE);
 
         // Gender percentages — reuse workforce logic
-        WorkforceStatsDto ws = getWorkforceStats();
+        WorkforceStatsDto ws = getWorkforceStats(paysId);
 
         return new DashboardStatsDto(
                 totalActifs,
@@ -140,16 +189,42 @@ public class DashboardService {
 
     // ── ② /workforce ─────────────────────────────────────────────────────────
 
-    public WorkforceStatsDto getWorkforceStats() {
-        Long paysId = tenantService.getEffectivePaysId();
-        long total = paysId != null
-                ? profileRepository.countByPaysIdAndLifecycleStatusIn(paysId, IN_SERVICE)
-                : profileRepository.countByLifecycleStatusIn(IN_SERVICE);
-        if (total == 0) return new WorkforceStatsDto(0, 0, 0, 0, 0.0, 0.0, List.of());
+    public WorkforceStatsDto getWorkforceStats(Long requestedPaysId) {
+        return getWorkforceStats(requestedPaysId, null);
+    }
 
-        List<Object[]> genderRows = paysId != null
-                ? profileRepository.countByGenderAndLifecycleStatusInAndPaysId(IN_SERVICE, paysId)
-                : profileRepository.countByGenderAndLifecycleStatusIn(IN_SERVICE);
+    /**
+     * @param departmentId filtre « département » de /rh/accueil : restreint TOUTES les
+     *                     cartes d'effectif (total, genre, pays, ingénieurs/projeteurs,
+     *                     ancienneté) au même groupe, pour que leurs totaux concordent.
+     *                     Ses sous-départements directs ({@code parent_id}) sont inclus.
+     *                     {@code null} = pas de filtre.
+     */
+    public WorkforceStatsDto getWorkforceStats(Long requestedPaysId, Long departmentId) {
+        Long paysId = scopePaysId(requestedPaysId);
+        WorkforceFilter filter = workforceFilter(paysId, departmentId);
+
+        long total;
+        List<Object[]> genderRows;
+        if (departmentId == null) {
+            total = paysId != null
+                    ? profileRepository.countByPaysIdAndLifecycleStatusIn(paysId, IN_SERVICE)
+                    : profileRepository.countByLifecycleStatusIn(IN_SERVICE);
+            genderRows = total == 0 ? List.of() : paysId != null
+                    ? profileRepository.countByGenderAndLifecycleStatusInAndPaysId(IN_SERVICE, paysId)
+                    : profileRepository.countByGenderAndLifecycleStatusIn(IN_SERVICE);
+        } else {
+            // Les requêtes dérivées du repository ne connaissent pas le département.
+            genderRows = jdbcTemplate.query(
+                    "SELECT ep.gender, COUNT(*) AS cnt FROM [dbo].[employee_profiles] ep " +
+                    filter.where() + "GROUP BY ep.gender",
+                    (rs, rowNum) -> new Object[]{ rs.getString("gender"), rs.getLong("cnt") },
+                    filter.params());
+            total = genderRows.stream().mapToLong(r -> ((Number) r[1]).longValue()).sum();
+        }
+        if (total == 0) return new WorkforceStatsDto(0, 0, 0, 0, 0.0, 0.0, List.of(), 0, 0, 0.0, 0.0,
+                0, 0, 0, 0, 0.0, 0.0, 0.0, WorkforceStatsDto.AgeBreakdown.EMPTY,
+                WorkforceStatsDto.AgeBreakdown.EMPTY, Map.of());
 
         /*
          * La colonne `gender` est du texte libre, sans contrainte en base. Le write-side
@@ -174,11 +249,236 @@ public class DashboardService {
         long f = byGender.getOrDefault(GenderNormalizer.FEMALE, 0L);
         long n = Math.max(0L, total - h - f);
 
+        long[] ingProj = getIngenieurProjeteurCounts(filter);
+        long ing  = ingProj[0];
+        long proj = ingProj[1];
+        long ingProjTotal = ing + proj;
+
+        // [juniors, confirmes, seniors, total] — le total inclut les profils sans date
+        // d'embauche, comme `total` inclut les genres non définis : les trois % peuvent
+        // donc faire moins de 100.
+        long[] seniority = getSeniorityCounts(filter);
+        long seniorityTotal = seniority[3];
+
         return new WorkforceStatsDto(
                 total, h, f, n,
                 Math.round((double) h / total * 1000.0) / 10.0,
                 Math.round((double) f / total * 1000.0) / 10.0,
-                getHeadcountByCountry(paysId));
+                getHeadcountByCountry(filter),
+                ing, proj,
+                pct(ing, ingProjTotal),
+                pct(proj, ingProjTotal),
+                seniority[0], seniority[1], seniority[2],
+                Math.max(0L, seniorityTotal - seniority[0] - seniority[1] - seniority[2]),
+                pct(seniority[0], seniorityTotal),
+                pct(seniority[1], seniorityTotal),
+                pct(seniority[2], seniorityTotal),
+                getAgeBreakdown(filter, AgeScope.ALL),
+                getAgeBreakdown(filter, AgeScope.TECH),
+                getGroupAges(filter));
+    }
+
+    /** Every clickable tile's age breakdown, keyed as {@link AgeScope#key}. */
+    private Map<String, WorkforceStatsDto.AgeBreakdown> getGroupAges(WorkforceFilter filter) {
+        Map<String, WorkforceStatsDto.AgeBreakdown> ages = new LinkedHashMap<>();
+        for (AgeScope scope : AgeScope.values()) {
+            if (scope.key != null) ages.put(scope.key, getAgeBreakdown(filter, scope));
+        }
+        return ages;
+    }
+
+    /** {@code UPPER(TRIM(gender)) IN (…)} over every spelling the normalizer maps to {@code canonical}. */
+    private static String genderSql(String canonical) {
+        return GenderNormalizer.aliasesOf(canonical).stream()
+                .map(a -> "N'" + a.replace("'", "''") + "'")   // constant aliases, quoted defensively
+                .sorted()
+                .collect(Collectors.joining(", ",
+                        "AND UPPER(LTRIM(RTRIM(ep.gender))) IN (", ") "));
+    }
+
+    private static final String TECH_GRADE_SQL = "(g.code LIKE 'EN[0-9]%' OR g.code LIKE 'BC[0-9]%')";
+
+    /**
+     * Sous-groupe dont {@link #getAgeBreakdown} donne les tranches d'âge, en plus du filtre
+     * pays / département. {@code sql} s'ajoute à la clause WHERE ; chacun de ses {@code ?}
+     * reçoit la date du jour ({@code todayParams} fois). {@code key} non nul = tuile
+     * cliquable de la pop-up, renvoyée dans {@code groupAges}.
+     *
+     * <p>Chaque groupe reprend la règle de la carte qui le compte : bornes de
+     * {@link #getSeniorityCounts}, codes de grade de {@link #getIngenieurProjeteurCounts},
+     * alias de {@link GenderNormalizer} — les âges des « Juniors » couvrent donc exactement
+     * les juniors affichés sur la tuile.
+     */
+    private enum AgeScope {
+        ALL       (null, "", false, 0),
+        TECH      (null, "AND " + TECH_GRADE_SQL + " ", true, 0),
+        FEMMES    ("femmes", genderSql(GenderNormalizer.FEMALE), false, 0),
+        HOMMES    ("hommes", genderSql(GenderNormalizer.MALE),   false, 0),
+        INGENIEURS("ingenieurs", "AND g.code LIKE 'EN[0-9]%' ", true, 0),
+        PROJETEURS("projeteurs", "AND g.code LIKE 'BC[0-9]%' ", true, 0),
+        AUTRES    ("autres", "AND (g.code IS NULL OR NOT " + TECH_GRADE_SQL + ") ", true, 0),
+        JUNIORS   ("juniors", "AND ep.hire_date IS NOT NULL AND DATEADD(year, 5, ep.hire_date) > ? ", false, 1),
+        CONFIRMES ("confirmes", "AND DATEADD(year, 5, ep.hire_date) <= ? AND DATEADD(year, 8, ep.hire_date) > ? ", false, 2),
+        SENIORS   ("seniors", "AND DATEADD(year, 8, ep.hire_date) <= ? ", false, 1);
+
+        final String  key;
+        final String  sql;
+        final boolean joinGrades;
+        final int     todayParams;
+
+        AgeScope(String key, String sql, boolean joinGrades, int todayParams) {
+            this.key = key;
+            this.sql = sql;
+            this.joinGrades = joinGrades;
+            this.todayParams = todayParams;
+        }
+    }
+
+    /**
+     * En dessous de ce nombre de personnes, la répartition par âge n'est pas renvoyée :
+     * filtrée sur un petit département, elle permettrait de déduire l'âge de chacun.
+     */
+    static final int AGE_MIN_GROUP = 5;
+
+    /**
+     * Effectif filtré réparti par tranche d'âge, d'après {@code date_of_birth}, en années
+     * COMPLÈTES. Même comparaison {@code DATEADD} que {@link #getSeniorityCounts} et pour la
+     * même raison : {@code DATEDIFF(year, …)} compte les passages au 1er janvier, si bien
+     * qu'une personne née un 31 décembre gagnerait un an le lendemain.
+     *
+     * @param scope tout l'effectif filtré, ou un sous-groupe : ingénieurs + projeteurs
+     *              (mêmes codes de grade que {@link #getIngenieurProjeteurCounts}), ou un
+     *              niveau d'ancienneté
+     */
+    private WorkforceStatsDto.AgeBreakdown getAgeBreakdown(WorkforceFilter filter, AgeScope scope) {
+        String sql = "SELECT " +
+                     "  SUM(CASE WHEN DATEADD(year, 25, ep.date_of_birth) >  ? THEN 1 ELSE 0 END) AS a1, " +
+                     "  SUM(CASE WHEN DATEADD(year, 25, ep.date_of_birth) <= ? AND DATEADD(year, 35, ep.date_of_birth) > ? THEN 1 ELSE 0 END) AS a2, " +
+                     "  SUM(CASE WHEN DATEADD(year, 35, ep.date_of_birth) <= ? AND DATEADD(year, 45, ep.date_of_birth) > ? THEN 1 ELSE 0 END) AS a3, " +
+                     "  SUM(CASE WHEN DATEADD(year, 45, ep.date_of_birth) <= ? AND DATEADD(year, 55, ep.date_of_birth) > ? THEN 1 ELSE 0 END) AS a4, " +
+                     "  SUM(CASE WHEN DATEADD(year, 55, ep.date_of_birth) <= ? THEN 1 ELSE 0 END) AS a5, " +
+                     "  SUM(CASE WHEN ep.date_of_birth IS NULL THEN 1 ELSE 0 END) AS nd, " +
+                     "  COUNT(*) AS total, " +
+                     "  AVG(CAST(DATEDIFF(day, ep.date_of_birth, ?) AS float)) / 365.25 AS avg_age " +
+                     "FROM [dbo].[employee_profiles] ep " +
+                     (scope.joinGrades ? "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " : "") +
+                     filter.where() +
+                     scope.sql;
+
+        // Order matters: the 9 dates of the SELECT, then the filter's, then the scope's.
+        Date today = Date.valueOf(LocalDate.now());
+        List<Object> params = new ArrayList<>(java.util.Collections.nCopies(9, today));
+        params.addAll(List.of(filter.params()));
+        params.addAll(java.util.Collections.nCopies(scope.todayParams, today));
+
+        return jdbcTemplate.queryForObject(sql,
+                (rs, rowNum) -> {
+                    long total = rs.getLong("total");
+                    if (total < AGE_MIN_GROUP) {
+                        return new WorkforceStatsDto.AgeBreakdown(0, 0, 0, 0, 0, 0, total, null, total > 0);
+                    }
+                    double avg = rs.getDouble("avg_age");   // AVG ignores NULL birth dates
+                    Double ageMoyen = rs.wasNull() ? null : Math.round(avg * 10.0) / 10.0;
+                    return new WorkforceStatsDto.AgeBreakdown(
+                            rs.getLong("a1"), rs.getLong("a2"), rs.getLong("a3"),
+                            rs.getLong("a4"), rs.getLong("a5"), rs.getLong("nd"),
+                            total, ageMoyen, false);
+                },
+                params.toArray());
+    }
+
+    /** Clause WHERE des cartes d'effectif (alias {@code ep}) et ses paramètres. */
+    private record WorkforceFilter(String where, Object[] params) {}
+
+    private static WorkforceFilter workforceFilter(Long paysId, Long departmentId) {
+        StringBuilder where = new StringBuilder(
+                "WHERE ep.lifecycle_status IN " + IN_SERVICE_SQL + " AND ep.deleted = 0 ");
+        List<Object> params = new ArrayList<>();
+        if (paysId != null) {
+            where.append("AND ep.pays_id = ? ");
+            params.add(paysId);
+        }
+        if (departmentId != null) {
+            where.append("AND ep.department_id IN (SELECT dd.id FROM [dbo].[departments] dd " +
+                         "WHERE dd.id = ? OR dd.parent_id = ?) ");
+            params.add(departmentId);
+            params.add(departmentId);
+        }
+        return new WorkforceFilter(where.toString(), params.toArray());
+    }
+
+    /** Pourcentage arrondi à une décimale ; 0 quand il n'y a personne. */
+    private static double pct(long part, long total) {
+        return total == 0 ? 0.0 : Math.round((double) part / total * 1000.0) / 10.0;
+    }
+
+    /**
+     * Effectif en service réparti par ancienneté dans l'entreprise, d'après
+     * {@code hire_date} — seule donnée d'ancienneté présente sur TOUS les profils
+     * ({@code experience_years} n'existe que sur le candidat).
+     *
+     * <p>Règle métier, en années COMPLÈTES depuis l'embauche :
+     * <ul>
+     *   <li>moins de 5 ans (moins d'un an inclus, et embauche future) → Junior</li>
+     *   <li>5 à 7 ans → Confirmé</li>
+     *   <li>8 ans et plus → Senior</li>
+     * </ul>
+     * Comparé avec {@code DATEADD(year, n, hire_date)} plutôt que {@code DATEDIFF(year, …)} :
+     * DATEDIFF compte les passages au 1er janvier, si bien qu'une embauche du 31/12/2021
+     * aurait déjà « 5 ans » le 01/01/2026.
+     *
+     * @return {@code [juniors, confirmes, seniors, total]}
+     */
+    private long[] getSeniorityCounts(WorkforceFilter filter) {
+        String sql = "SELECT " +
+                     "  SUM(CASE WHEN ep.hire_date IS NOT NULL AND DATEADD(year, 5, ep.hire_date) > ? THEN 1 ELSE 0 END) AS juniors, " +
+                     "  SUM(CASE WHEN DATEADD(year, 5, ep.hire_date) <= ? AND DATEADD(year, 8, ep.hire_date) > ? THEN 1 ELSE 0 END) AS confirmes, " +
+                     "  SUM(CASE WHEN DATEADD(year, 8, ep.hire_date) <= ? THEN 1 ELSE 0 END) AS seniors, " +
+                     "  COUNT(*) AS total " +
+                     "FROM [dbo].[employee_profiles] ep " +
+                     filter.where();
+
+        Date today = Date.valueOf(LocalDate.now());
+        List<Object> params = new ArrayList<>(List.of(today, today, today, today));
+        params.addAll(List.of(filter.params()));
+
+        return jdbcTemplate.queryForObject(sql,
+                (rs, rowNum) -> new long[]{
+                        rs.getLong("juniors"),     // SUM sur 0 ligne = NULL → getLong = 0
+                        rs.getLong("confirmes"),
+                        rs.getLong("seniors"),
+                        rs.getLong("total") },
+                params.toArray());
+    }
+
+    /**
+     * Effectif en service réparti Ingénieurs / Projeteurs, d'après le code du grade
+     * du profil (grille BIM &amp; CAD / Engineering) :
+     * <ul>
+     *   <li>{@code EN1} … {@code EN8} (Engineering) → Ingénieur</li>
+     *   <li>{@code BC1} … {@code BC5} (BIM &amp; CAD, techniciens) → Projeteur</li>
+     *   <li>tout autre code, ou pas de grade → compté nulle part</li>
+     * </ul>
+     * Le {@code [0-9]} après le préfixe évite qu'un code comme « ENGINEER » ou « BCxyz »
+     * soit pris pour un grade de la grille.
+     *
+     * @return {@code [ingenieurs, projeteurs]}
+     */
+    private long[] getIngenieurProjeteurCounts(WorkforceFilter filter) {
+        String sql = "SELECT " +
+                     "  SUM(CASE WHEN g.code LIKE 'EN[0-9]%' THEN 1 ELSE 0 END) AS ing, " +
+                     "  SUM(CASE WHEN g.code LIKE 'BC[0-9]%' THEN 1 ELSE 0 END) AS proj " +
+                     "FROM [dbo].[employee_profiles] ep " +
+                     "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
+                     filter.where();
+
+        Object[] params = filter.params();
+
+        return jdbcTemplate.queryForObject(sql,
+                (rs, rowNum) -> new long[]{
+                        rs.getLong("ing"),    // SUM sur 0 ligne = NULL → getLong = 0
+                        rs.getLong("proj") },
+                params);
     }
 
     /**
@@ -190,17 +490,15 @@ public class DashboardService {
      * the frontend sizes its bars against the sum of these rows rather than
      * `totalActifs` (which comes from the repository) to stay internally consistent.
      */
-    private List<WorkforceStatsDto.CountryHeadcount> getHeadcountByCountry(Long paysId) {
+    private List<WorkforceStatsDto.CountryHeadcount> getHeadcountByCountry(WorkforceFilter filter) {
         String sql = "SELECT p.id AS pays_id, p.french_label AS pays_label, COUNT(*) AS cnt " +
                      "FROM [dbo].[employee_profiles] ep " +
                      "LEFT JOIN [dbo].[pays] p ON p.id = ep.pays_id " +
-                     "WHERE ep.lifecycle_status IN " + IN_SERVICE_SQL + " " +
-                     "  AND ep.deleted = 0 " +
-                     (paysId != null ? "  AND ep.pays_id = ? " : "") +
+                     filter.where() +
                      "GROUP BY p.id, p.french_label " +
                      "ORDER BY cnt DESC, p.french_label ASC";
 
-        Object[] params = paysId != null ? new Object[]{ paysId } : new Object[0];
+        Object[] params = filter.params();
 
         return jdbcTemplate.query(sql,
                 (rs, rowNum) -> {
@@ -215,8 +513,8 @@ public class DashboardService {
 
     // ── ③ /completion ────────────────────────────────────────────────────────
 
-    public ProfileCompletionDto getCompletion() {
-        Long paysId = tenantService.getEffectivePaysId();
+    public ProfileCompletionDto getCompletion(Long requestedPaysId) {
+        Long paysId = scopePaysId(requestedPaysId);
         long done  = paysId != null
                 ? profileRepository.countByPaysIdAndOnboardingCompletedTrue(paysId)
                 : profileRepository.countByOnboardingCompletedTrue();
@@ -230,12 +528,12 @@ public class DashboardService {
 
     // ── ④ /fin-periode-essai ─────────────────────────────────────────────────
 
-    public PreviewResponse<ProbationAlertDto> getProbationAlerts(int joursMax) {
+    public PreviewResponse<ProbationAlertDto> getProbationAlerts(int joursMax, Long requestedPaysId) {
         LocalDate today = LocalDate.now();
         LocalDate limit = today.plusDays(joursMax);
-        Long paysId = tenantService.getEffectivePaysId();
+        Long paysId = scopePaysId(requestedPaysId);
 
-        String sql = "SELECT TOP 2 ep.id, u.fullName, ep.photo_url, ep.probation_end_date, " +
+        String sql = "SELECT TOP 3 ep.id, u.fullName, ep.photo_url, ep.probation_end_date, " +
                      "       ep.contract_end_date, ep.gender, " +
                      "       d.label_fr AS department_label, r.frenchName AS role_name " +
                      "FROM [dbo].[employee_profiles] ep " +
@@ -286,9 +584,9 @@ public class DashboardService {
 
     // ── ⑤ /anniversaires ─────────────────────────────────────────────────────
 
-    public List<AnniversaireDto> getAnniversaires(int ignored) {
+    public List<AnniversaireDto> getAnniversaires(int ignored, Long requestedPaysId) {
         LocalDate today = LocalDate.now();
-        Long paysId = tenantService.getEffectivePaysId();
+        Long paysId = scopePaysId(requestedPaysId);
 
         String sql = "SELECT ep.id, u.fullName, ep.photo_url, ep.date_of_birth " +
                      "FROM [dbo].[employee_profiles] ep " +
@@ -338,27 +636,33 @@ public class DashboardService {
                 .collect(Collectors.joining(" + ", "(", ") AS sec_" + section.key()));
     }
 
-    /** A 0/1 column telling whether the profile has a non-rejected doc of {@code docType}. */
-    private static String hasDocumentColumn(String docType, String alias) {
-        return "CASE WHEN EXISTS (SELECT 1 FROM [dbo].[employee_documents] ed " +
-               "                  WHERE ed.employee_profile_id = ep.id " +
-               "                    AND ed.document_type = '" + docType + "' " +
-               "                    AND ed.verification_status <> 'REJECTED') " +
-               "     THEN 1 ELSE 0 END AS " + alias;
+    /** Codes on file (not deleted, not REJECTED) per profile, in one query for the whole page. */
+    private Map<Long, java.util.Set<String>> documentsOnFile(List<Long> profileIds) {
+        Map<Long, java.util.Set<String>> onFile = new java.util.HashMap<>();
+        if (profileIds.isEmpty()) return onFile;
+        String in = profileIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+        jdbcTemplate.query(
+                "SELECT employee_profile_id, document_type FROM [dbo].[employee_documents] " +
+                "WHERE employee_profile_id IN (" + in + ") " +
+                "  AND is_deleted = 0 AND verification_status <> 'REJECTED'",
+                rs -> {
+                    onFile.computeIfAbsent(rs.getLong("employee_profile_id"), k -> new java.util.HashSet<>())
+                          .add(rs.getString("document_type"));
+                });
+        return onFile;
     }
 
-    public List<NouvelEmployeDto> getNouveauxEmployes(int limit) {
+    public List<NouvelEmployeDto> getNouveauxEmployes(int limit, Long requestedPaysId) {
         int safeLimit = Math.max(1, Math.min(limit, 100));
         LocalDate threeMonthsAgo = LocalDate.now().minusMonths(3);
-        Long paysId = tenantService.getEffectivePaysId();
+        Long paysId = scopePaysId(requestedPaysId);
 
-        String sql = "SELECT ep.id, u.fullName, ep.hire_date, ep.gender, ep.contract_type, " +
+        String sql = "SELECT ep.id, u.fullName, ep.hire_date, ep.gender, " +
+                     com.daf360.rh.lists.ContractTypeRefs.sqlCode("ep", "ctv") + " AS contract_type, " +
                      "       ep.onboarding_completed, " +
                      "       d.label_fr AS department_label, g.label_fr AS grade_label, " +
                      "       disc.label_fr AS discipline_label, p.french_label AS pays_label, " +
-                     REQUIRED_DOC_TYPES.stream()
-                             .map(t -> hasDocumentColumn(t, "has_" + t))
-                             .collect(Collectors.joining(", ", "", ", ")) +
+                     "       ep.pays_id, " +
                      ONBOARDING_SECTIONS.stream()
                              .map(DashboardService::sectionFilledColumn)
                              .collect(Collectors.joining(", ", "", " ")) +
@@ -368,6 +672,7 @@ public class DashboardService {
                      "LEFT JOIN [dbo].[grades]        g    ON g.id    = ep.grade_id " +
                      "LEFT JOIN [dbo].[disciplines]   disc ON disc.id = ep.discipline_id " +
                      "LEFT JOIN [dbo].[pays]          p    ON p.id    = ep.pays_id " +
+                     com.daf360.rh.lists.ContractTypeRefs.sqlJoin("ep", "ctv") +
                      "WHERE ep.lifecycle_status = 'ACTIVE' " +
                      "  AND ep.deleted = 0 " +
                      "  AND ep.hire_date >= ? " +
@@ -379,16 +684,13 @@ public class DashboardService {
         params.add(Date.valueOf(threeMonthsAgo));
         if (paysId != null) params.add(paysId);
 
-        return jdbcTemplate.query(sql,
+        // Two passes: the profile rows, then one documents query for the whole page — the
+        // required list is per country now, so it can no longer be a fixed set of columns.
+        record Row(long pid, Long paysId, String fullName, Date hireDate, String dept, String grade,
+                   String gender, boolean onboardingCompleted, String paysLabel, String discipline,
+                   String contractType, List<OnboardingSectionDto> sections) {}
+        List<Row> rows = jdbcTemplate.query(sql,
                 (rs, rowNum) -> {
-                    long pid = rs.getLong("id");
-                    Date d   = rs.getDate("hire_date");
-
-                    List<String> missing = new ArrayList<>();
-                    for (String docType : REQUIRED_DOC_TYPES) {
-                        if (rs.getInt("has_" + docType) == 0) missing.add(docType);
-                    }
-
                     List<OnboardingSectionDto> sections = new ArrayList<>();
                     for (OnboardingSection section : ONBOARDING_SECTIONS) {
                         sections.add(new OnboardingSectionDto(
@@ -396,79 +698,108 @@ public class DashboardService {
                                 rs.getInt("sec_" + section.key()),
                                 section.columns().size()));
                     }
-                    // Documents last: they come from employee_documents, not the profile row.
-                    sections.add(new OnboardingSectionDto(
-                            DOCUMENTS_SECTION_KEY,
-                            REQUIRED_DOC_TYPES.size() - missing.size(),
-                            REQUIRED_DOC_TYPES.size()));
-
-                    return new NouvelEmployeDto(
-                            pid,
-                            rs.getString("fullName"),
-                            "/api/hr/profiles/" + pid + "/photo",
-                            d != null ? d.toLocalDate() : null,
-                            rs.getString("department_label"),
-                            rs.getString("grade_label"),
-                            rs.getString("gender"),
-                            rs.getBoolean("onboarding_completed"),
-                            rs.getString("pays_label"),
-                            rs.getString("discipline_label"),
-                            rs.getString("contract_type"),
-                            REQUIRED_DOC_TYPES.size() - missing.size(),
-                            REQUIRED_DOC_TYPES.size(),
-                            missing,
-                            sections);
+                    long paysRaw = rs.getLong("pays_id");
+                    return new Row(rs.getLong("id"), rs.wasNull() ? null : paysRaw,
+                            rs.getString("fullName"), rs.getDate("hire_date"),
+                            rs.getString("department_label"), rs.getString("grade_label"),
+                            rs.getString("gender"), rs.getBoolean("onboarding_completed"),
+                            rs.getString("pays_label"), rs.getString("discipline_label"),
+                            rs.getString("contract_type"), sections);
                 },
                 params.toArray());
+
+        Map<Long, java.util.Set<String>> onFile = documentsOnFile(rows.stream().map(Row::pid).toList());
+        return rows.stream().map(r -> {
+            List<String> required = documentTypeService.requiredCodes(r.paysId());
+            java.util.Set<String> present = onFile.getOrDefault(r.pid(), java.util.Set.of());
+            List<String> missing = required.stream().filter(c -> !fills(present, c)).toList();
+
+            List<OnboardingSectionDto> sections = new ArrayList<>(r.sections());
+            // Documents last: they come from employee_documents, not the profile row.
+            sections.add(new OnboardingSectionDto(
+                    DOCUMENTS_SECTION_KEY, required.size() - missing.size(), required.size()));
+
+            return new NouvelEmployeDto(
+                    r.pid(),
+                    r.fullName(),
+                    "/api/hr/profiles/" + r.pid() + "/photo",
+                    r.hireDate() != null ? r.hireDate().toLocalDate() : null,
+                    r.dept(),
+                    r.grade(),
+                    r.gender(),
+                    r.onboardingCompleted(),
+                    r.paysLabel(),
+                    r.discipline(),
+                    r.contractType(),
+                    required.size() - missing.size(),
+                    required.size(),
+                    missing,
+                    sections);
+        }).toList();
     }
 
     // ── /missing-documents ────────────────────────────────────────────────────
-    // Required doc types every active profile should have
+    // The required doc types of each profile's country (RH's choice, V121)
 
-    public PreviewResponse<MissingDocumentDto> getMissingDocuments() {
+    public PreviewResponse<MissingDocumentDto> getMissingDocuments(Long requestedPaysId) {
+        Long paysId = scopePaysId(requestedPaysId);
+        Object[] params = paysId != null ? new Object[]{ paysId } : new Object[0];
+        String requirements = requirementsSql(paysId);
+        if (requirements == null) return new PreviewResponse<>(List.of(), 0L);
         String fromWhere =
                 "FROM [dbo].[employee_profiles] ep " +
                 "JOIN [dbo].[Users] u ON u.id = ep.user_id " +
-                "CROSS JOIN (VALUES ('CONTRACT'),('ID_CARD'),('RIB')) AS req(doc_type) " +
+                "JOIN " + requirements + "ON req.pays_id = ep.pays_id " +
                 // Même ensemble que l'effectif : un contrat manquant ne cesse pas de
                 // manquer parce que la personne est partie en mission ce matin.
                 "WHERE ep.lifecycle_status IN " + IN_SERVICE_SQL + " " +
                 "  AND ep.deleted = 0 " +
+                (paysId != null ? "  AND ep.pays_id = ? " : "") +
                 "  AND NOT EXISTS ( " +
                 "    SELECT 1 FROM [dbo].[employee_documents] ed " +
                 "    WHERE ed.employee_profile_id = ep.id " +
-                "      AND ed.document_type = req.doc_type " +
+                "      AND ed.document_type IN (req.doc_type, req.alias_type) " +
+                // Soft-deleted (V77) rows stay in the table for the audit trail; they are
+                // not on file.
+                "      AND ed.is_deleted = 0 " +
                 "      AND ed.verification_status <> 'REJECTED' " +
                 "  ) ";
 
         // Count distinct employees (not doc-type rows)
         Long total = jdbcTemplate.queryForObject(
-                "SELECT COUNT(DISTINCT ep.id) " + fromWhere, Long.class);
+                "SELECT COUNT(DISTINCT ep.id) " + fromWhere, Long.class, params);
 
         // Flat rows ordered by urgency desc so most-urgent employees come first
-        record FlatRow(long pid, String fullName, String docType, int months) {}
+        record FlatRow(long pid, long paysId, String fullName, String docType, int months) {}
         List<FlatRow> rows = jdbcTemplate.query(
-                "SELECT ep.id AS profile_id, u.fullName, req.doc_type, " +
+                "SELECT ep.id AS profile_id, ep.pays_id, u.fullName, req.doc_type, " +
                 "       DATEDIFF(month, ep.hire_date, GETDATE()) AS months_since_hire " +
                 fromWhere +
                 "ORDER BY months_since_hire DESC, ep.id ASC",
                 (rs, rowNum) -> new FlatRow(
                         rs.getLong("profile_id"),
+                        rs.getLong("pays_id"),
                         rs.getString("fullName"),
                         rs.getString("doc_type"),
-                        rs.getInt("months_since_hire")));
+                        rs.getInt("months_since_hire")),
+                params);
 
-        // Group by employee, preserving urgency order; take first 2 employees
+        // Group by employee, preserving urgency order; take first 5 employees. Labels come
+        // from the country's own vocabulary: the list is configurable, so the card can no
+        // longer hold a code → label map of its own.
         LinkedHashMap<Long, MissingDocumentDto> grouped = new LinkedHashMap<>();
         for (FlatRow row : rows) {
-            grouped.computeIfAbsent(row.pid(), k -> {
+            MissingDocumentDto dto = grouped.computeIfAbsent(row.pid(), k -> {
                 String urgency = row.months() >= 3 ? "HIGH" : row.months() >= 1 ? "MEDIUM" : "LOW";
-                return new MissingDocumentDto(row.pid(), row.fullName(), new ArrayList<>(), urgency);
-            }).missingDocs().add(row.docType());
+                return new MissingDocumentDto(row.pid(), row.fullName(), new ArrayList<>(),
+                        new ArrayList<>(), urgency);
+            });
+            dto.missingDocs().add(row.docType());
+            dto.missingDocLabels().add(documentTypeService.labelFr(row.paysId(), row.docType()));
         }
 
         List<MissingDocumentDto> items = grouped.values().stream()
-                .limit(2)
+                .limit(5)
                 .collect(Collectors.toList());
 
         return new PreviewResponse<>(items, total != null ? total : 0L);

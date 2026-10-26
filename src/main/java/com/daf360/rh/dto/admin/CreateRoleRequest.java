@@ -11,6 +11,9 @@ public class CreateRoleRequest {
     @NotBlank
     private String frenchName;
 
+    /** Optional English name; blank = none (the UI falls back to frenchName). */
+    private String englishName;
+
     private Long parentRoleId;
 
     private Boolean showAll = false;

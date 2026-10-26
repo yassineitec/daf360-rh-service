@@ -12,6 +12,7 @@ public record CandidateInterviewDto(
         Long candidateId,
         Long interviewTypeId,
         String interviewTypeName,
+        String interviewTypeNameEn,
         OffsetDateTime scheduledAt,
         String location,
         String interviewerNotes,

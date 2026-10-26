@@ -11,5 +11,7 @@ public class RoleUserItem {
     private String email;           // Users.username
     private Long   paysId;
     private String paysLabel;       // pays.french_label
+    private String paysLabelEn;     // pays.english_label — null when absent (UI shows paysLabel)
     private String currentRoleName; // populated only in search results
+    private String currentRoleNameEn; // Roles.englishName — search results only, null when absent
 }

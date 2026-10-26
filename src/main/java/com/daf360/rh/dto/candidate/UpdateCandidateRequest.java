@@ -50,6 +50,9 @@ public class UpdateCandidateRequest {
     @Size(max = 100)
     private String nationalId;
 
+    @Size(max = 100)
+    private String passportNumber;
+
     /** Canonical GENDER list code (MALE/FEMALE/OTHER/UNSPECIFIED); normalized on write. */
     @Size(max = 30)
     private String gender;
@@ -64,7 +67,7 @@ public class UpdateCandidateRequest {
     private Long departmentId;
 
     /**
-     * Contract type — an EMPLOYMENT_TYPE `configurable_list_values.id`, the same FK
+     * Contract type — an CONTRACT_TYPE `configurable_list_values.id`, the same FK
      * `CreateCandidateRequest` sets.
      *
      * Editable after creation because a candidature is regularly reshaped during the

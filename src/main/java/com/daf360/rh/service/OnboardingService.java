@@ -58,7 +58,6 @@ public class OnboardingService {
     private final EmployeeProfileRepository  profileRepo;
     private final WorkingTimeRegimeRepository regimeRepo;
     private final WorkflowInstanceService    workflowInstanceService;
-    private final PayrollMatriculeService    payrollMatriculeService;
     private final MailService                mailService;
     private final AuditService               auditService;
     private final AppProperties              appProperties;
@@ -74,6 +73,8 @@ public class OnboardingService {
     private final com.daf360.rh.repository.NationalityRepository  natRepo;
     private final com.daf360.rh.repository.BankRepository         bankRepo;
     private final com.daf360.rh.lifecycle.ContractTypeBridge      contractTypeBridge;
+    /** employee_profiles.contract_type stores the CONTRACT_TYPE row id, not the code. */
+    private final com.daf360.rh.lists.ContractTypeRefs             contractTypeRefs;
     /**
      * Contract creation at completion (V69). Safe injection: EmployeeLifecycleService knows
      * nothing about onboarding, so there is no cycle.
@@ -321,7 +322,7 @@ public class OnboardingService {
         profile.setUpdatedAt(OffsetDateTime.now());
         // Employment
         profile.setHireDate(dto.getHireDate());
-        profile.setContractType(dto.getContractType());
+        profile.setContractTypeId(contractTypeRefs.toStored(dto.getContractType(), candidate.getPaysId()));
         profile.setContractEndDate(dto.getContractEndDate());
         profile.setProbationEndDate(dto.getProbationEndDate());
         profile.setIsOnProbation(dto.getIsOnProbation());
@@ -427,14 +428,8 @@ public class OnboardingService {
         saved.setOnboardingCompleted(true);
         saved.setOnboardingCompletedAt(OffsetDateTime.now());
         saved.setLifecycleStatus(LifecycleStatus.ACTIVE);
-        // The payroll matricule is allocated here rather than at profile creation: an
-        // abandoned PRE_ONBOARDING draft would otherwise consume a register number for
-        // good. Guarded so re-running an incomplete onboarding keeps the first number.
-        if (saved.getPayrollMatricule() == null) {
-            saved.setPayrollMatricule(payrollMatriculeService.allocate());
-            log.info("Allocated payroll matricule={} to profileId={}",
-                     saved.getPayrollMatricule(), saved.getId());
-        }
+        // No payroll matricule here: it comes from the accounting firm and is typed in
+        // once on the profile's Emploi tab (EmployeeProfileService.applyPayrollMatricule).
         saved.setUpdatedAt(OffsetDateTime.now());
         saved = profileRepo.save(saved);
         log.info("Onboarding completed: profileId={} userId={} now ACTIVE", saved.getId(), saved.getUserId());
@@ -530,21 +525,13 @@ public class OnboardingService {
 
     /**
      * Pre-fills the onboarding contract type from the candidate's employment type.
-     * The candidate's employment type uses the lifecycle vocabulary (CDI/CDD/…)
-     * while the onboarding form uses PERMANENT/FIXED_TERM/INTERN/CONSULTANT, so we
-     * map the known ones and leave the rest blank (the user then picks).
+     * Both now speak the same vocabulary — the CONTRACT_TYPE configurable list (Admin ›
+     * Listes configurables › Type de contrat) — so the candidate's value code is used as is.
+     * It used to be mapped onto a hardcoded PERMANENT/FIXED_TERM/INTERN/CONSULTANT set,
+     * which dropped DETACHEMENT and any value added in the admin.
      */
     private String onboardingContractTypeFromCandidate(Long employmentTypeId) {
-        if (employmentTypeId == null) return null;
-        String code = contractTypeBridge.resolveContractTypeCode(employmentTypeId);
-        if (code == null) return null;
-        return switch (code) {
-            case "CDI"                 -> "PERMANENT";
-            case "CDD"                 -> "FIXED_TERM";
-            case "STAGE", "CIVP"       -> "INTERN";
-            case "PORTAGE", "FREELANCE" -> "CONSULTANT";
-            default                    -> null; // DETACHEMENT / unknown → let the user choose
-        };
+        return contractTypeBridge.resolveListValueCode(employmentTypeId);
     }
 
     private RegimeSummary toRegimeSummary(WorkingTimeRegime r) {
@@ -571,16 +558,6 @@ public class OnboardingService {
             licenses.add(prov.getLicenseOther());
         }
         return licenses.isEmpty() ? null : String.join(", ", licenses);
-    }
-
-    private String provisioningStatusLabel(ItProvisioningStatus status) {
-        if (status == null) return null;
-        return switch (status) {
-            case PENDING       -> "En attente";
-            case IN_PROGRESS   -> "En cours";
-            case EMAIL_CREATED -> "Email créé";
-            case COMPLETED     -> "Complété";
-        };
     }
 
     private SaveDraftRequest deserializeDraft(String json) {
@@ -643,7 +620,7 @@ public class OnboardingService {
                 .appliedDiscipline(c.getAppliedDiscipline() != null ? c.getAppliedDiscipline().getLabelFr() : null)
                 .department(c.getDepartment() != null ? c.getDepartment().getLabelFr() : null)
                 .contractType(hasDraft ? draft.getContractType()
-                            : hasProfile ? existingProfile.getContractType()
+                            : hasProfile ? contractTypeRefs.codeOf(existingProfile.getContractTypeId(), existingProfile.getPaysId())
                             : onboardingContractTypeFromCandidate(c.getEmploymentTypeId()))
                 .expectedStartDate(c.getExpectedStartDate())
                 .hireDate(hasProfile ? existingProfile.getHireDate() : null)
@@ -692,7 +669,7 @@ public class OnboardingService {
                         ? existingProfile.getNationality().getId()
                         : c.getNationality() != null ? c.getNationality().getId() : null)
                 .passportNumber(hasDraft ? draft.getPassportNumber()
-                              : hasProfile ? existingProfile.getPassportNumber() : null)
+                              : hasProfile ? existingProfile.getPassportNumber() : c.getPassportNumber())
                 .cnssNumber(hasDraft ? draft.getCnssNumber()
                           : hasProfile ? existingProfile.getCnssNumber() : null)
                 .cnssAffiliationDate(hasDraft ? draft.getCnssAffiliationDate()
@@ -732,7 +709,8 @@ public class OnboardingService {
                 .matricule(matricule)
                 .itDeviceName(itDeviceName)
                 .ms365LicenseType(prov != null ? buildLicenseLabel(prov) : null)
-                .itProvisioningStatus(prov != null ? provisioningStatusLabel(prov.getStatus()) : null)
+                // The raw code, not a label: the front translates it (IT_PROVISIONING.STATUS.*).
+                .itProvisioningStatus(prov != null && prov.getStatus() != null ? prov.getStatus().name() : null)
                 .requestValidatedAt(c.getAcceptedAt())
                 .itAccountCreatedAt(prov != null ? prov.getMs365EmailCreatedAt() : null)
                 .equipmentAssignedAt(prov != null ? prov.getCompletedAt() : null)
@@ -785,7 +763,8 @@ public class OnboardingService {
                     profile.getId(), profile.getCurrentContractId());
             return;
         }
-        String contractTypeCode = contractTypeBridge.resolveContractTypeCode(
+        // The list id (or CDI): the contract stores it and applies its nature's rules.
+        String contractTypeCode = contractTypeBridge.resolveContractTypeRef(
                 candidate.getEmploymentTypeId());
         if (contractTypeCode == null) {
             log.warn("No contract type resolvable for candidate {} (employmentTypeId={}) — "
@@ -800,6 +779,14 @@ public class OnboardingService {
         req.setContractTypeCode(contractTypeCode);
         req.setDateDebut(dto.getHireDate());
         req.setDateFinPrevue(dto.getContractEndDate());
+        // The trial end RH typed on the same step — the date the trial-end alert must announce.
+        // « Pas de période d'essai » must not fall back to the computed default, or HR would be
+        // alerted about a trial that does not exist.
+        if (Boolean.FALSE.equals(dto.getIsOnProbation())) {
+            req.setNoTrialPeriod(true);
+        } else {
+            req.setDateFinPeriodeEssai(dto.getProbationEndDate());
+        }
         // Null is fine and meaningful: doCreateContract then resolves the négociated figure
         // from the offer, then the grade default, and records which one it used.
         req.setNoticePeriodDays(dto.getNoticePeriodDays());

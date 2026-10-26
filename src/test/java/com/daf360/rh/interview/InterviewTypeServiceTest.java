@@ -5,10 +5,12 @@ import com.daf360.rh.domain.enums.InterviewStatus;
 import com.daf360.rh.dto.interview.CreateInterviewTypeRequest;
 import com.daf360.rh.dto.interview.InterviewTypeDto;
 import com.daf360.rh.dto.interview.UpdateInterviewTypeRequest;
+import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.BusinessRuleException;
 import com.daf360.rh.exception.ResourceNotFoundException;
 import com.daf360.rh.repository.CandidateInterviewRepository;
 import com.daf360.rh.repository.InterviewTypeRepository;
+import com.daf360.rh.security.PaysScopeContext;
 import com.daf360.rh.security.TenantService;
 import com.daf360.rh.service.InterviewTypeService;
 import org.junit.jupiter.api.Test;
@@ -20,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -52,7 +55,7 @@ class InterviewTypeServiceTest {
         when(typeRepo.findByPaysIdOrderByOrderIndexAsc(PAYS_ID))
                 .thenReturn(List.of(type(1L, PAYS_ID, true)));
 
-        List<InterviewTypeDto> result = service.list();
+        List<InterviewTypeDto> result = service.list(null);
 
         assertEquals(1, result.size());
         assertEquals(PAYS_ID, result.get(0).paysId());
@@ -60,11 +63,31 @@ class InterviewTypeServiceTest {
     }
 
     @Test
+    void list_requestedPaysInScope_filtersOnThatPays() {
+        when(tenantService.getPaysScope()).thenReturn(new PaysScopeContext.Scope(false, Set.of(PAYS_ID, 2L)));
+        when(typeRepo.findByPaysIdOrderByOrderIndexAsc(2L)).thenReturn(List.of(type(3L, 2L, true)));
+
+        List<InterviewTypeDto> result = service.list(2L);
+
+        assertEquals(1, result.size());
+        assertEquals(2L, result.get(0).paysId());
+        verify(typeRepo, never()).findAll();
+    }
+
+    @Test
+    void list_requestedPaysOutOfScope_throwsForbidden() {
+        when(tenantService.getPaysScope()).thenReturn(new PaysScopeContext.Scope(false, Set.of(PAYS_ID)));
+
+        assertThrows(AppException.class, () -> service.list(99L));
+        verify(typeRepo, never()).findByPaysIdOrderByOrderIndexAsc(any());
+    }
+
+    @Test
     void list_adminNull_returnsAll() {
         when(tenantService.getEffectivePaysId()).thenReturn(null);
         when(typeRepo.findAll()).thenReturn(List.of(type(1L, PAYS_ID, true), type(2L, 2L, true)));
 
-        List<InterviewTypeDto> result = service.list();
+        List<InterviewTypeDto> result = service.list(null);
 
         assertEquals(2, result.size());
         verify(typeRepo).findAll();
@@ -74,7 +97,7 @@ class InterviewTypeServiceTest {
 
     @Test
     void create_validRequest_persistsAndReturnsDto() {
-        CreateInterviewTypeRequest req = new CreateInterviewTypeRequest(PAYS_ID, "Entretien RH", "desc", 1);
+        CreateInterviewTypeRequest req = new CreateInterviewTypeRequest(PAYS_ID, "Entretien RH", "HR interview", "desc", 1);
         InterviewType saved = type(10L, PAYS_ID, true);
         when(typeRepo.save(any())).thenReturn(saved);
 
@@ -94,10 +117,11 @@ class InterviewTypeServiceTest {
         when(typeRepo.findById(5L)).thenReturn(Optional.of(existing));
         when(typeRepo.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        UpdateInterviewTypeRequest req = new UpdateInterviewTypeRequest("Updated Name", "new desc", 2);
+        UpdateInterviewTypeRequest req = new UpdateInterviewTypeRequest("Updated Name", "Updated EN", "new desc", 2);
         InterviewTypeDto result = service.update(5L, req, ACTOR_ID);
 
         assertEquals("Updated Name", result.name());
+        assertEquals("Updated EN", result.nameEn());
         assertEquals(2, result.orderIndex());
     }
 
@@ -108,7 +132,7 @@ class InterviewTypeServiceTest {
         when(typeRepo.findById(5L)).thenReturn(Optional.of(existing));
 
         assertThrows(BusinessRuleException.class,
-                () -> service.update(5L, new UpdateInterviewTypeRequest("X", null, null), ACTOR_ID));
+                () -> service.update(5L, new UpdateInterviewTypeRequest("X", null, null, null), ACTOR_ID));
     }
 
     @Test
@@ -116,7 +140,7 @@ class InterviewTypeServiceTest {
         when(typeRepo.findById(99L)).thenReturn(Optional.empty());
 
         assertThrows(ResourceNotFoundException.class,
-                () -> service.update(99L, new UpdateInterviewTypeRequest("X", null, null), ACTOR_ID));
+                () -> service.update(99L, new UpdateInterviewTypeRequest("X", null, null, null), ACTOR_ID));
     }
 
     // ── deactivate ────────────────────────────────────────────────────────────

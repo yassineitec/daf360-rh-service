@@ -44,10 +44,11 @@ public class EmployeeProfileService {
     private final EmployeeProfileRepository profileRepository;
     private final EmployeeProfileMapper     mapper;
     private final AuditService              auditService;
-    private final PayrollMatriculeService   payrollMatriculeService;
     private final JdbcTemplate              jdbcTemplate;
     private final ObjectMapper              objectMapper;
     private final com.daf360.rh.security.TenantService tenantService;
+    /** Keeps the current contract's end dates in step with the profile's (they drive the alerts). */
+    private final com.daf360.rh.lifecycle.EmployeeLifecycleService lifecycleService;
 
     // ── SharePoint (profile photo mirroring, cf. spec 2026-08-18) ─────────────
     // The photo's location now comes from SharePointResolver (V84 config + discovery cache)
@@ -69,6 +70,38 @@ public class EmployeeProfileService {
     private final BankRepository         bankRepo;
     private final NationalityRepository        nationalityRepo;
     private final WorkingTimeRegimeRepository  regimeRepo;
+    /** Contract types come from Admin › Listes configurables › Type de contrat (CONTRACT_TYPE). */
+    private final com.daf360.rh.lists.ConfigurableListService configurableListService;
+    /** employee_profiles.contract_type stores the list row's id — converted here, both ways. */
+    private final com.daf360.rh.lists.ContractTypeRefs contractTypeRefs;
+
+    /**
+     * The value to store for a contract type sent by the client (a code such as CDI, or a
+     * list row id): the id of an active CONTRACT_TYPE value of the profile's pays. Replaces
+     * the PERMANENT|FIXED_TERM|INTERN|CONSULTANT regex the DTOs used to carry, so a value
+     * added in the admin is accepted without a release. A profile may keep its current
+     * value even after it is deactivated — only a *change* to an unknown/inactive one is refused.
+     */
+    private String resolveContractType(String codeOrId, String currentStored, Long paysId) {
+        // Unchanged value: kept as is, even one the list does not hold (a legacy text such as
+        // 'contrat' the migration could not map). The edit form echoes it on every save, and
+        // refusing it would make the whole profile unsavable over a field nobody touched.
+        if (codeOrId != null && currentStored != null && codeOrId.trim().equals(currentStored.trim())) {
+            return currentStored;
+        }
+        String stored = contractTypeRefs.toStored(codeOrId, paysId);
+        if (stored == null || stored.equals(contractTypeRefs.find(currentStored, paysId)
+                .map(v -> String.valueOf(v.getId())).orElse(null))) {
+            return stored;
+        }
+        boolean active = configurableListService.getListValues(com.daf360.rh.lists.ContractTypeRefs.LIST_CODE, paysId)
+                .stream().anyMatch(v -> stored.equals(String.valueOf(v.getId())));
+        if (!active) {
+            throw new AppException(com.daf360.rh.exception.ErrorCode.CONTRACT_TYPE_INVALID,
+                    "Type de contrat inconnu ou désactivé : " + codeOrId);
+        }
+        return stored;
+    }
 
     // ── Create ────────────────────────────────────────────────────────────────
 
@@ -82,22 +115,21 @@ public class EmployeeProfileService {
 
         // The Users.employee_id uniqueness probe that stood here is gone with the column's
         // role: it is NULL for every profile in prod, so the check passed unconditionally
-        // and guarded nothing. Uniqueness of the real matricule is enforced by
-        // PayrollMatriculeService's allocation lock plus the filtered unique index.
+        // and guarded nothing. Uniqueness of the real matricule is checked per pays in
+        // applyPayrollMatricule, backed by the filtered unique index.
+
+        String contractTypeId = resolveContractType(dto.getContractType(), null, dto.getPaysId());
 
         EmployeeProfile profile = mapper.toEntity(dto);
+        profile.setContractTypeId(contractTypeId);
         profile.setCreatedAt(OffsetDateTime.now(PARIS));
 
         // Resolve FK dimension fields from IDs in the create DTO
         applyDimensionFks(profile, dto.getNationalityId(), dto.getGradeId(),
                 dto.getDisciplineId(), dto.getNogLevelId(), dto.getDepartmentId(), dto.getBankId());
 
-        // No matricule here: the mapper forces every new profile to PRE_ONBOARDING, and a
-        // number is allocated on the transition to ACTIVE — so an abandoned file never
-        // burns one. Left as an explicit call rather than nothing, so a future change to
-        // that mapper default keeps allocating instead of silently producing ACTIVE
-        // profiles with no matricule.
-        ensurePayrollMatricule(profile, profile.getLifecycleStatus());
+        // No matricule here: it is the number the accounting firm assigns, typed in once
+        // on the Emploi tab when it arrives (see applyPayrollMatricule).
 
         EmployeeProfile saved = profileRepository.save(profile);
 
@@ -145,7 +177,11 @@ public class EmployeeProfileService {
                 filter.getHireDateTo(),
                 filter.getSearch(),
                 pageable
-        ).map(mapper::toSummaryDto);
+        ).map(p -> {
+            EmployeeProfileSummaryDto dto = mapper.toSummaryDto(p);
+            dto.setContractType(contractTypeRefs.codeOf(p.getContractTypeId(), p.getPaysId()));
+            return dto;
+        });
     }
 
     // ── Update ────────────────────────────────────────────────────────────────
@@ -167,10 +203,18 @@ public class EmployeeProfileService {
             dto.setCnssAffiliationDate(null);
         }
 
+        // The edit form posts '' for "no selection"; null keeps the PATCH meaning (untouched).
+        if (dto.getContractType() != null && dto.getContractType().isBlank()) {
+            dto.setContractType(null);
+        }
+        String contractTypeId = resolveContractType(dto.getContractType(), profile.getContractTypeId(), profile.getPaysId());
+
         String before = safeJson(profile);
 
         // Apply non-dimension scalar fields via MapStruct (PATCH semantics)
         mapper.updateEntityFromDto(dto, profile);
+        // PATCH: null leaves the stored contract type untouched, like the scalar fields above.
+        if (contractTypeId != null) profile.setContractTypeId(contractTypeId);
 
         // Keep gender canonical (MALE/FEMALE/OTHER/UNSPECIFIED) regardless of what the
         // client sent — the detail edit form historically posted French labels.
@@ -221,8 +265,14 @@ public class EmployeeProfileService {
         if (dto.getSalaireNetCandidat() != null) profile.setSalaireNetCandidat(dto.getSalaireNetCandidat());
         if (dto.getSalaireNetRh()       != null) profile.setSalaireNetRh(dto.getSalaireNetRh());
 
+        applyPayrollMatricule(profile, dto.getPayrollMatricule(), auth);
+
         profile.setUpdatedAt(OffsetDateTime.now(PARIS));
         EmployeeProfile saved = profileRepository.save(profile);
+
+        // The contract-end and trial-end alerts read the contract, not the profile.
+        lifecycleService.syncContractDatesFromProfile(saved.getCurrentContractId(),
+                dto.getContractEndDate(), dto.getProbationEndDate());
 
         String afterJson = safeJson(saved);
         String afterWithReason = "{\"reason\":\"" + dto.getReason().replace("\"", "\\\"")
@@ -249,7 +299,6 @@ public class EmployeeProfileService {
         if (next == LifecycleStatus.ARCHIVED) {
             pseudonymise(profile);
         }
-        ensurePayrollMatricule(profile, next);
 
         profile.setLifecycleStatus(next);
         profile.setUpdatedAt(OffsetDateTime.now(PARIS));
@@ -289,7 +338,6 @@ public class EmployeeProfileService {
         if (next == LifecycleStatus.ARCHIVED) {
             pseudonymise(profile);
         }
-        ensurePayrollMatricule(profile, next);
         profile.setLifecycleStatus(next);
         profile.setUpdatedAt(OffsetDateTime.now(PARIS));
         profileRepository.save(profile);
@@ -330,7 +378,9 @@ public class EmployeeProfileService {
         // matricule. Only the source moves; the contract is untouched.
         "COALESCE(u.email, u.username) AS email, ep.payroll_matricule AS employee_id, u.pays_id AS pays_id, " +
         "p.french_label AS pays_label, u.role_id AS role_id, r.frenchName AS role_name, " +
-        "ep.lifecycle_status AS lifecycle_status, ep.contract_type AS contract_type, " +
+        "ep.lifecycle_status AS lifecycle_status, " +
+        // contract_type stores the CONTRACT_TYPE row id; the list keeps carrying the code.
+        com.daf360.rh.lists.ContractTypeRefs.sqlCode("ep", "ctv") + " AS contract_type, " +
         "ep.hire_date AS hire_date, ep.photo_url AS photo_url, ep.gender AS gender, " +
         "d.label_fr AS department, g.label_fr AS grade, " +
         "disc.label_fr AS discipline, nog.label_fr AS nog_level ";
@@ -343,7 +393,8 @@ public class EmployeeProfileService {
         "LEFT JOIN [dbo].[departments] d ON d.id = ep.department_id " +
         "LEFT JOIN [dbo].[grades] g ON g.id = ep.grade_id " +
         "LEFT JOIN [dbo].[disciplines] disc ON disc.id = ep.discipline_id " +
-        "LEFT JOIN [dbo].[nog_levels] nog ON nog.id = ep.nog_level_id ";
+        "LEFT JOIN [dbo].[nog_levels] nog ON nog.id = ep.nog_level_id " +
+        com.daf360.rh.lists.ContractTypeRefs.sqlJoin("ep", "ctv");
 
     private static final org.springframework.jdbc.core.RowMapper<EmployeeListItemDto>
             EMPLOYEE_ROW_MAPPER = (rs, rowNum) -> {
@@ -422,7 +473,7 @@ public class EmployeeProfileService {
         "grade",           "g.label_fr",
         "department",      "d.label_fr",
         "pays",            "p.french_label",
-        "contractType",    "ep.contract_type",
+        "contractType",    com.daf360.rh.lists.ContractTypeRefs.sqlCode("ep", "ctv"),
         "lifecycleStatus", "ep.lifecycle_status",
         "hireDate",        "ep.hire_date");
 
@@ -504,7 +555,7 @@ public class EmployeeProfileService {
                              + "('ACTIVE','ON_LEAVE','ON_MISSION')) " : "") +
             (department != null ? "AND d.label_fr = ? " : "") +
             (grade      != null ? "AND g.label_fr = ? " : "") +
-            (contract   != null ? "AND ep.contract_type = ? " : "") +
+            (contract   != null ? "AND " + com.daf360.rh.lists.ContractTypeRefs.sqlCode("ep", "ctv") + " = ? " : "") +
             (hireFrom   != null ? "AND ep.hire_date >= ? " : "") +
             (hireTo     != null ? "AND ep.hire_date <= ? " : "");
 
@@ -600,13 +651,15 @@ public class EmployeeProfileService {
                     rs.getString("label_fr"), rs.getString("label_fr"),
                     rs.getString("label_en")));
 
-        // Raw codes only — contract_type is a free varchar holding two generations
-        // of codes (PERMANENT/FIXED_TERM… and CDI/CDD/…); the client translates.
+        // Codes only — contract_type stores the CONTRACT_TYPE row id, resolved back to its
+        // code (a not-yet-migrated row still holds a legacy code); the client translates.
+        String contractCode = com.daf360.rh.lists.ContractTypeRefs.sqlCode("ep", "ctv");
         List<String> contractTypes = jdbcTemplate.queryForList(
-            "SELECT DISTINCT ep.contract_type " +
+            "SELECT DISTINCT " + contractCode + " AS code " +
             "FROM [dbo].[employee_profiles] ep " +
+            com.daf360.rh.lists.ContractTypeRefs.sqlJoin("ep", "ctv") +
             "WHERE ep.deleted = 0 AND ep.contract_type IS NOT NULL AND ep.contract_type <> '' " +
-            "ORDER BY ep.contract_type",
+            "ORDER BY code",
             String.class);
 
         return new com.daf360.rh.dto.profile.FilterOptionsDto(
@@ -1302,19 +1355,45 @@ public class EmployeeProfileService {
     // reports WHY it failed instead of returning a bare null.
 
     /**
-     * Gives the profile a payroll matricule the first time it becomes ACTIVE.
+     * Records the matricule transmitted by the accounting firm — HR_ADMIN_ROLES only.
      *
-     * <p>Mirrors the allocation in OnboardingService STEP 7, for the profiles that reach
-     * ACTIVE without going through the wizard — a PRE_ONBOARDING row activated by hand,
-     * or a rehire. Idempotent: a profile that already has a number keeps it across every
-     * later ON_LEAVE / ON_MISSION / ACTIVE round trip.
+     * <p>It is the key PayslipBatchService matches the monthly payroll PDF against, so a
+     * wrong value detaches the employee from their payslips: setting or correcting it is
+     * reserved to HR_ADMIN_ROLES holders, HR_UPDATE_PROFILE alone is not enough.
+     * Re-sending the stored value is a no-op (the edit form echoes it back), so other
+     * roles can still save the rest of the profile. Uniqueness is per pays, like the
+     * external payroll register itself.
      */
-    private void ensurePayrollMatricule(EmployeeProfile profile, LifecycleStatus next) {
-        if (next == LifecycleStatus.ACTIVE && profile.getPayrollMatricule() == null) {
-            profile.setPayrollMatricule(payrollMatriculeService.allocate());
-            log.info("Allocated payroll matricule={} to profileId={} on transition to ACTIVE",
-                     profile.getPayrollMatricule(), profile.getId());
+    private void applyPayrollMatricule(EmployeeProfile profile, String requested, Authentication auth) {
+        if (requested == null || requested.isBlank()) return;
+        String value = requested.trim();
+
+        String current = profile.getPayrollMatricule();
+        if (value.equals(current)) return;
+        if (!canEditMatricule(auth)) {
+            throw new AppException(com.daf360.rh.exception.ErrorCode.PAYROLL_MATRICULE_ADMIN_ONLY,
+                    "Vous n'avez pas la permission de saisir ou modifier le matricule");
         }
+
+        profileRepository.findByPaysIdAndPayrollMatricule(profile.getPaysId(), value)
+                .filter(other -> !other.getId().equals(profile.getId()))
+                .ifPresent(other -> {
+                    throw new AppException(com.daf360.rh.exception.ErrorCode.PAYROLL_MATRICULE_DUPLICATE,
+                            "Le matricule " + value + " est déjà attribué à un autre employé");
+                });
+
+        profile.setPayrollMatricule(value);
+        log.info("Payroll matricule {} -> {} on profileId={} by userId={}",
+                current, value, profile.getId(), auth != null ? auth.getName() : null);
+    }
+
+    /** Permission that unlocks the payroll matricule (granted to Administrateur and PDG today). */
+    private static final String MATRICULE_EDIT_PERMISSION = "HR_ADMIN_ROLES";
+
+    private boolean canEditMatricule(Authentication auth) {
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> MATRICULE_EDIT_PERMISSION.equals(a.getAuthority()));
     }
 
     private EmployeeProfile findOrThrow(Long id) {
@@ -1333,6 +1412,12 @@ public class EmployeeProfileService {
         // miss was swallowed — and since that column is NULL for every profile in prod,
         // the detail page rendered a blank Matricule for all 158 of them, silently.
         dto.setMatricule(profile.getPayrollMatricule());
+        dto.setCanEditMatricule(canEditMatricule(auth));
+        // The column holds the list row id; the API keeps exposing the code (CDI…) next to it.
+        contractTypeRefs.find(profile.getContractTypeId(), profile.getPaysId()).ifPresentOrElse(v -> {
+            dto.setContractType(v.getValueCode());
+            dto.setContractTypeId(v.getId());
+        }, () -> dto.setContractType(profile.getContractTypeId()));
         try {
             dto.setFullName(jdbcTemplate.queryForObject(
                     USER_FULLNAME_SQL, String.class, profile.getUserId()));

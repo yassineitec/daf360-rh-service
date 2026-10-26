@@ -20,6 +20,7 @@ public class CandidateResponse {
     private Long   nationalityId;
     private String nationality;
     private String nationalId;
+    private String passportNumber;
     private String gender;
     private String appliedPosition;
     private Long   appliedGradeId;

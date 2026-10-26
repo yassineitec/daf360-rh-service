@@ -54,8 +54,12 @@ public class CandidateCostApproval {
     @Column(name = "salaire_net_candidat", precision = 18, scale = 4)
     private BigDecimal salaireNetCandidat;
 
+    /**
+     * Id (as text) of the CONTRACT_TYPE row of configurable_list_values — like the other
+     * contract-type columns. The DTO exposes its nature (CDI, CDD…) as contractTypeCode.
+     */
     @Column(name = "contract_type_code", nullable = false, length = 20)
-    private String contractTypeCode;
+    private String contractTypeId;
 
     @Column(name = "simulation_snapshot", nullable = false, columnDefinition = "NVARCHAR(MAX)")
     private String simulationSnapshot;

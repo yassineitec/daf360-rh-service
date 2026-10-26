@@ -52,6 +52,7 @@ public class RequestTypeCatalogService {
                             .displayNameFr(seed.nameFr)
                             .displayNameEn(seed.nameEn)
                             .description(seed.description)
+                            .descriptionEn(seed.descriptionEn)
                             .category(seed.category)
                             .approvalLevel(seed.approvalLevel)
                             .defaultSlaDays(seed.slaDays)
@@ -89,6 +90,7 @@ public class RequestTypeCatalogService {
                 .displayNameFr(dto.getDisplayNameFr())
                 .displayNameEn(dto.getDisplayNameEn())
                 .description(dto.getDescription())
+                .descriptionEn(blankToNull(dto.getDescriptionEn()))
                 .category(dto.getCategory())
                 .approvalLevel(dto.getApprovalLevel() != null ? dto.getApprovalLevel() : "L1")
                 .defaultSlaDays(dto.getDefaultSlaDays() != null ? dto.getDefaultSlaDays() : 2)
@@ -107,6 +109,7 @@ public class RequestTypeCatalogService {
         if (dto.getDisplayNameFr() != null) entity.setDisplayNameFr(dto.getDisplayNameFr());
         if (dto.getDisplayNameEn() != null) entity.setDisplayNameEn(dto.getDisplayNameEn());
         if (dto.getDescription() != null)   entity.setDescription(dto.getDescription());
+        if (dto.getDescriptionEn() != null) entity.setDescriptionEn(blankToNull(dto.getDescriptionEn()));
         if (dto.getDefaultSlaDays() != null) entity.setDefaultSlaDays(dto.getDefaultSlaDays());
         if (dto.getDocumentTemplateUrl() != null) entity.setDocumentTemplateUrl(dto.getDocumentTemplateUrl());
         entity.setUpdatedAt(LocalDateTime.now());
@@ -138,12 +141,18 @@ public class RequestTypeCatalogService {
         dto.setDisplayNameFr(t.getDisplayNameFr());
         dto.setDisplayNameEn(t.getDisplayNameEn());
         dto.setDescription(t.getDescription());
+        dto.setDescriptionEn(t.getDescriptionEn());
         dto.setCategory(t.getCategory());
         dto.setApprovalLevel(t.getApprovalLevel());
         dto.setDefaultSlaDays(t.getDefaultSlaDays());
         dto.setDocumentTemplateUrl(t.getDocumentTemplateUrl());
         dto.setIsActive(t.getIsActive());
         return dto;
+    }
+
+    /** Trimmed value, or null when blank — an empty English description means "none". */
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     private String actorId(Authentication auth) {
@@ -153,16 +162,20 @@ public class RequestTypeCatalogService {
 
     // ── 13 default types ──────────────────────────────────────────────────────
 
+    // descriptionEn mirrors sql/2026-10-12_request_type_description_en.sql — keep them in step.
     record SeedType(String typeCode, String nameFr, String nameEn, String description,
-                    RequestCategory category, String approvalLevel, int slaDays) {}
+                    String descriptionEn, RequestCategory category, String approvalLevel, int slaDays) {}
 
     static final List<SeedType> DEFAULT_TYPES = List.of(
         new SeedType("ATTESTATION_TRAVAIL",    "Attestation de travail",          "Employment Certificate",
-                     "Attestation prouvant la relation de travail",                RequestCategory.DOCUMENT, "L1", 2),
+                     "Attestation prouvant la relation de travail",
+                     "Certificate proving the employment relationship",            RequestCategory.DOCUMENT, "L1", 2),
         new SeedType("ATTESTATION_SALAIRE",    "Attestation de salaire",           "Salary Certificate",
-                     "Attestation indiquant le salaire mensuel",                   RequestCategory.DOCUMENT, "L1", 2),
+                     "Attestation indiquant le salaire mensuel",
+                     "Certificate stating the monthly salary",                     RequestCategory.DOCUMENT, "L1", 2),
         new SeedType("BULLETIN_PAIE",          "Duplicata bulletin de paie",       "Pay Slip Duplicate",
-                     "Demande d'un duplicata de fiche de paie",                    RequestCategory.DOCUMENT, "L1", 2),
+                     "Demande d'un duplicata de fiche de paie",
+                     "Request for a duplicate pay slip",                           RequestCategory.DOCUMENT, "L1", 2),
         // ATTESTATION_ANCIENNETE and TELETRAVAIL_PONCTUEL were removed from the catalogue on
         // request (2026-08-28). Removed from the SEED rather than only deactivated in the
         // database, because seedDefaults() re-inserts any type code a country is missing — so a
@@ -170,24 +183,34 @@ public class RequestTypeCatalogService {
         // POST /request-types/seed. Existing employee_requests rows keep their type code; V89
         // deactivates the rows instead of deleting them for exactly that reason.
         new SeedType("ATTESTATION_CONGE",      "Attestation de congé",             "Leave Certificate",
-                     "Attestation de prise en charge de congé approuvé",           RequestCategory.DOCUMENT, "L1", 2),
+                     "Attestation de prise en charge de congé approuvé",
+                     "Certificate confirming an approved leave",                   RequestCategory.DOCUMENT, "L1", 2),
         new SeedType("CHANGEMENT_ADRESSE",     "Mise à jour adresse domicile",     "Home Address Update",
-                     "Mise à jour de l'adresse personnelle dans le dossier RH",    RequestCategory.PERSONAL_DATA_CHANGE, "L1", 3),
+                     "Mise à jour de l'adresse personnelle dans le dossier RH",
+                     "Update of the home address in the HR file",                  RequestCategory.PERSONAL_DATA_CHANGE, "L1", 3),
         new SeedType("CHANGEMENT_EMAIL",       "Mise à jour email personnel",      "Personal Email Update",
-                     "Mise à jour de l'adresse e-mail personnelle",                RequestCategory.PERSONAL_DATA_CHANGE, "L1", 2),
+                     "Mise à jour de l'adresse e-mail personnelle",
+                     "Update of the personal email address",                       RequestCategory.PERSONAL_DATA_CHANGE, "L1", 2),
         new SeedType("CHANGEMENT_TELEPHONE",   "Mise à jour téléphone personnel",  "Phone Update",
-                     "Mise à jour du numéro de téléphone personnel",               RequestCategory.PERSONAL_DATA_CHANGE, "L1", 2),
+                     "Mise à jour du numéro de téléphone personnel",
+                     "Update of the personal phone number",                        RequestCategory.PERSONAL_DATA_CHANGE, "L1", 2),
         new SeedType("CHANGEMENT_URGENCE",     "Mise à jour contact d'urgence",    "Emergency Contact Update",
-                     "Mise à jour du contact d'urgence",                           RequestCategory.PERSONAL_DATA_CHANGE, "L1", 3),
+                     "Mise à jour du contact d'urgence",
+                     "Update of the emergency contact",                            RequestCategory.PERSONAL_DATA_CHANGE, "L1", 3),
         new SeedType("CHANGEMENT_PHOTO",       "Mise à jour photo de profil",      "Profile Photo Update",
-                     "Demande de mise à jour de la photo du profil RH",            RequestCategory.PERSONAL_DATA_CHANGE, "L1", 2),
+                     "Demande de mise à jour de la photo du profil RH",
+                     "Request to update the HR profile photo",                     RequestCategory.PERSONAL_DATA_CHANGE, "L1", 2),
         new SeedType("MISE_A_JOUR_BANCAIRE",   "Mise à jour coordonnées bancaires","Bank Details Update",
-                     "Modification IBAN, RIB ou compte bancaire — validation L2",  RequestCategory.BANK_DETAILS, "L2", 5),
+                     "Modification IBAN, RIB ou compte bancaire — validation L2",
+                     "Change of IBAN, RIB or bank account — L2 validation",        RequestCategory.BANK_DETAILS, "L2", 5),
         new SeedType("DEMANDE_FORMATION",      "Demande de formation",             "Training Request",
-                     "Demande d'inscription à une formation professionnelle",       RequestCategory.CAREER, "L1", 7),
+                     "Demande d'inscription à une formation professionnelle",
+                     "Request to enrol in a professional training course",         RequestCategory.CAREER, "L1", 7),
         new SeedType("MUTATION_INTERNE",       "Demande de mutation interne",      "Internal Transfer Request",
-                     "Demande de changement de département ou de site",            RequestCategory.CAREER, "L1", 5),
+                     "Demande de changement de département ou de site",
+                     "Request to change department or site",                       RequestCategory.CAREER, "L1", 5),
         new SeedType("AUTRE",                  "Autre demande RH",                 "Other HR Request",
-                     "Toute autre demande ne correspondant pas aux catégories ci-dessus", RequestCategory.OTHER, "L1", 5)
+                     "Toute autre demande ne correspondant pas aux catégories ci-dessus",
+                     "Any other request that does not fit the categories above",   RequestCategory.OTHER, "L1", 5)
     );
 }

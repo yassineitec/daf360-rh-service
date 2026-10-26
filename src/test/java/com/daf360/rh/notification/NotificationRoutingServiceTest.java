@@ -222,6 +222,47 @@ class NotificationRoutingServiceTest {
         assertThat(recipientsCaptor.getValue()).containsExactly(SUBJECT_USER);
     }
 
+    // ── Test 4c: the actor is never told about their own action ───────────────
+
+    @Test
+    void dispatchNow_actorIsExcludedFromRecipients() {
+        final Long ACTOR = 600L, OTHER = 601L;
+
+        when(ruleRepo.findByEventTypeEventCodeAndPaysIdAndIsActiveTrue(EVENT_CODE, PAYS_ID))
+                .thenReturn(Optional.of(entityRule));
+        NotificationRoutingRecipient byPermission = NotificationRoutingRecipient.builder()
+                .id(10L).recipientMode("PERMISSION").permissionCode("RH_APPROVE_RECRUITMENT_DEMAND")
+                .isActive(true).build();
+        when(recipientRepo.findByRuleIdAndIsActiveTrue(entityRule.getId()))
+                .thenReturn(List.of(byPermission));
+        when(jdbc.queryForList(anyString(), eq(Long.class), eq("RH_APPROVE_RECRUITMENT_DEMAND"), eq(PAYS_ID)))
+                .thenReturn(List.of(ACTOR, OTHER));
+        when(inAppNotifier.notifyUsers(any(), anyString(), anyString(), anyString(), any())).thenReturn(1);
+
+        NotificationRoutingService.DispatchResult result = service.dispatchNow(RoutingContext.builder()
+                .eventCode(EVENT_CODE).paysId(PAYS_ID).actorUserId(ACTOR).build());
+
+        ArgumentCaptor<Collection<Long>> recipientsCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(inAppNotifier).notifyUsers(recipientsCaptor.capture(), anyString(), anyString(), anyString(), any());
+        assertThat(recipientsCaptor.getValue()).containsExactly(OTHER);
+        assertThat(result.delivered()).isTrue();
+    }
+
+    // ── Test 4d: dispatchNow tells a missing rule apart from a delivery ────────
+
+    @Test
+    void dispatchNow_noRule_reportsNotDelivered() {
+        when(ruleRepo.findByEventTypeEventCodeAndPaysIdAndIsActiveTrue(anyString(), any()))
+                .thenReturn(Optional.empty());
+        when(ruleRepo.findByEventTypeEventCodeAndPaysIdIsNullAndIsActiveTrue(anyString()))
+                .thenReturn(Optional.empty());
+
+        NotificationRoutingService.DispatchResult result = service.dispatchNow(ctxForPays(PAYS_ID));
+
+        assertThat(result.ruleFound()).isFalse();
+        assertThat(result.delivered()).isFalse();
+    }
+
     // ── Test 5: sendEmail=false — no email sent ───────────────────────────────
 
     @Test

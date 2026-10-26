@@ -18,46 +18,54 @@ public class DashboardController {
 
     @GetMapping("/stats")
     ////@PreAuthorize("isAuthenticated()")
-    public ResponseEntity<DashboardStatsDto> getStats() {
-        return ResponseEntity.ok(dashboardService.getStats());
+    public ResponseEntity<DashboardStatsDto> getStats(
+            @RequestParam(required = false) Long paysId) {
+        return ResponseEntity.ok(dashboardService.getStats(paysId));
     }
 
     @GetMapping("/workforce")
     ////@PreAuthorize("isAuthenticated()")
-    public ResponseEntity<WorkforceStatsDto> getWorkforce() {
-        return ResponseEntity.ok(dashboardService.getWorkforceStats());
+    public ResponseEntity<WorkforceStatsDto> getWorkforce(
+            @RequestParam(required = false) Long paysId,
+            @RequestParam(required = false) Long departmentId) {
+        return ResponseEntity.ok(dashboardService.getWorkforceStats(paysId, departmentId));
     }
 
     @GetMapping("/completion")
     ////@PreAuthorize("isAuthenticated()")
-    public ResponseEntity<ProfileCompletionDto> getCompletion() {
-        return ResponseEntity.ok(dashboardService.getCompletion());
+    public ResponseEntity<ProfileCompletionDto> getCompletion(
+            @RequestParam(required = false) Long paysId) {
+        return ResponseEntity.ok(dashboardService.getCompletion(paysId));
     }
 
     @GetMapping("/fin-periode-essai")
     ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<PreviewResponse<ProbationAlertDto>> getProbation(
-            @RequestParam(defaultValue = "30") int joursMax) {
-        return ResponseEntity.ok(dashboardService.getProbationAlerts(joursMax));
+            @RequestParam(defaultValue = "30") int joursMax,
+            @RequestParam(required = false) Long paysId) {
+        return ResponseEntity.ok(dashboardService.getProbationAlerts(joursMax, paysId));
     }
 
     @GetMapping("/anniversaires")
     ////@PreAuthorize("isAuthenticated()")
-    public ResponseEntity<List<AnniversaireDto>> getAnniversaires() {
-        return ResponseEntity.ok(dashboardService.getAnniversaires(0));
+    public ResponseEntity<List<AnniversaireDto>> getAnniversaires(
+            @RequestParam(required = false) Long paysId) {
+        return ResponseEntity.ok(dashboardService.getAnniversaires(0, paysId));
     }
 
     @GetMapping("/nouveaux-employes")
     ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<NouvelEmployeDto>> getNouveaux(
-            @RequestParam(defaultValue = "10") int limit) {
-        return ResponseEntity.ok(dashboardService.getNouveauxEmployes(limit));
+            @RequestParam(defaultValue = "10") int limit,
+            @RequestParam(required = false) Long paysId) {
+        return ResponseEntity.ok(dashboardService.getNouveauxEmployes(limit, paysId));
     }
 
     @GetMapping("/missing-documents")
     ////@PreAuthorize("isAuthenticated()")
-    public ResponseEntity<PreviewResponse<MissingDocumentDto>> getMissingDocuments() {
-        return ResponseEntity.ok(dashboardService.getMissingDocuments());
+    public ResponseEntity<PreviewResponse<MissingDocumentDto>> getMissingDocuments(
+            @RequestParam(required = false) Long paysId) {
+        return ResponseEntity.ok(dashboardService.getMissingDocuments(paysId));
     }
 
     // ── Page 1: Tableau de bord RH ────────────────────────────────────────────

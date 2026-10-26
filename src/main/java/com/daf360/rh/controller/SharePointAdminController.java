@@ -59,6 +59,7 @@ public class SharePointAdminController {
     private final GraphSharePointService graph;
     private final com.daf360.rh.service.photo.ProfilePhotoWarmupService photoWarmup;
     private final DocumentTypeService documentTypeService;
+    private final com.daf360.rh.service.sharepoint.SharePointDocumentSyncService documentSync;
 
     // ── DTOs ──────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,13 @@ public class SharePointAdminController {
         /** Null means active -- creating a type you cannot select would be a strange default. */
                   private Boolean active;
                   private Integer sortOrder;
+    }
+
+    @Data
+    public static class SetRequiredRequest {
+        @NotNull  private Long    paysId;
+        @NotBlank private String  code;
+        @NotNull  private Boolean required;
     }
 
     public record FolderListingDto(String path, List<String> folders) {}
@@ -186,6 +194,69 @@ public class SharePointAdminController {
     public ResponseEntity<Void> deactivateDocumentType(@PathVariable Long id, Authentication auth) {
         documentTypeService.deactivate(id, actorId(auth));
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * RH's checklist (V121): which types make this country's dossiers complete. Drives the
+     * « Documents manquants » card, the documents bar and the nightly SharePoint sync.
+     * 404 when the type has no row for this country (or V121 is not applied).
+     */
+    /** Live state of the run in flight — what the progress bar shows. */
+    public record SyncProgressDto(int total, int done, String current, OffsetDateTime startedAt,
+                                  int imported, int restored, int removed, int foldersListed,
+                                  int foldersUnreadable, int foldersAmbiguous, int failed) {}
+
+    /**
+     * @param progress null when no run is going
+     * @param lastRun  null before the first run (or without V121); its {@code outcome} is the
+     *                 answer to "did it work?"
+     */
+    public record DocumentSyncStatusDto(boolean running, SyncProgressDto progress,
+            com.daf360.rh.service.sharepoint.SharePointDocumentSyncService.RunDto lastRun) {}
+
+    /** State of the SharePoint → dossier sync: polled by the screen while a run is going. */
+    @GetMapping("/document-sync")
+    @PreAuthorize(ADMIN)
+    public ResponseEntity<DocumentSyncStatusDto> documentSyncStatus() {
+        var live = documentSync.liveProgress();
+        SyncProgressDto progress = live == null ? null : new SyncProgressDto(
+                live.profilesTotal, live.profilesScanned, live.current, live.startedAt,
+                live.imported, live.restored, live.removed, live.foldersListed,
+                live.foldersUnreadable, live.foldersAmbiguous, live.profilesFailed);
+        return ResponseEntity.ok(new DocumentSyncStatusDto(documentSync.isRunning(), progress, documentSync.lastRun()));
+    }
+
+    /**
+     * Runs the nightly sync now, in the background — 202 at once, then poll GET. 409 when a run
+     * (nightly or manual) is already going: two passes would only race on the same rows.
+     */
+    @PostMapping("/document-sync")
+    @PreAuthorize(ADMIN)
+    public ResponseEntity<Void> startDocumentSync() {
+        return documentSync.startInBackground()
+                ? ResponseEntity.accepted().build()
+                : ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT).build();
+    }
+
+    @PutMapping("/document-types/required")
+    @PreAuthorize(ADMIN)
+    public ResponseEntity<?> setRequired(@jakarta.validation.Valid @RequestBody SetRequiredRequest req,
+                                            Authentication auth) {
+        try {
+            return documentTypeService.setRequired(req.getPaysId(), req.getCode(), req.getRequired(), actorId(auth))
+                    ? ResponseEntity.noContent().build()
+                    : ResponseEntity.notFound().build();
+        } catch (org.springframework.dao.DataAccessException dbError) {
+            // Usually V121 (or V87) absent from THIS database — but say what the database said
+            // rather than assume it: "V121 not applied" on a server where it is sends people
+            // re-running a script that already succeeded.
+            String cause = dbError.getMostSpecificCause().getMessage();
+            org.slf4j.LoggerFactory.getLogger(SharePointAdminController.class)
+                    .warn("Enregistrement de required_for_completion impossible ({} / {}) : {}",
+                          req.getPaysId(), req.getCode(), cause);
+            return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT)
+                    .body(java.util.Map.of("message", cause == null ? "" : cause));
+        }
     }
 
     // ── Panel 1: configured paths ─────────────────────────────────────────────

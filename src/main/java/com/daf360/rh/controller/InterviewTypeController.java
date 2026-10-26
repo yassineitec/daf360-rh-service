@@ -20,8 +20,8 @@ public class InterviewTypeController {
     private final InterviewTypeService service;
 
     @GetMapping
-    public List<InterviewTypeDto> list() {
-        return service.list();
+    public List<InterviewTypeDto> list(@RequestParam(required = false) Long paysId) {
+        return service.list(paysId);
     }
 
     @GetMapping("/active")

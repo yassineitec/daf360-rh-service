@@ -17,6 +17,7 @@ public class CreateContractRequest {
     @NotNull
     private Long paysId;
 
+    /** A CONTRACT_TYPE code (CDI…) or its configurable_list_values id — stored as the id. */
     @NotBlank
     private String contractTypeCode;
 
@@ -24,6 +25,12 @@ public class CreateContractRequest {
     private LocalDate dateDebut;
 
     private LocalDate dateFinPrevue;
+
+    /** Optional agreed trial end. When absent it is computed from contract_type_config. */
+    private LocalDate dateFinPeriodeEssai;
+
+    /** True when the hire explicitly has no trial period: no date is computed, no alert raised. */
+    private boolean noTrialPeriod;
 
     private String referenceContrat;
 

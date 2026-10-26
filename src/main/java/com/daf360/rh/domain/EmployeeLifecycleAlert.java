@@ -33,6 +33,10 @@ public class EmployeeLifecycleAlert {
     @Column(name = "employee_profile_id", nullable = false)
     private Long employeeProfileId;
 
+    /** V33 created this NOT NULL while the entity never wrote it — inserts failed there. Always set now; V118 backfills. */
+    @Column(name = "pays_id")
+    private Long paysId;
+
     @Column(name = "alert_type", nullable = false, length = 50)
     private String alertType;
 

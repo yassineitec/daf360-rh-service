@@ -103,6 +103,14 @@ public final class PermissionCatalog {
     public static final String RH_CONDUCT_EXIT_INTERVIEW       = "RH_CONDUCT_EXIT_INTERVIEW";
     public static final String RH_SUSPEND_PROFILE              = "RH_SUSPEND_PROFILE";
     /**
+     * CIVP → CDI conversion (V119), modelled as roles rather than names: who files the
+     * request, the technical &amp; salary validator, and the escalation level that decides an
+     * escalated request. RH (RH_MANAGE_LIFECYCLE) is notified and carries out the conversion.
+     */
+    public static final String RH_REQUEST_CDI_CONVERSION       = "RH_REQUEST_CDI_CONVERSION";
+    public static final String RH_VALIDATE_CDI_CONVERSION      = "RH_VALIDATE_CDI_CONVERSION";
+    public static final String RH_ARBITRATE_CDI_CONVERSION     = "RH_ARBITRATE_CDI_CONVERSION";
+    /**
      * Per-stage rights on the offboarding wizard (V58). Stages 1, 2, 5 and 7 are RH
      * and reuse the four codes above; these three let the departments that OWN stages
      * 3, 4 and 6 act on them without handing out RH_MANAGE_OFFBOARDING.
@@ -195,7 +203,8 @@ public final class PermissionCatalog {
         new PermGroup("Catégories",          List.of(GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY)),
         new PermGroup("Timesheets",          List.of(GET_TSR, CREATE_TSR, RESPOND_TSR, GET_GLOBAL_TSR)),
         new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND, RH_HIRE_CANDIDATE, APPROVE_HIRING_COST, RH_MANAGE_PAYSLIPS)),
-        new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS, RH_MANAGE_OFFBOARDING, RH_VALIDATE_OFFBOARDING, RH_COMPLETE_OFFBOARDING_TASK, RH_CONDUCT_EXIT_INTERVIEW, RH_OFFBOARDING_STAGE_HANDOVER, RH_OFFBOARDING_STAGE_IT, RH_OFFBOARDING_STAGE_PAYROLL, RH_SUSPEND_PROFILE)),
+        new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS, RH_MANAGE_OFFBOARDING, RH_VALIDATE_OFFBOARDING, RH_COMPLETE_OFFBOARDING_TASK, RH_CONDUCT_EXIT_INTERVIEW, RH_OFFBOARDING_STAGE_HANDOVER, RH_OFFBOARDING_STAGE_IT, RH_OFFBOARDING_STAGE_PAYROLL, RH_SUSPEND_PROFILE,
+                                                     RH_REQUEST_CDI_CONVERSION, RH_VALIDATE_CDI_CONVERSION, RH_ARBITRATE_CDI_CONVERSION)),
         new PermGroup("Entretiens",          List.of(RH_ADMIN_INTERVIEW_TYPES, RH_MANAGE_INTERVIEWS)),
         // FACT_APPROVE_MISSION_COST is the third code of this process but it is NOT listed
         // here: FACT_* codes belong to the facturation catalog (FactPermissionCatalog), and

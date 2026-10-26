@@ -51,6 +51,17 @@ public final class GenderNormalizer {
     );
 
     /**
+     * Every raw spelling that {@link #normalize} maps to {@code canonical} — lets a SQL
+     * filter (`UPPER(TRIM(gender)) IN (…)`) count exactly what the Java side counts.
+     */
+    public static java.util.Set<String> aliasesOf(String canonical) {
+        return ALIASES.entrySet().stream()
+                .filter(e -> e.getValue().equals(canonical))
+                .map(Map.Entry::getKey)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    /**
      * @return the canonical code for a known alias; {@code null} for null/blank input;
      *         the trimmed, upper-cased original for an unrecognized value.
      */

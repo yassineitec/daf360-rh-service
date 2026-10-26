@@ -13,7 +13,8 @@ import java.time.OffsetDateTime;
  * Schema verified 2026-06-01 (23 columns).
  * FK_Candidate_Pays → pays, FK_Candidate_CreatedBy / AcceptedBy → Users.
  *
- * CK_Candidate_ContractType: PERMANENT | FIXED_TERM | INTERN | CONSULTANT
+ * contract_type: CONTRACT_TYPE row id (copy of employment_type_id) — CK_Candidate_ContractType
+ *                dropped by sql/2026-10-09_candidates_contract_type_id.sql.
  * CK_Candidate_Status:       PENDING | ACCEPTED | REJECTED | IT_IN_PROGRESS |
  *                            EMAIL_RECEIVED | HR_IN_PROGRESS | HIRED | ARCHIVED
  */
@@ -54,6 +55,13 @@ public class Candidate {
 
     @Column(name = "national_id", length = 100)
     private String nationalId;
+
+    /**
+     * Passport number, kept apart from {@link #nationalId} (the CIN) so onboarding pre-fills
+     * each into its own field of the employee profile. Same width as employee_profiles.
+     */
+    @Column(name = "passport_number", length = 100)
+    private String passportNumber;
 
     /**
      * Candidate gender — canonical GENDER list value_code (MALE/FEMALE/OTHER/
@@ -126,6 +134,21 @@ public class Candidate {
 
     @Column(name = "employment_type_id")
     private Long employmentTypeId;
+
+    /**
+     * Copy of {@link #employmentTypeId} as text — the CONTRACT_TYPE row id, the same thing
+     * employee_profiles.contract_type stores. Never set by hand: {@link #syncContractType}
+     * mirrors employmentTypeId on every write, so the two cannot diverge.
+     */
+    @Setter(AccessLevel.NONE)
+    @Column(name = "contract_type", length = 50)
+    private String contractType;
+
+    @PrePersist
+    @PreUpdate
+    void syncContractType() {
+        contractType = employmentTypeId != null ? String.valueOf(employmentTypeId) : null;
+    }
 
     /** Years of professional experience (V39). */
     @Column(name = "experience_years")
