@@ -560,16 +560,6 @@ public class OnboardingService {
         return licenses.isEmpty() ? null : String.join(", ", licenses);
     }
 
-    private String provisioningStatusLabel(ItProvisioningStatus status) {
-        if (status == null) return null;
-        return switch (status) {
-            case PENDING       -> "En attente";
-            case IN_PROGRESS   -> "En cours";
-            case EMAIL_CREATED -> "Email créé";
-            case COMPLETED     -> "Complété";
-        };
-    }
-
     private SaveDraftRequest deserializeDraft(String json) {
         if (json == null || json.isBlank()) {
             return null;
@@ -679,7 +669,7 @@ public class OnboardingService {
                         ? existingProfile.getNationality().getId()
                         : c.getNationality() != null ? c.getNationality().getId() : null)
                 .passportNumber(hasDraft ? draft.getPassportNumber()
-                              : hasProfile ? existingProfile.getPassportNumber() : null)
+                              : hasProfile ? existingProfile.getPassportNumber() : c.getPassportNumber())
                 .cnssNumber(hasDraft ? draft.getCnssNumber()
                           : hasProfile ? existingProfile.getCnssNumber() : null)
                 .cnssAffiliationDate(hasDraft ? draft.getCnssAffiliationDate()
@@ -719,7 +709,8 @@ public class OnboardingService {
                 .matricule(matricule)
                 .itDeviceName(itDeviceName)
                 .ms365LicenseType(prov != null ? buildLicenseLabel(prov) : null)
-                .itProvisioningStatus(prov != null ? provisioningStatusLabel(prov.getStatus()) : null)
+                // The raw code, not a label: the front translates it (IT_PROVISIONING.STATUS.*).
+                .itProvisioningStatus(prov != null && prov.getStatus() != null ? prov.getStatus().name() : null)
                 .requestValidatedAt(c.getAcceptedAt())
                 .itAccountCreatedAt(prov != null ? prov.getMs365EmailCreatedAt() : null)
                 .equipmentAssignedAt(prov != null ? prov.getCompletedAt() : null)

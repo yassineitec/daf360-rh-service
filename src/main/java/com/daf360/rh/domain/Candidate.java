@@ -57,6 +57,13 @@ public class Candidate {
     private String nationalId;
 
     /**
+     * Passport number, kept apart from {@link #nationalId} (the CIN) so onboarding pre-fills
+     * each into its own field of the employee profile. Same width as employee_profiles.
+     */
+    @Column(name = "passport_number", length = 100)
+    private String passportNumber;
+
+    /**
      * Candidate gender — canonical GENDER list value_code (MALE/FEMALE/OTHER/
      * UNSPECIFIED). Free-form string column with no DB constraint; kept canonical
      * on write via {@link com.daf360.rh.common.GenderNormalizer}. Flows through to

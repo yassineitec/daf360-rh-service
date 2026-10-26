@@ -31,6 +31,9 @@ public class CreateCandidateRequest {
     @Size(max = 100)
     private String nationalId;
 
+    @Size(max = 100)
+    private String passportNumber;
+
     /** Canonical GENDER list code (MALE/FEMALE/OTHER/UNSPECIFIED); normalized on write. */
     @Size(max = 30)
     private String gender;
