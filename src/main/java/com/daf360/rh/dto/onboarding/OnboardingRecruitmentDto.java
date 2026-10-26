@@ -79,6 +79,8 @@ public class OnboardingRecruitmentDto {
     public static class InterviewNote {
         private Integer         sequenceNumber;
         private String          interviewType;
+        /** English label of the type (interview_types.name_en); null when not set. */
+        private String          interviewTypeEn;
         /** PASS | FAIL | PENDING … */
         private String          result;
         private String          interviewerNotes;
