@@ -352,7 +352,10 @@ public class OnboardingService {
                 dto.getPersonalPhone() != null && !dto.getPersonalPhone().isBlank()
                         ? dto.getPersonalPhone()
                         : candidate.getPhone());
-        profile.setPersonalAddress(dto.getPersonalAddress());
+        profile.setPersonalAddress(
+                dto.getPersonalAddress() != null && !dto.getPersonalAddress().isBlank()
+                        ? dto.getPersonalAddress()
+                        : candidate.getLocation());
         // Bank / RIB
         profile.setBankAccountNumber(dto.getBankAccountNumber());
         profile.setRib(dto.getRib());
@@ -678,8 +681,12 @@ public class OnboardingService {
                              : hasProfile ? existingProfile.getMaritalStatus() : null)
                 .numberOfChildren(hasDraft ? draft.getNumberOfChildren()
                                 : hasProfile ? existingProfile.getNumberOfChildren() : null)
+                // Address: draft > profile > the candidate's free-text location (often just a
+                // city — a starting point RH completes, not a full address).
                 .personalAddress(hasDraft ? draft.getPersonalAddress()
-                               : hasProfile ? existingProfile.getPersonalAddress() : null)
+                               : hasProfile && existingProfile.getPersonalAddress() != null
+                                 ? existingProfile.getPersonalAddress()
+                                 : c.getLocation())
                 // Section 5 — Bank / RIB
                 .bankId(hasProfile && existingProfile.getBank() != null
                         ? existingProfile.getBank().getId() : null)

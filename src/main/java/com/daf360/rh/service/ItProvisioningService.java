@@ -331,7 +331,9 @@ public class ItProvisioningService {
                 prov.getId(), "status=IN_PROGRESS",
                 "status=EMAIL_CREATED; email=" + ms365Email + "; userId=" + newUserId);
 
-        List<ItAsset> assets = assetRepo.findByProvisioningId(prov.getId());
+        // Merged like getProvisioning: the page re-inits its hardware rows from this
+        // response, and saved rows alone left step 3 empty on a fresh provisioning.
+        List<ItAsset> assets = mergeWithAllTypes(prov, assetRepo.findByProvisioningId(prov.getId()));
         return toResponse(prov, candidate, assets);
     }
 
@@ -379,7 +381,7 @@ public class ItProvisioningService {
 
         Candidate candidate = candidateRepo.findById(prov.getCandidateId())
                 .orElseThrow(() -> new AppException(ErrorCode.CANDIDATE_NOT_FOUND));
-        List<ItAsset> assets = assetRepo.findByProvisioningId(prov.getId());
+        List<ItAsset> assets = mergeWithAllTypes(prov, assetRepo.findByProvisioningId(prov.getId()));
         return toResponse(prov, candidate, assets);
     }
 
