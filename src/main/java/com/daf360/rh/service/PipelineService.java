@@ -92,7 +92,10 @@ public class PipelineService {
             jo.asked_salary AS offer_asked_salary, jo.proposed_salary AS offer_salary,
             jo.expiry_date AS offer_expiry, jo.status AS offer_status,
             jo.notice_period_days AS offer_notice_period_days,
-            g.notice_period_days  AS grade_notice_period_days
+            g.notice_period_days  AS grade_notice_period_days,
+            -- Salary currency of the candidate's country: its DEVISE payroll parameter,
+            -- else derived from the country ISO code (see currencyOf).
+            dv.valeur AS pays_devise, p.iso_code AS pays_iso
             """;
 
     /** FROM + joins: employee profile, linked demand, IT provisioning and next planned interview. */
@@ -128,6 +131,12 @@ public class PipelineService {
                  ORDER BY jo2.round_number DESC, jo2.id DESC
              ) jo
              LEFT JOIN [dbo].[grades] g ON g.id = c.applied_grade_id
+             LEFT JOIN [dbo].[pays] p ON p.id = c.pays_id
+             OUTER APPLY (
+                 SELECT TOP 1 ps.valeur
+                 FROM [dbo].[parameter_sets] ps
+                 WHERE ps.pays_id = c.pays_id AND ps.cle = 'DEVISE'
+             ) dv
             """;
 
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
@@ -447,8 +456,9 @@ public class PipelineService {
 
         // ── Entretien / Offre per-column card data ──────────────────────────────
         String interviewLocation = str(r, "next_interview_location");
-        String askedSalary = formatSalary(r.get("offer_asked_salary"));
-        String proposedSalary = formatSalary(r.get("offer_salary"));
+        String currency = currencyOf(str(r, "pays_devise"), str(r, "pays_iso"));
+        String askedSalary = formatSalary(r.get("offer_asked_salary"), currency);
+        String proposedSalary = formatSalary(r.get("offer_salary"), currency);
         String offerExpiry = formatDateFr(r.get("offer_expiry"), "dd/MM/yyyy");
         String offerStatus = str(r, "offer_status");
 
@@ -525,13 +535,30 @@ public class PipelineService {
         return null;
     }
 
-    /** Formats a numeric salary as a compact French label, e.g. {@code 65000 → "65 000 DT"}. */
-    private static String formatSalary(Object v) {
+    /**
+     * Formats a numeric salary as a compact French label in the given currency,
+     * e.g. {@code 65000, "TND" → "65 000 DT"}, {@code 65000, "EGP" → "65 000 EGP"}.
+     */
+    private static String formatSalary(Object v, String currency) {
         if (v == null) return null;
         if (v instanceof Number n) {
-            return String.format(Locale.FRENCH, "%,.0f DT", n.doubleValue());
+            String unit = "TND".equals(currency) ? "DT" : currency;
+            return String.format(Locale.FRENCH, "%,.0f %s", n.doubleValue(), unit);
         }
         return v.toString();
+    }
+
+    /**
+     * ISO 4217 currency of a candidate's country: the country's DEVISE payroll parameter
+     * when set, else derived from its ISO code (same mapping as PdfDocumentService), TND by default.
+     */
+    private static String currencyOf(String devise, String iso) {
+        if (devise != null && !devise.isBlank()) return devise.trim().toUpperCase();
+        if (iso == null) return "TND";
+        return switch (iso.trim().toUpperCase()) {
+            case "EG" -> "EGP";
+            default   -> "TND";
+        };
     }
 
     private static Integer toIntOrNull(Object v) {

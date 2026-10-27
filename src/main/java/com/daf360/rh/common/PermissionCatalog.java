@@ -207,6 +207,8 @@ public final class PermissionCatalog {
     public static final String PAYROLL_MANAGE_RUBRIQUES            = "PAYROLL_MANAGE_RUBRIQUES";
     public static final String PAYROLL_MANAGE_COUNTRIES            = "PAYROLL_MANAGE_COUNTRIES";
     public static final String PAYROLL_IMPORT_CALIBRATION          = "PAYROLL_IMPORT_CALIBRATION";
+    public static final String PAYROLL_VIEW_EMPLOYEE_CONFIG        = "PAYROLL_VIEW_EMPLOYEE_CONFIG";
+    public static final String PAYROLL_MANAGE_EMPLOYEE_CONFIG      = "PAYROLL_MANAGE_EMPLOYEE_CONFIG";
     /** Salary advances (payroll V25): payout, monthly deductions, follow-up, per-country rules. */
     public static final String PAYROLL_MANAGE_SALARY_ADVANCES      = "PAYROLL_MANAGE_SALARY_ADVANCES";
 
@@ -252,6 +254,7 @@ public final class PermissionCatalog {
             PAYROLL_UPLOAD_ACTUAL, PAYROLL_SUPER_ADMIN,
             PAYROLL_RUN_ENGINE, PAYROLL_VIEW_RESULTS,
             PAYROLL_MANAGE_RUBRIQUES, PAYROLL_MANAGE_COUNTRIES,
+            PAYROLL_VIEW_EMPLOYEE_CONFIG, PAYROLL_MANAGE_EMPLOYEE_CONFIG,
             PAYROLL_MANAGE_SALARY_ADVANCES
         ))
     );
