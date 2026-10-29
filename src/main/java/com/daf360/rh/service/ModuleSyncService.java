@@ -67,6 +67,8 @@ public class ModuleSyncService {
                          "/api/fact/ref/users/sync", bearerToken));
         results.add(call("paie", appProperties.getPayrollApiBaseUrl(),
                          "/api/payroll/ref/sync", bearerToken));
+        results.add(call("timesheet", appProperties.getTimesheetApiBaseUrl(),
+                         "/authorized/ref/sync", bearerToken));
         return results;
     }
 

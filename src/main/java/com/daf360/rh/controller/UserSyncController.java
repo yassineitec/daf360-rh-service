@@ -1,6 +1,7 @@
 package com.daf360.rh.controller;
 
 import com.daf360.rh.dto.PaysForSyncDto;
+import com.daf360.rh.dto.RoleForSyncDto;
 import com.daf360.rh.dto.UserForSyncDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +42,7 @@ public class UserSyncController {
         log.debug("UserSyncController: serving users-for-sync");
         String sql = """
                 SELECT u.id, u.azure_oid, u.fullName, u.email, u.pays_id,
-                       r.frenchName AS role_name, u.isActive, u.is_employee
+                       r.frenchName AS role_name, u.isActive, u.is_employee, u.role_id
                 FROM Users u
                 LEFT JOIN Roles r ON r.id = u.role_id
                 WHERE u.isActive = 1
@@ -61,7 +62,31 @@ public class UserSyncController {
                 rs.getObject("pays_id", Long.class),
                 rs.getString("role_name"),
                 rs.getBoolean("isActive"),
-                rs.getBoolean("is_employee")
+                rs.getBoolean("is_employee"),
+                rs.getObject("role_id", Long.class)
+        ));
+    }
+
+    /**
+     * Roles for the timesheet's `roles_ref` replica: task categories are restricted to roles,
+     * and the timesheet keys them on these ids. Soft-deleted roles are INCLUDED, flagged — a
+     * category may still name one, and the replica must keep the row its foreign key points
+     * at; the timesheet's pickers filter them out.
+     */
+    @GetMapping("/roles-for-sync")
+    public List<RoleForSyncDto> rolesForSync() {
+        log.debug("UserSyncController: serving roles-for-sync");
+        String sql = """
+                SELECT id, frenchName, englishName, parent_role_id, deleted
+                FROM Roles
+                ORDER BY id
+                """;
+        return jdbcTemplate.query(sql, (rs, rn) -> new RoleForSyncDto(
+                rs.getLong("id"),
+                rs.getString("frenchName"),
+                rs.getString("englishName"),
+                rs.getObject("parent_role_id", Long.class),
+                rs.getBoolean("deleted")
         ));
     }
 
@@ -108,7 +133,7 @@ public class UserSyncController {
     public List<UserForSyncDto> managersForUser(@PathVariable Long userId) {
         String sql = """
                 SELECT u.id, u.azure_oid, u.fullName, u.email, u.pays_id,
-                       r.frenchName AS role_name, u.isActive
+                       r.frenchName AS role_name, u.isActive, u.role_id
                 FROM Users u
                 LEFT JOIN Roles r ON r.id = u.role_id
                 WHERE u.isActive = 1
@@ -135,7 +160,8 @@ public class UserSyncController {
                 rs.getString("role_name"),
                 rs.getBoolean("isActive"),
                 // Always true here: the query already restricts to is_employee = 1.
-                true
+                true,
+                rs.getObject("role_id", Long.class)
         ), userId, userId, userId);
     }
 
@@ -174,7 +200,7 @@ public class UserSyncController {
                     WHERE (c.deleted = 0 OR c.deleted IS NULL)
                 )
                 SELECT u.id, u.azure_oid, u.fullName, u.email, u.pays_id,
-                       r.frenchName AS role_name, u.isActive
+                       r.frenchName AS role_name, u.isActive, u.role_id
                 FROM Users u
                 LEFT JOIN Roles r ON r.id = u.role_id
                 WHERE u.isActive = 1
@@ -196,7 +222,8 @@ public class UserSyncController {
                 rs.getString("role_name"),
                 rs.getBoolean("isActive"),
                 // Always true here: the query already restricts to is_employee = 1.
-                true
+                true,
+                rs.getObject("role_id", Long.class)
         ), userId, userId, userId, userId);
     }
 }

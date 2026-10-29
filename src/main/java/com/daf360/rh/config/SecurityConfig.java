@@ -49,10 +49,11 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/hr/profiles/*/photo").permitAll()
-                // Internal service-to-service sync endpoints (facturation- and
-                // payroll-service read both every 15 min, with no user token).
+                // Internal service-to-service sync endpoints (facturation-, payroll- and
+                // timesheet-service read them every 15 min, with no user token).
                 .requestMatchers(HttpMethod.GET, "/api/hr/users-for-sync").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/hr/pays-for-sync").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/hr/roles-for-sync").permitAll()
                 // Service-to-service reads for background jobs with no user token
                 // (log-service presence scheduler). Authenticated by the X-Internal-Key
                 // shared secret inside InternalRegimeController — fails closed when unset.
