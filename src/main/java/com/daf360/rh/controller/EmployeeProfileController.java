@@ -221,6 +221,23 @@ public class EmployeeProfileController {
     }
 
     /**
+     * GET /api/hr/profiles/employees/stats
+     *
+     * <p>The KPI cards above the profiles list. They follow the list's {@code pays} filter and
+     * nothing else — the search and the other filters leave them alone. Counted over
+     * {@code /employees}' default perimeter (people in service + accounts with no HR file),
+     * within the caller's pays scope: a pays outside it counts nothing, as in the list. Same
+     * access as {@code /employees}: counts of what the directory already lists.
+     */
+    @GetMapping("/employees/stats")
+    public ResponseEntity<com.daf360.rh.dto.profile.EmployeeStatsDto> employeeStats(
+            @RequestParam(required = false) Long pays) {
+        ProfileFilterDto filter = new ProfileFilterDto();
+        filter.setPaysId(pays);
+        return ResponseEntity.ok(profileService.employeeStats(filter));
+    }
+
+    /**
      * GET /api/hr/profiles/employees/{userId}
      *
      * <p>One row of {@code /employees}, by user id — including a user with no HR profile,

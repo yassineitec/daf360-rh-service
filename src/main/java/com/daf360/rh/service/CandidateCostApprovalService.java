@@ -151,6 +151,9 @@ public class CandidateCostApprovalService {
                 dto.setAppliedPosition(c.getAppliedPosition());
                 dto.setCandidateLocation(c.getLocation());
                 dto.setPaysId(c.getPaysId());
+                // Les deux nets de la négociation — cartes de /payroll/candidate-simulation.
+                dto.setSalaireNetRh(c.getSalaireNetRh());
+                dto.setSalaireNetCandidat(c.getSalaireNetCandidat());
             });
             return dto;
         }).toList();
