@@ -507,6 +507,84 @@ public class EmployeeProfileService {
     public org.springframework.data.domain.Page<EmployeeListItemDto> listAllEmployees(
             ProfileFilterDto filter, Pageable pageable) {
 
+        EmployeeWhere where = employeeWhere(filter);
+        String baseFrom  = EMPLOYEE_ROW_FROM;
+        String baseWhere = where.sql();
+        List<Object> args = where.args();
+
+        int offset   = (int) pageable.getOffset();
+        int pageSize = pageable.getPageSize();
+
+        String listSql =
+            EMPLOYEE_ROW_SELECT +
+            baseFrom + baseWhere +
+            // Newest hire first: the list answers "who joined recently". A user with
+            // no profile — or a profile with no hire_date — has nothing to date, and
+            // SQL Server sorts NULL *first*, which would park every profile-less row
+            // at the top of page 1; the CASE sinks them to the bottom instead.
+            //
+            // Tiebreakers make OFFSET/FETCH deterministic: hire_date is not unique
+            // (a whole intake shares one date), fullName is not unique either
+            // (duplicate names exist), and a user could join >1 profile row — without
+            // u.id + ep.id the paged order shuffles, so the same row can return a
+            // different profile/gender (or null) between identical requests.
+            employeeOrderBy(pageable.getSort()) +
+            "OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";
+
+        List<EmployeeListItemDto> rows = jdbcTemplate.query(listSql, EMPLOYEE_ROW_MAPPER, args.toArray());
+
+        Integer count = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) " + baseFrom + baseWhere,
+            Integer.class,
+            args.toArray());
+
+        long total = count != null ? count : 0;
+        return new org.springframework.data.domain.PageImpl<>(rows, pageable, total);
+    }
+
+    /**
+     * Les cartes KPI de /rh/profiles, comptées sur exactement le même périmètre que
+     * {@link #listAllEmployees} — même clause WHERE. Le contrôleur ne remplit que le pays :
+     * les cartes suivent le filtre pays de la liste, et aucun autre.
+     *
+     * <p>« Arrivées récentes » : embauchés sur les 3 derniers mois, aujourd'hui compris. Une
+     * date d'embauche future (contrat signé, personne pas encore arrivée) n'en fait pas partie.
+     */
+    @Transactional(readOnly = true)
+    public com.daf360.rh.dto.profile.EmployeeStatsDto employeeStats(ProfileFilterDto filter) {
+        EmployeeWhere where = employeeWhere(filter);
+        String sql =
+            "SELECT COUNT(*) AS total, " +
+            "SUM(CASE WHEN ep.hire_date > DATEADD(month, -3, CAST(GETDATE() AS date)) "
+                + "AND ep.hire_date <= CAST(GETDATE() AS date) THEN 1 ELSE 0 END) AS recent_hires, " +
+            "SUM(CASE WHEN ep.contract_type IS NOT NULL AND ep.contract_type <> '' THEN 1 ELSE 0 END) AS with_contract, " +
+            // By nature, not code: an admin-made type that behaves like a CDI (or a CDD) counts,
+            // through lifecycle_nature; a value without nature (or a legacy row) falls back on its code.
+            "SUM(CASE WHEN " + CONTRACT_NATURE_SQL + " = 'CDI' THEN 1 ELSE 0 END) AS cdi, " +
+            "SUM(CASE WHEN " + CONTRACT_NATURE_SQL + " = 'CDD' THEN 1 ELSE 0 END) AS cdd, " +
+            // The three in-service statuses — the list's default perimeter. A profile-less
+            // account has no status and counts in none of them.
+            "SUM(CASE WHEN ep.lifecycle_status = 'ACTIVE'     THEN 1 ELSE 0 END) AS active, " +
+            "SUM(CASE WHEN ep.lifecycle_status = 'ON_LEAVE'   THEN 1 ELSE 0 END) AS on_leave, " +
+            "SUM(CASE WHEN ep.lifecycle_status = 'ON_MISSION' THEN 1 ELSE 0 END) AS on_mission " +
+            EMPLOYEE_ROW_FROM + where.sql();
+        return jdbcTemplate.queryForObject(sql, (rs, i) -> new com.daf360.rh.dto.profile.EmployeeStatsDto(
+                rs.getLong("total"), rs.getLong("recent_hires"),
+                rs.getLong("with_contract"), rs.getLong("cdi"), rs.getLong("cdd"),
+                rs.getLong("active"), rs.getLong("on_leave"), rs.getLong("on_mission")),
+            where.args().toArray());
+    }
+
+    /** The contract's lifecycle nature (CDI, CDD…): lifecycle_nature, else the value code. */
+    private static final String CONTRACT_NATURE_SQL =
+        "COALESCE(NULLIF(UPPER(LTRIM(RTRIM(ctv.lifecycle_nature))), ''), "
+            + "UPPER(" + com.daf360.rh.lists.ContractTypeRefs.sqlCode("ep", "ctv") + "))";
+
+    /** The WHERE clause of /employees and its positional arguments, kept together. */
+    private record EmployeeWhere(String sql, List<Object> args) {}
+
+    /** Shared by {@link #listAllEmployees} and {@link #employeeStats} — one perimeter, two readings. */
+    private EmployeeWhere employeeWhere(ProfileFilterDto filter) {
         String search     = (filter.getSearch() != null && !filter.getSearch().isBlank())
                             ? filter.getSearch().trim() : null;
         String searchLike = search != null ? "%" + search + "%" : null;
@@ -535,11 +613,6 @@ public class EmployeeProfileService {
                             ? filter.getContract().trim() : null;
         java.time.LocalDate hireFrom = filter.getHireDateFrom();
         java.time.LocalDate hireTo   = filter.getHireDateTo();
-
-        int offset   = (int) pageable.getOffset();
-        int pageSize = pageable.getPageSize();
-
-        String baseFrom  = EMPLOYEE_ROW_FROM;
 
         String baseWhere =
             "WHERE (u.isActive = 1 OR u.isActive IS NULL) " +
@@ -572,31 +645,7 @@ public class EmployeeProfileService {
         if (hireFrom   != null) { args.add(java.sql.Date.valueOf(hireFrom)); }
         if (hireTo     != null) { args.add(java.sql.Date.valueOf(hireTo)); }
 
-        String listSql =
-            EMPLOYEE_ROW_SELECT +
-            baseFrom + baseWhere +
-            // Newest hire first: the list answers "who joined recently". A user with
-            // no profile — or a profile with no hire_date — has nothing to date, and
-            // SQL Server sorts NULL *first*, which would park every profile-less row
-            // at the top of page 1; the CASE sinks them to the bottom instead.
-            //
-            // Tiebreakers make OFFSET/FETCH deterministic: hire_date is not unique
-            // (a whole intake shares one date), fullName is not unique either
-            // (duplicate names exist), and a user could join >1 profile row — without
-            // u.id + ep.id the paged order shuffles, so the same row can return a
-            // different profile/gender (or null) between identical requests.
-            employeeOrderBy(pageable.getSort()) +
-            "OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";
-
-        List<EmployeeListItemDto> rows = jdbcTemplate.query(listSql, EMPLOYEE_ROW_MAPPER, args.toArray());
-
-        Integer count = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) " + baseFrom + baseWhere,
-            Integer.class,
-            args.toArray());
-
-        long total = count != null ? count : 0;
-        return new org.springframework.data.domain.PageImpl<>(rows, pageable, total);
+        return new EmployeeWhere(baseWhere, args);
     }
 
     // ── Filter options for profile list dropdowns ─────────────────────────────
