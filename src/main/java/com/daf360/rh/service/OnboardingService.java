@@ -352,7 +352,10 @@ public class OnboardingService {
                 dto.getPersonalPhone() != null && !dto.getPersonalPhone().isBlank()
                         ? dto.getPersonalPhone()
                         : candidate.getPhone());
-        profile.setPersonalAddress(dto.getPersonalAddress());
+        profile.setPersonalAddress(
+                dto.getPersonalAddress() != null && !dto.getPersonalAddress().isBlank()
+                        ? dto.getPersonalAddress()
+                        : candidate.getLocation());
         // Bank / RIB
         profile.setBankAccountNumber(dto.getBankAccountNumber());
         profile.setRib(dto.getRib());
@@ -678,8 +681,12 @@ public class OnboardingService {
                              : hasProfile ? existingProfile.getMaritalStatus() : null)
                 .numberOfChildren(hasDraft ? draft.getNumberOfChildren()
                                 : hasProfile ? existingProfile.getNumberOfChildren() : null)
+                // Address: draft > profile > the candidate's free-text location (often just a
+                // city — a starting point RH completes, not a full address).
                 .personalAddress(hasDraft ? draft.getPersonalAddress()
-                               : hasProfile ? existingProfile.getPersonalAddress() : null)
+                               : hasProfile && existingProfile.getPersonalAddress() != null
+                                 ? existingProfile.getPersonalAddress()
+                                 : c.getLocation())
                 // Section 5 — Bank / RIB
                 .bankId(hasProfile && existingProfile.getBank() != null
                         ? existingProfile.getBank().getId() : null)
@@ -833,7 +840,7 @@ public class OnboardingService {
             "FROM [dbo].[candidate_cost_approvals] WHERE candidate_id = ? ORDER BY submitted_at DESC";
 
     private static final String INTERVIEW_NOTES_SQL =
-            "SELECT ci.sequence_number, it.name AS interview_type, ci.result, " +
+            "SELECT ci.sequence_number, it.name AS interview_type, it.name_en AS interview_type_en, ci.result, " +
             "       ci.interviewer_notes, ci.scheduled_at " +
             "FROM [dbo].[candidate_interviews] ci " +
             "LEFT JOIN [dbo].[interview_types] it ON it.id = ci.interview_type_id " +
@@ -898,6 +905,7 @@ public class OnboardingService {
                     .map(r -> OnboardingRecruitmentDto.InterviewNote.builder()
                             .sequenceNumber(integer(r.get("sequence_number")))
                             .interviewType((String) r.get("interview_type"))
+                            .interviewTypeEn((String) r.get("interview_type_en"))
                             .result((String) r.get("result"))
                             .interviewerNotes((String) r.get("interviewer_notes"))
                             .scheduledAt(offsetDateTime(r.get("scheduled_at")))
