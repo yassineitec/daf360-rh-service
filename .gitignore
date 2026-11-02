@@ -37,3 +37,6 @@ build/
 ### VS Code ###
 .vscode/
 src/main/resources/db/seed/verify_schema_state.sql
+
+### Claude Code agent worktrees (leftover duplicate checkouts, not project files) ###
+.claude/worktrees/

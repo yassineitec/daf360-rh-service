@@ -37,6 +37,10 @@ public interface EmployeeProfileRepository
     Page<EmployeeProfile> findByPaysIdAndLifecycleStatus(
             Long paysId, LifecycleStatus status, Pageable pageable);
 
+    /** Unpaged — used by internal service-to-service reads (payroll-sync), never the UI. */
+    List<EmployeeProfile> findByPaysIdAndLifecycleStatusIn(
+            Long paysId, java.util.Collection<LifecycleStatus> statuses);
+
     /**
      * La liste des employés : recherche par nom/e-mail, filtres facultatifs, et trois
      * clauses qui ne sont PAS facultatives.
