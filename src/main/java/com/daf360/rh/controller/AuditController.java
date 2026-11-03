@@ -1,7 +1,7 @@
 package com.daf360.rh.controller;
 
-import com.daf360.rh.domain.AuditLog;
-import com.daf360.rh.repository.AuditLogRepository;
+import com.daf360.rh.dto.AuditEntryDto;
+import com.daf360.rh.repository.AuditQueryRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -15,11 +15,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AuditController {
 
-    private final AuditLogRepository auditLogRepository;
+    private final AuditQueryRepository auditQueryRepository;
 
     @GetMapping("/logs")
     @PreAuthorize("hasAnyAuthority('HR_ADMIN_ROLES', 'HR_CREATE_PROFILE', 'HR_UPDATE_PROFILE')")
-    public Page<AuditLog> logs(Pageable pageable) {
-        return auditLogRepository.findAll(pageable);
+    public Page<AuditEntryDto> logs(Pageable pageable) {
+        return auditQueryRepository.findMerged(pageable).map(AuditEntryDto::from);
     }
 }
