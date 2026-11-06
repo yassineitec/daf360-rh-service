@@ -11,6 +11,7 @@ import com.daf360.rh.dto.leave.LeaveModificationCreate;
 import com.daf360.rh.dto.leave.LeaveModificationDecision;
 import com.daf360.rh.dto.leave.LeaveModificationDto;
 import com.daf360.rh.mapper.LeaveRequestMapper;
+import com.daf360.rh.notification.AbsenceNotificationLinks;
 import com.daf360.rh.notification.NotificationEntityType;
 import com.daf360.rh.notification.NotificationRoutingService;
 import com.daf360.rh.notification.RoutingContext;
@@ -155,10 +156,13 @@ public class LeaveModificationService {
         LeaveModificationRequest saved = repository.save(request);
 
         // A move waits on the responsable the congé already names; a cancellation skips them
-        // and waits on HR. The event carries the subject either way — the HR recipient is a
-        // PERMISSION rule on the same event (V113), so HR is reached without a subject.
-        notifyChange("LEAVE_CHANGE_REQUESTED", saved, leave,
-                saved.getType() == ModificationType.MODIFICATION ? saved.getResponsableId() : null);
+        // and waits on HR. Two events since V123: on one shared event HR's PERMISSION
+        // recipient was told of every move too, a stage before they had anything to do.
+        if (saved.getType() == ModificationType.MODIFICATION) {
+            notifyChange("LEAVE_CHANGE_REQUESTED", saved, leave, saved.getResponsableId());
+        } else {
+            notifyChange("LEAVE_CANCEL_REQUESTED", saved, leave, null);
+        }
         return mapper.toModificationDto(saved, leave, lang);
     }
 
@@ -422,7 +426,7 @@ public class LeaveModificationService {
             vars.put("motif",      req.getMotif() == null ? "" : req.getMotif());
             vars.put("motifRefus", req.getMotifRefus() == null ? "" : "Motif : " + req.getMotifRefus());
             vars.put("decision",   req.getEtat() == ModificationState.REJECTED ? "refusée" : "acceptée");
-            vars.put("type",       leave == null || leave.getType() == null ? "" : leave.getType());
+            vars.put("type",       leave == null || leave.getType() == null ? "" : typeLabelOf(leave.getType()));
             vars.put("period",     leave == null ? "" : periodOf(leave.getDateDebut(), leave.getDateFin()));
             vars.put("newPeriod",  req.getType() == ModificationType.ANNULATION
                     ? "Annulation demandée."
@@ -430,12 +434,14 @@ public class LeaveModificationService {
             vars.put("delta",      req.getNouveauTotal() == null || leave == null || leave.getTotalJours() == null
                     ? "" : req.getNouveauTotal().subtract(leave.getTotalJours()).toPlainString());
 
-            routing.resolveAndDispatch(RoutingContext.builder()
+            // After the commit: a decision that rolls back must not have been announced.
+            routing.dispatchAfterCommit(RoutingContext.builder()
                     .eventCode(eventCode)
                     .paysId(req.getPaysId())
                     .subjectUserId(subjectUserId)
                     .entityType(NotificationEntityType.LEAVE)
                     .entityId(req.getAbsenceId())
+                    .link(AbsenceNotificationLinks.forEvent(eventCode))
                     .templateVars(vars)
                     .build());
         } catch (RuntimeException e) {
@@ -451,6 +457,17 @@ public class LeaveModificationService {
             return n == null ? "" : n;
         } catch (RuntimeException e) {
             return "";
+        }
+    }
+
+    /** The catalogue's French label — the message read « son CONGE du … » with the bare code. */
+    private String typeLabelOf(String code) {
+        try {
+            List<String> rows = jdbc.queryForList(
+                    "SELECT label_fr FROM AbsenceTypes WHERE code = ?", String.class, code);
+            return rows.isEmpty() || rows.get(0) == null ? code : rows.get(0);
+        } catch (RuntimeException e) {
+            return code;
         }
     }
 

@@ -32,6 +32,18 @@ public record NotificationTarget(NotificationEntityType entityType, Long entityI
         return new NotificationTarget(entityType, entityId, null);
     }
 
+    /**
+     * An entity AND the page to open for it — for the kinds whose reader decides where they
+     * land: a congé opens the approver's queue for the manager and « Mes absences » for the
+     * employee, and no detail page exists to hang a kind + id on. The entity is still stored,
+     * so a notification can be traced back to its request. An over-long link is dropped.
+     */
+    public static NotificationTarget of(NotificationEntityType entityType, Long entityId, String link) {
+        NotificationTarget base = of(entityType, entityId);
+        if (link == null || link.isBlank() || link.length() > MAX_LINK_LENGTH) return base;
+        return new NotificationTarget(base.entityType(), base.entityId(), link);
+    }
+
     /** Escape hatch for targets no entity kind describes. Over-long links are dropped. */
     public static NotificationTarget link(String link) {
         if (link == null || link.isBlank() || link.length() > MAX_LINK_LENGTH) return NONE;

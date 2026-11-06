@@ -1,5 +1,6 @@
 package com.daf360.rh.service;
 
+import com.daf360.rh.domain.enums.ApproverResolutionStrategy;
 import com.daf360.rh.dto.leave.LeaveApproverDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -159,25 +160,36 @@ public class LeaveApproverService {
      * The approvers for ONE leave type, when that type names its own approver roles.
      *
      * A type may restrict who signs it off — sick leave to HR, ordinary leave to the line
-     * manager. `RoleApprovableAbsenceTypes` holds that mapping, and this resolves it for a
-     * given employee: walk upward from the employee's role, and at each ancestor whose role
-     * is configured as an approver for this type, take the holders in the employee's country.
+     * manager. `RoleApprovableAbsenceTypes` holds that mapping; the type's strategy decides
+     * which holders of those roles this employee is offered (see ApproverResolutionStrategy):
      *
-     * Two properties of that walk are deliberate and both come from the original:
+     *   TOP_OF_HIERARCHY   ancestors only, starting at the PARENT role (a peer in the same
+     *                      role is not an approver); same country, except a ROOT role whose
+     *                      holders count anywhere — rule 1 of approversFor. That exception was
+     *                      missing, so a PDG in another entity was never offered for a type
+     *                      that names PDG.
+     *   ROLE_MATCH         every holder in the employee's country, hierarchy ignored.
+     *   SAME_COUNTRY_FIRST the employee's country; any country when it has nobody.
      *
-     *   STARTS AT THE PARENT, not the employee's own role. A colleague holding the same role
-     *   is a peer, not an approver, even if that role appears in the type's list.
-     *
-     *   ONLY ANCESTORS COUNT. A role may be configured as an approver for the type and still
-     *   produce nobody, because nobody above THIS employee holds it. That empty result is
-     *   meaningful — see LeaveTypeOptionDto — and must not be quietly replaced with the
-     *   generic manager list.
-     *
-     * Returns empty when the type configures no approver roles at all; the caller treats that
-     * case as "use the default hierarchy list" and the two are distinguished by the count.
+     * An empty result is meaningful — the type names roles and nobody qualifies — see
+     * LeaveTypeOptionDto; it must not be quietly replaced with the generic manager list.
+     * The caller tells it apart from "no roles configured" by approverRoleCount.
      */
     @Transactional(readOnly = true)
-    public List<LeaveApproverDto> eligibleApproversFor(String typeCode, Long userId) {
+    public List<LeaveApproverDto> eligibleApproversFor(String typeCode, Long userId,
+                                                       ApproverResolutionStrategy strategy) {
+        ApproverResolutionStrategy mode = strategy == null ? ApproverResolutionStrategy.TOP_OF_HIERARCHY : strategy;
+        return switch (mode) {
+            case TOP_OF_HIERARCHY -> upTheHierarchy(typeCode, userId);
+            case ROLE_MATCH -> roleHolders(typeCode, userId, true);
+            case SAME_COUNTRY_FIRST -> {
+                List<LeaveApproverDto> local = roleHolders(typeCode, userId, true);
+                yield local.isEmpty() ? roleHolders(typeCode, userId, false) : local;
+            }
+        };
+    }
+
+    private List<LeaveApproverDto> upTheHierarchy(String typeCode, Long userId) {
         String sql = """
                 WITH ancestors AS (
                     -- Start at the PARENT: a peer in the same role is not an approver.
@@ -204,17 +216,39 @@ public class LeaveApproverService {
                   AND u.id <> ?
                   AND t.code = ?
                   AND (t.deleted = 0 OR t.deleted IS NULL)
-                  AND u.pays_id = (SELECT c.pays_id FROM Users c WHERE c.id = ?)
+                  AND (a.parent_role_id IS NULL
+                       OR u.pays_id = (SELECT c.pays_id FROM Users c WHERE c.id = ?))
                 ORDER BY u.fullName
                 """;
-        return jdbcTemplate.query(
-                sql,
-                (rs, n) -> new LeaveApproverDto(
-                        rs.getLong("id"),
-                        rs.getString("fullName"),
-                        rs.getString("email"),
-                        rs.getString("role_name")),
-                userId, userId, typeCode, userId);
+        return jdbcTemplate.query(sql, this::approverRow, userId, userId, typeCode, userId);
+    }
+
+    /** Holders of a role the type names, ignoring the hierarchy; in the employee's country or anywhere. */
+    private List<LeaveApproverDto> roleHolders(String typeCode, Long userId, boolean sameCountry) {
+        String sql = """
+                SELECT DISTINCT u.id, u.fullName, COALESCE(u.email, u.username) AS email,
+                       r.frenchName AS role_name
+                FROM Users u
+                JOIN Roles r ON r.id = u.role_id AND (r.deleted = 0 OR r.deleted IS NULL)
+                JOIN RoleApprovableAbsenceTypes rat ON rat.role_id = u.role_id
+                JOIN AbsenceTypes t ON t.id = rat.absence_type_id
+                WHERE u.isActive = 1
+                  AND u.id <> ?
+                  AND t.code = ?
+                  AND (t.deleted = 0 OR t.deleted IS NULL)
+                """ + (sameCountry ? "  AND u.pays_id = (SELECT c.pays_id FROM Users c WHERE c.id = ?)\n" : "")
+                + "ORDER BY u.fullName";
+        return sameCountry
+                ? jdbcTemplate.query(sql, this::approverRow, userId, typeCode, userId)
+                : jdbcTemplate.query(sql, this::approverRow, userId, typeCode);
+    }
+
+    private LeaveApproverDto approverRow(java.sql.ResultSet rs, int n) throws java.sql.SQLException {
+        return new LeaveApproverDto(
+                rs.getLong("id"),
+                rs.getString("fullName"),
+                rs.getString("email"),
+                rs.getString("role_name"));
     }
 
     /** How many roles a type names as approvers. Zero means "no restriction configured". */

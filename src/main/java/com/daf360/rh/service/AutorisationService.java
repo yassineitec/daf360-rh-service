@@ -7,6 +7,7 @@ import com.daf360.rh.dto.autorisation.AutorisationDecision;
 import com.daf360.rh.dto.autorisation.AutorisationQuotaDto;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.notification.AbsenceNotificationLinks;
 import com.daf360.rh.notification.NotificationEntityType;
 import com.daf360.rh.notification.NotificationRoutingService;
 import com.daf360.rh.notification.RoutingContext;
@@ -217,9 +218,16 @@ public class AutorisationService {
     @Transactional
     public Autorisation archive(Long id, Long actorId) {
         Autorisation a = require(id);
+        DemandeEtat before = a.getEtatDemande();
         a.setEtatDemande(DemandeEtat.ARCHIVE);
         a.setDecidedBy(actorId);
-        return repository.save(a);
+        Autorisation saved = repository.save(a);
+        // HR's removal — the employee is told, rather than finding the autorisation gone.
+        if (before != DemandeEtat.ARCHIVE && !saved.getCollaborateurId().equals(actorId)) {
+            notify("AUTORISATION_CANCELLED", saved, saved.getCollaborateurId(),
+                    Map.of("approver", nameOf(actorId)));
+        }
+        return saved;
     }
 
     // ═══ The rules ═══════════════════════════════════════════════════════════
@@ -445,12 +453,14 @@ public class AutorisationService {
             vars.put("minutes", String.valueOf(a.getDureeMinutes()));
             vars.putAll(extra);
 
-            routing.resolveAndDispatch(RoutingContext.builder()
+            // After the commit: a request that rolls back must not have been announced.
+            routing.dispatchAfterCommit(RoutingContext.builder()
                     .eventCode(eventCode)
                     .paysId(a.getPaysId())
                     .subjectUserId(subjectUserId)
                     .entityType(NotificationEntityType.AUTORISATION)
                     .entityId(a.getId())
+                    .link(AbsenceNotificationLinks.forEvent(eventCode))
                     .templateVars(vars)
                     .build());
         } catch (RuntimeException e) {
