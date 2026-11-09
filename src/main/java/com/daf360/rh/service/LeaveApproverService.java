@@ -122,6 +122,43 @@ public class LeaveApproverService {
         return List.copyOf(merged.values());
     }
 
+    /**
+     * The same approver list as {@link #approversFor}, narrowed to the holders of roles that
+     * are ASSIGNED a given permission — the module-level equivalent of the approver roles a
+     * congé type names (RoleApprovableAbsenceTypes).
+     *
+     * Used by the pointage module with POINTAGE_RESPOND_REQUESTS: offering a manager who
+     * cannot open the "demandes de mon équipe" inbox would send the request nowhere.
+     *
+     * Same "no configuration means no restriction" rule as {@link #approverRoleCount}: while
+     * NO role holds the permission, the full hierarchy list is returned unchanged, so a
+     * module that has not been configured yet keeps working. Once at least one role holds
+     * it, an empty result is meaningful (nobody above this employee may answer) and is
+     * returned as such.
+     */
+    @Transactional(readOnly = true)
+    public List<LeaveApproverDto> approversWithPermission(Long userId, String permission) {
+        List<LeaveApproverDto> all = approversFor(userId);
+        if (permission == null || permission.isBlank() || all.isEmpty()) {
+            return all;
+        }
+        Integer assigned = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM RolePermissions WHERE permission = ?", Integer.class, permission);
+        if (assigned == null || assigned == 0) {
+            return all;
+        }
+        String placeholders = String.join(",", java.util.Collections.nCopies(all.size(), "?"));
+        Object[] args = new Object[all.size() + 1];
+        args[0] = permission;
+        for (int i = 0; i < all.size(); i++) args[i + 1] = all.get(i).userId();
+        java.util.Set<Long> allowed = new java.util.HashSet<>(jdbcTemplate.queryForList(
+                "SELECT u.id FROM Users u "
+              + "JOIN RolePermissions rp ON rp.role_id = u.role_id AND rp.permission = ? "
+              + "WHERE u.id IN (" + placeholders + ")",
+                Long.class, args));
+        return all.stream().filter(a -> allowed.contains(a.userId())).toList();
+    }
+
     /** Rule 3 — see {@link #EGYPT_ISO}. Returns empty for every other country. */
     private List<LeaveApproverDto> egyptFallback(Long userId) {
         String sql = """

@@ -3,12 +3,15 @@ package com.daf360.rh.controller;
 import com.daf360.rh.dto.PaysForSyncDto;
 import com.daf360.rh.dto.RoleForSyncDto;
 import com.daf360.rh.dto.UserForSyncDto;
+import com.daf360.rh.dto.leave.LeaveApproverDto;
+import com.daf360.rh.service.LeaveApproverService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -25,6 +28,7 @@ import java.util.List;
 public class UserSyncController {
 
     private final JdbcTemplate jdbcTemplate;
+    private final LeaveApproverService leaveApprovers;
 
     /**
      * The user replica the finance, payroll and pointage services copy into their own
@@ -129,6 +133,22 @@ public class UserSyncController {
      * "managers" included the Egyptian ones. A hierarchy that crosses entities is not one.
      * Users with no pays_id fall back to the unfiltered set rather than to nothing.
      */
+    /**
+     * Who may approve a request from this user — the SAME resolution as a congé request
+     * (LeaveApproverService.approversFor: the whole role hierarchy upward, root roles from
+     * any country, peers when the role has showAll, the Egypt rule), optionally narrowed to
+     * roles assigned {@code permission}. Requires a valid token, like /managers below.
+     *
+     * Used by pointage for the lunch-shift request's Responsable / Responsable adjoint
+     * pickers, with permission=POINTAGE_RESPOND_REQUESTS.
+     */
+    @GetMapping("/users/{userId}/approvers")
+    public List<LeaveApproverDto> approversForUser(
+            @PathVariable Long userId,
+            @RequestParam(required = false) String permission) {
+        return leaveApprovers.approversWithPermission(userId, permission);
+    }
+
     @GetMapping("/users/{userId}/managers")
     public List<UserForSyncDto> managersForUser(@PathVariable Long userId) {
         String sql = """
