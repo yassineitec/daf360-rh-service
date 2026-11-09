@@ -64,8 +64,15 @@ public class DashboardController {
     @GetMapping("/missing-documents")
     ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<PreviewResponse<MissingDocumentDto>> getMissingDocuments(
-            @RequestParam(required = false) Long paysId) {
-        return ResponseEntity.ok(dashboardService.getMissingDocuments(paysId));
+            @RequestParam(required = false) Long paysId,
+            // false = aperçu de la carte d'accueil (5 collaborateurs) ; true = liste complète
+            // de la pop-up « Voir tout ».
+            @RequestParam(defaultValue = "false") boolean all,
+            // REQUIRED = documents obligatoires du pays (carte, défaut) ; ALL = tous les types
+            // du pays (filtre « Documents » de la pop-up).
+            @RequestParam(defaultValue = "REQUIRED") String scope) {
+        return ResponseEntity.ok(dashboardService.getMissingDocuments(paysId, all,
+                "ALL".equalsIgnoreCase(scope)));
     }
 
     // ── Page 1: Tableau de bord RH ────────────────────────────────────────────
