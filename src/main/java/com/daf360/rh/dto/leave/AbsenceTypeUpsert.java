@@ -72,12 +72,12 @@ public class AbsenceTypeUpsert {
     @Min(0)
     private int displayOrder = 0;
 
-    /** Stored, not enforced — see AbsenceTypeDto. */
+    /** ALL / MALE / FEMALE — enforced, see LeaveRequestService.genderAllows. */
     private String allowedGender;
 
     private boolean managerCanView = true;
 
-    /** Stored, not enforced — see ApproverResolutionStrategy. */
+    /** Enforced — see ApproverResolutionStrategy. */
     private String approverResolutionStrategy;
 
     /**

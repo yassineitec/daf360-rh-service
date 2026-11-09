@@ -35,4 +35,10 @@ public class TeletravailQuotaDto {
     private LocalDate referenceDate;
     private BigDecimal weekUsedDays;
     private BigDecimal monthUsedDays;
+
+    /**
+     * When the employee's afternoon starts today, or null when passed / unknown. Until then an
+     * afternoon half-day today is allowed whatever the notice — see HalfDayCutoffService.
+     */
+    private java.time.OffsetDateTime todayAfternoonStart;
 }

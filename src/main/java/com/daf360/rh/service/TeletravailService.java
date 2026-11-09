@@ -9,6 +9,7 @@ import com.daf360.rh.dto.teletravail.TeletravailDecision;
 import com.daf360.rh.dto.teletravail.TeletravailQuotaDto;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.notification.AbsenceNotificationLinks;
 import com.daf360.rh.notification.NotificationEntityType;
 import com.daf360.rh.notification.NotificationRoutingService;
 import com.daf360.rh.notification.RoutingContext;
@@ -74,6 +75,7 @@ public class TeletravailService {
     private final TenantService tenantService;
     private final JdbcTemplate jdbcTemplate;
     private final NotificationRoutingService routing;
+    private final HalfDayCutoffService halfDays;
 
     /**
      * The per-entity rules, as V116 stores them on dbo.pays.
@@ -118,7 +120,7 @@ public class TeletravailService {
         BigDecimal jours = joursOf(category);
 
         if (!settle) {
-            assertTiming(dto.getDateTeletravail(), rules, paysId);
+            assertTiming(dto.getDateTeletravail(), category, collaborateurId, rules, paysId);
         }
         assertWorkingDay(dto.getDateTeletravail(), paysId);
         assertFits(collaborateurId, dto.getDateTeletravail(), category, jours, rules, null);
@@ -180,7 +182,8 @@ public class TeletravailService {
         BigDecimal jours = joursOf(category);
 
         if (isOwner) {
-            assertTiming(dto.getDateTeletravail(), rules, existing.getPaysId());
+            assertTiming(dto.getDateTeletravail(), category, existing.getCollaborateurId(),
+                    rules, existing.getPaysId());
         }
         assertWorkingDay(dto.getDateTeletravail(), existing.getPaysId());
         // Excluding this row from its own checks — otherwise an edit always collides with itself.
@@ -280,7 +283,13 @@ public class TeletravailService {
         }
         t.setEtatDemande(DemandeEtat.ARCHIVE);
         t.setDecidedBy(actorId);
-        return repository.save(t);
+        Teletravail saved = repository.save(t);
+        // HR's removal — the employee is told, rather than finding the day gone.
+        if (!saved.getCollaborateurId().equals(actorId)) {
+            notify("TELETRAVAIL_CANCELLED", saved, saved.getCollaborateurId(),
+                    Map.of("approver", nameOf(actorId)));
+        }
+        return saved;
     }
 
     // ═══ The rules ═══════════════════════════════════════════════════════════
@@ -324,6 +333,7 @@ public class TeletravailService {
                 .referenceDate(ref)
                 .weekUsedDays(repository.daysBetween(userId, weekStart, weekStart.plusWeeks(1), null))
                 .monthUsedDays(repository.daysBetween(userId, monthStart, monthStart.plusMonths(1), null))
+                .todayAfternoonStart(halfDays.todayAfternoonStart(userId))
                 .build();
     }
 
@@ -361,12 +371,19 @@ public class TeletravailService {
         return c == LeaveCategory.FULL_DAY ? FULL : HALF;
     }
 
-    /** Not in the past, and the entity's notice in WORKING days — the congés' convention. */
-    private void assertTiming(LocalDate date, Rules r, Long paysId) {
+    /**
+     * Not in the past, and the entity's notice in WORKING days — the congés' convention. One
+     * exception, shared with the congés: this afternoon, asked while it is still morning by the
+     * employee's regime (HalfDayCutoffService).
+     */
+    private void assertTiming(LocalDate date, LeaveCategory category, Long userId, Rules r, Long paysId) {
         LocalDate today = LocalDate.now();
         if (date.isBefore(today)) {
             throw new AppException(ErrorCode.INVALID_TRANSITION,
                     "Une demande de télétravail ne peut pas porter sur une date passée.");
+        }
+        if (category == LeaveCategory.HALF_DAY_AFTERNOON && halfDays.afternoonStillAhead(userId, date)) {
+            return;
         }
         if (r.noticeDays() != null && r.noticeDays() > 0) {
             LocalDate earliest = calendar.addWorkingDays(today, r.noticeDays(), paysId);
@@ -567,12 +584,14 @@ public class TeletravailService {
             vars.put("duree", t.getCategory().getLabelFr().toLowerCase());
             vars.putAll(extra);
 
-            routing.resolveAndDispatch(RoutingContext.builder()
+            // After the commit: a request that rolls back must not have been announced.
+            routing.dispatchAfterCommit(RoutingContext.builder()
                     .eventCode(eventCode)
                     .paysId(t.getPaysId())
                     .subjectUserId(subjectUserId)
                     .entityType(NotificationEntityType.TELETRAVAIL)
                     .entityId(t.getId())
+                    .link(AbsenceNotificationLinks.forEvent(eventCode))
                     .templateVars(vars)
                     .build());
         } catch (RuntimeException e) {
