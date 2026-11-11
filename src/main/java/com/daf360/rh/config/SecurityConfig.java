@@ -62,6 +62,9 @@ public class SecurityConfig {
                 // routing engine lives here). Same X-Internal-Key check, inside
                 // InternalSalaryAdvanceController.
                 .requestMatchers(HttpMethod.POST, "/api/hr/internal/notifications").permitAll()
+                // payroll-service mirrors the saved net salary into salaire_net_rh. Same
+                // X-Internal-Key check, inside InternalPayrollSyncController.
+                .requestMatchers(HttpMethod.PUT, "/api/hr/internal/payroll-sync/employees/*/current-net-salary").permitAll()
                 // Baseline: every other endpoint requires a valid session. Privileged
                 // actions add a specific @PreAuthorize on top; the rest are simply
                 // authenticated-only (any logged-in user).
