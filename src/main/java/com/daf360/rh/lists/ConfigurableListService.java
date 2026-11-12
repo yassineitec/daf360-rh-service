@@ -100,11 +100,15 @@ public class ConfigurableListService {
                 .labelEn(dto.getLabelEn())
                 .sortOrder(dto.getSortOrder() != null ? dto.getSortOrder() : 0)
                 .lifecycleNature(lifecycleNatureFor(dto.getListTypeId(), dto.getLifecycleNature(), valueCode))
+                .decisionAction(decisionActionFor(dto.getListTypeId(), dto.getDecisionAction(), valueCode))
                 .isActive(true)
                 .isSystem(false)
                 .createdBy(createdBy)
                 .createdAt(OffsetDateTime.now())
                 .build();
+
+        applyDecisionRules(entity, dto.getCustomDecisions(), dto.getTrialRenewable(),
+                dto.getTrialMaxRenewals(), dto.getTrialDecisions(), dto.getEndDecisions());
 
         ConfigurableListValue saved = valueRepo.save(entity);
         invalidateCacheForType(dto.getListTypeId());
@@ -117,6 +121,24 @@ public class ConfigurableListService {
                 "valueCode=" + saved.getValueCode()
         );
         return toValueResponse(saved, saved.getListTypeId());
+    }
+
+    /**
+     * CONTRACT_DECISION only: the action the choice carries out — the one asked for, else the
+     * code's own (a value coded RENEW_TRIAL renews the trial). The admin names the choice
+     * freely; the engine only knows these actions. Other lists carry none (null).
+     */
+    private String decisionActionFor(Long listTypeId, String requested, String valueCode) {
+        boolean decisionList = typeRepo.findById(listTypeId)
+                .map(t -> com.daf360.rh.lifecycle.ContractDecisionService.LIST_CODE.equals(t.getCode()))
+                .orElse(false);
+        if (!decisionList) return null;
+        String code = requested != null && !requested.isBlank() ? requested : valueCode;
+        return com.daf360.rh.lifecycle.ContractDecisionAction.parse(code)
+                .map(Enum::name)
+                .orElseThrow(() -> new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                        "Action de décision inconnue : " + code + " — attendu : "
+                        + com.daf360.rh.lifecycle.ContractDecisionAction.codes()));
     }
 
     /**
@@ -139,6 +161,37 @@ public class ConfigurableListService {
         return nature;
     }
 
+    /**
+     * CONTRACT_TYPE only: the type's own « Décider » rules. {@code custom} true stores them
+     * (an empty list = no choice offered at that moment), false clears them so the type
+     * inherits its nature's rules again, null leaves them as they are. Ignored elsewhere.
+     */
+    private void applyDecisionRules(ConfigurableListValue v, Boolean custom, Boolean renewable,
+                                    Integer maxRenewals, List<String> trial, List<String> end) {
+        if (custom == null) return;
+        boolean contractType = typeRepo.findById(v.getListTypeId())
+                .map(t -> ContractTypeRefs.LIST_CODE.equals(t.getCode()))
+                .orElse(false);
+        if (!contractType) return;
+        if (!custom) {
+            v.setTrialRenewable(null);
+            v.setTrialMaxRenewals(null);
+            v.setTrialDecisions(null);
+            v.setEndDecisions(null);
+            return;
+        }
+        if (maxRenewals != null && (maxRenewals < 0 || maxRenewals > 10)) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Le nombre de renouvellements doit être compris entre 0 et 10.");
+        }
+        v.setTrialRenewable(Boolean.TRUE.equals(renewable));
+        v.setTrialMaxRenewals(maxRenewals != null ? maxRenewals : 1);
+        v.setTrialDecisions(com.daf360.rh.lifecycle.EmployeeLifecycleService.decisionsCsv(
+                trial != null ? trial : List.of(), com.daf360.rh.lifecycle.ContractDecisionAction.Moment.TRIAL_END));
+        v.setEndDecisions(com.daf360.rh.lifecycle.EmployeeLifecycleService.decisionsCsv(
+                end != null ? end : List.of(), com.daf360.rh.lifecycle.ContractDecisionAction.Moment.CONTRACT_END));
+    }
+
     @PreAuthorize("hasAuthority('ADMIN_LISTS')")
     public ListValueResponse updateListValue(Long id, UpdateListValueRequest dto, Long updatedBy) {
         ConfigurableListValue value = valueRepo.findById(id)
@@ -157,6 +210,11 @@ public class ConfigurableListService {
         if (dto.getLifecycleNature() != null) {
             value.setLifecycleNature(lifecycleNatureFor(value.getListTypeId(), dto.getLifecycleNature(), value.getValueCode()));
         }
+        if (dto.getDecisionAction() != null) {
+            value.setDecisionAction(decisionActionFor(value.getListTypeId(), dto.getDecisionAction(), value.getValueCode()));
+        }
+        applyDecisionRules(value, dto.getCustomDecisions(), dto.getTrialRenewable(),
+                dto.getTrialMaxRenewals(), dto.getTrialDecisions(), dto.getEndDecisions());
 
         if (dto.getIsActive() != null) {
             if (Boolean.FALSE.equals(dto.getIsActive())) {
@@ -283,9 +341,22 @@ public class ConfigurableListService {
         r.setIsSystem(v.getIsSystem());
         r.setPayrollContractCode(v.getPayrollContractCode());
         r.setLifecycleNature(v.getLifecycleNature());
+        r.setDecisionAction(v.getDecisionAction());
+        r.setCustomDecisions(v.hasOwnDecisionRules());
+        if (v.hasOwnDecisionRules()) {
+            r.setTrialRenewable(v.getTrialRenewable());
+            r.setTrialMaxRenewals(v.getTrialMaxRenewals());
+            r.setTrialDecisions(csvToList(v.getTrialDecisions()));
+            r.setEndDecisions(csvToList(v.getEndDecisions()));
+        }
         r.setCreatedAt(v.getCreatedAt());
         r.setUpdatedAt(v.getUpdatedAt());
         return r;
+    }
+
+    private static List<String> csvToList(String csv) {
+        if (csv == null) return null;
+        return com.daf360.rh.lifecycle.ContractDecisionAction.parseCsv(csv).stream().map(Enum::name).toList();
     }
 
     private List<ListValueResponse> toValueResponseList(List<ConfigurableListValue> values,
@@ -301,6 +372,10 @@ public class ConfigurableListService {
         return "valueCode=" + v.getValueCode()
                 + ",labelFr=" + v.getLabelFr()
                 + ",isActive=" + v.getIsActive()
-                + ",sortOrder=" + v.getSortOrder();
+                + ",sortOrder=" + v.getSortOrder()
+                + (v.hasOwnDecisionRules()
+                    ? ",trialRenewable=" + v.getTrialRenewable() + ",trialMaxRenewals=" + v.getTrialMaxRenewals()
+                      + ",trialDecisions=" + v.getTrialDecisions() + ",endDecisions=" + v.getEndDecisions()
+                    : "");
     }
 }

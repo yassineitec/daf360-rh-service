@@ -36,4 +36,20 @@ public class UpdateListValueRequest {
     /** CONTRACT_TYPE only: the lifecycle rules this type follows (CDI, CDD, CIVP, STAGE, FREELANCE, DETACHEMENT). */
     @Size(max = 30)
     private String lifecycleNature;
+
+    /** CONTRACT_DECISION only: the action the choice carries out (ContractDecisionAction). */
+    @Size(max = 30)
+    private String decisionAction;
+
+    /*
+     * CONTRACT_TYPE only — this type's own « Décider » rules. customDecisions: true sets the
+     * four fields below, false clears them (the type inherits its nature's rules), absent = no change.
+     */
+    private Boolean customDecisions;
+    private Boolean trialRenewable;
+    @jakarta.validation.constraints.Min(0)
+    @jakarta.validation.constraints.Max(10)
+    private Integer trialMaxRenewals;
+    private java.util.List<String> trialDecisions;
+    private java.util.List<String> endDecisions;
 }

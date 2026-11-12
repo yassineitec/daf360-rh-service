@@ -219,13 +219,154 @@ public class EmployeeLifecycleService {
         String newStatus  = Boolean.TRUE.equals(dto.getApproved()) ? "ACTIF"      : "RUPTURE_PE";
         String actionCode = Boolean.TRUE.equals(dto.getApproved()) ? "VALIDATE_PE": "RUPTURE_PE";
 
-        return transitionState(contractId,
+        ContractDetailDto result = transitionState(contractId,
             TransitionRequest.builder()
                 .newStatus(newStatus)
                 .actionCode(actionCode)
                 .commentaire(dto.getCommentaire())
                 .build(),
             validatedBy);
+
+        // The trial is over either way: the profile's flag feeds the home « Fin de période
+        // d'essai » card, which otherwise kept listing a confirmed employee.
+        profileRepo.findById(contract.getEmployeeProfile().getId()).ifPresent(p -> {
+            p.setIsOnProbation(false);
+            profileRepo.save(p);
+        });
+        return result;
+    }
+
+    // ── Trial period: renew ───────────────────────────────────────────────────
+
+    /**
+     * One more trial period: the contract stays PERIODE_ESSAI with a new end date.
+     *
+     * Rules (contract_type_config of the contract's nature): the trial must be renewable,
+     * renewed fewer than {@code trial_max_renewals} times, decided before it ends, and the
+     * renewal may not be longer than the initial trial — the usual legal bound.
+     */
+    @PreAuthorize("hasPermission(null, 'RH_VALIDATE_TRIAL_PERIOD')")
+    public ContractDetailDto renewTrialPeriod(Long contractId, LocalDate newEnd, String commentaire, Long renewedBy) {
+        EmployeeContract contract = contractRepo.findById(contractId)
+            .orElseThrow(() -> new BusinessRuleException("D3-96", "Contrat introuvable."));
+        if (!"PERIODE_ESSAI".equals(contract.getCurrentStatusCode())) {
+            throw new BusinessRuleException("D3-96", "Ce contrat n'est pas en période d'essai.");
+        }
+        if (Boolean.TRUE.equals(contract.getDossierLocked())) {
+            throw new BusinessRuleException("D3-104",
+                "Le dossier de ce collaborateur est verrouillé en lecture seule.");
+        }
+        ContractRules rules = rulesOf(contract);
+        if (!rules.trialRenewable()) {
+            throw new BusinessRuleException("D3-96",
+                "La période d'essai de ce type de contrat n'est pas renouvelable.");
+        }
+        long done = trialRenewalCount(contractId);
+        int max = rules.trialMaxRenewals();
+        if (done >= max) {
+            throw new BusinessRuleException("D3-96",
+                "La période d'essai a déjà été renouvelée " + done + " fois (maximum : " + max + ").");
+        }
+        LocalDate currentEnd = LifecycleAlertJob.effectiveTrialEnd(contract);
+        if (currentEnd == null) {
+            throw new BusinessRuleException("D3-96", "Ce contrat n'a pas de date de fin de période d'essai.");
+        }
+        if (LocalDate.now().isAfter(currentEnd)) {
+            throw new BusinessRuleException("D3-96",
+                "Le renouvellement doit être décidé avant la fin de la période d'essai (" + currentEnd + ").");
+        }
+        if (newEnd == null || !newEnd.isAfter(currentEnd)) {
+            throw new BusinessRuleException("D3-96",
+                "La nouvelle date de fin doit être postérieure au " + currentEnd + ".");
+        }
+        if (contract.getDateDebut() != null && contract.getDateFinPeriodeEssai() != null) {
+            long initial = ChronoUnit.DAYS.between(contract.getDateDebut(), contract.getDateFinPeriodeEssai());
+            long asked   = ChronoUnit.DAYS.between(currentEnd, newEnd);
+            if (initial > 0 && asked > initial) {
+                throw new BusinessRuleException("D3-96",
+                    "Le renouvellement (" + asked + " j) ne peut pas dépasser la période d'essai initiale ("
+                    + initial + " j).");
+            }
+        }
+
+        contract.setPeriodeEssaiRenouvelee(true);
+        contract.setDateFinPeRenouvellement(newEnd);
+        contract.setUpdatedAt(OffsetDateTime.now());
+        contractRepo.save(contract);
+
+        logTransition(contract, "PERIODE_ESSAI", "PERIODE_ESSAI",
+            ContractDecisionAction.RENEW_TRIAL.name(), renewedBy, commentaire, null,
+            dateMove(currentEnd, newEnd));
+
+        profileRepo.findById(contract.getEmployeeProfile().getId()).ifPresent(p -> {
+            p.setProbationEndDate(newEnd);
+            p.setIsOnProbation(true);
+            profileRepo.save(p);
+        });
+        // The new end date is a new TRIAL_PERIOD_END occurrence: LifecycleAlertJob reads
+        // dateFinPeRenouvellement (effectiveTrialEnd), nothing to plan here.
+        return mapToDetailDto(contract);
+    }
+
+    /** How many times this contract's trial was renewed — counted from the append-only log. */
+    public long trialRenewalCount(Long contractId) {
+        return transitionRepo.countByContract_IdAndActionCode(contractId, ContractDecisionAction.RENEW_TRIAL.name());
+    }
+
+    // ── Contract: extend (CIVP, stage, mission, détachement) ──────────────────
+
+    /**
+     * Moves the planned end date further. Bounded by the nature's maximum duration where the
+     * configuration has one (CIVP, stage). A CDD is renewed through renewCDD, not here.
+     */
+    @PreAuthorize("hasPermission(null, 'RH_MANAGE_LIFECYCLE')")
+    public ContractDetailDto extendContract(Long contractId, LocalDate newEnd, String commentaire, Long extendedBy) {
+        EmployeeContract contract = contractRepo.findById(contractId)
+            .orElseThrow(() -> new BusinessRuleException("D3-97", "Contrat introuvable."));
+        if (Boolean.TRUE.equals(contract.getDossierLocked()) || !Boolean.TRUE.equals(contract.getIsActive())) {
+            throw new BusinessRuleException("D3-104", "Ce contrat n'est plus actif.");
+        }
+        String nature = natureOf(contract);
+        if ("CDD".equals(nature)) {
+            throw new BusinessRuleException("D3-97", "Un CDD se renouvelle, il ne se prolonge pas.");
+        }
+        LocalDate currentEnd = contract.getDateFinPrevue();
+        if (currentEnd == null) {
+            throw new BusinessRuleException("D3-97", "Ce contrat n'a pas de date de fin prévue.");
+        }
+        if (newEnd == null || !newEnd.isAfter(currentEnd)) {
+            throw new BusinessRuleException("D3-97",
+                "La nouvelle date de fin doit être postérieure au " + currentEnd + ".");
+        }
+        ContractTypeConfig config = configRepo.findForNature(contract.getPaysId(), nature).orElse(null);
+        Integer maxMonths = config == null ? null : switch (nature) {
+            case "CIVP"  -> config.getCivpMaxDurationMonths()  != null ? config.getCivpMaxDurationMonths()  : 12;
+            case "STAGE" -> config.getStageMaxDurationMonths() != null ? config.getStageMaxDurationMonths() : 6;
+            default      -> null;
+        };
+        if (maxMonths != null && contract.getDateDebut() != null) {
+            // Strictly more than the maximum is refused: 12 months to the day is allowed.
+            if (newEnd.isAfter(contract.getDateDebut().plusMonths(maxMonths))) {
+                throw new BusinessRuleException("D3-97",
+                    "La durée totale ne peut pas dépasser " + maxMonths + " mois (au plus tard le "
+                    + contract.getDateDebut().plusMonths(maxMonths) + ").");
+            }
+        }
+
+        LocalDate previousEnd = contract.getDateFinPrevue();
+        contract.setDateFinPrevue(newEnd);
+        contract.setUpdatedAt(OffsetDateTime.now());
+        contractRepo.save(contract);
+
+        logTransition(contract, contract.getCurrentStatusCode(), contract.getCurrentStatusCode(),
+            ContractDecisionAction.EXTEND.name(), extendedBy, commentaire, null,
+            dateMove(previousEnd, newEnd));
+
+        profileRepo.findById(contract.getEmployeeProfile().getId()).ifPresent(p -> {
+            p.setContractEndDate(newEnd);
+            profileRepo.save(p);
+        });
+        return mapToDetailDto(contract);
     }
 
     // ── CDD: renew ────────────────────────────────────────────────────────────
@@ -248,6 +389,7 @@ public class EmployeeLifecycleService {
                 "Le renouvellement doit être formalisé avant la date de terme initiale.");
         }
 
+        LocalDate previousCddEnd = contract.getDateFinPrevue();
         contract.setDateFinPrevue(dto.getNewDateFin());
         contract.setCddRenouvellementCount(1);
         contract.setCurrentStatusCode("RENOUVELLEMENT_CDD");
@@ -255,7 +397,8 @@ public class EmployeeLifecycleService {
         contractRepo.save(contract);
 
         logTransition(contract, "ACTIF", "RENOUVELLEMENT_CDD",
-            "RENEWAL_CDD", renewedBy, dto.getCommentaire(), null);
+            "RENEWAL_CDD", renewedBy, dto.getCommentaire(), null,
+            dateMove(previousCddEnd, dto.getNewDateFin()));
 
         profileRepo.findById(contract.getEmployeeProfile().getId()).ifPresent(p -> {
             p.setLifecycleStatusCode("RENOUVELLEMENT_CDD");
@@ -362,15 +505,33 @@ public class EmployeeLifecycleService {
     @Transactional(readOnly = true)
     @PreAuthorize("hasPermission(null, 'RH_VIEW_CONTRACTS')")
     public List<ContractTransitionHistoryDto> getContractHistory(Long contractId) {
-        return transitionRepo.findByContractIdOrderByTriggeredAtAsc(contractId)
-            .stream().map(this::mapToHistoryDto).collect(Collectors.toList());
+        return withNames(transitionRepo.findByContractIdOrderByTriggeredAtAsc(contractId)
+            .stream().map(this::mapToHistoryDto).collect(Collectors.toList()));
     }
 
     @Transactional(readOnly = true)
     @PreAuthorize("hasPermission(null, 'RH_VIEW_CONTRACTS')")
     public List<ContractTransitionHistoryDto> getEmployeeLifecycleHistory(Long employeeProfileId) {
-        return transitionRepo.findByEmployeeProfileIdOrderByTriggeredAtAsc(employeeProfileId)
-            .stream().map(this::mapToHistoryDto).collect(Collectors.toList());
+        return withNames(transitionRepo.findByEmployeeProfileIdOrderByTriggeredAtAsc(employeeProfileId)
+            .stream().map(this::mapToHistoryDto).collect(Collectors.toList()));
+    }
+
+    /** Fills triggeredByName from Users in one query. Never throws: a name is a nicety. */
+    private List<ContractTransitionHistoryDto> withNames(List<ContractTransitionHistoryDto> list) {
+        List<Long> ids = list.stream().map(ContractTransitionHistoryDto::getTriggeredByUserId)
+            .filter(java.util.Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) return list;
+        try {
+            String in = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+            java.util.Map<Long, String> names = new java.util.HashMap<>();
+            jdbc.query("SELECT id, COALESCE(NULLIF(LTRIM(RTRIM(fullName)), ''), username) AS name "
+                     + "FROM [dbo].[Users] WHERE id IN (" + in + ")",
+                rs -> { names.put(rs.getLong("id"), rs.getString("name")); }, ids.toArray());
+            list.forEach(h -> h.setTriggeredByName(names.get(h.getTriggeredByUserId())));
+        } catch (Exception e) {
+            log.debug("Transition author lookup failed: {}", e.getMessage());
+        }
+        return list;
     }
 
     @Transactional(readOnly = true)
@@ -470,6 +631,13 @@ public class EmployeeLifecycleService {
         if (dto.getTrialPeriodDaysStandard()    != null) config.setTrialPeriodDaysStandard(dto.getTrialPeriodDaysStandard());
         if (dto.getTrialPeriodDaysManager()     != null) config.setTrialPeriodDaysManager(dto.getTrialPeriodDaysManager());
         if (dto.getTrialPeriodRenewable()       != null) config.setTrialPeriodRenewable(dto.getTrialPeriodRenewable());
+        if (dto.getTrialMaxRenewals()           != null) config.setTrialMaxRenewals(dto.getTrialMaxRenewals());
+        if (dto.getTrialDecisions() != null) {
+            config.setTrialDecisions(decisionsCsv(dto.getTrialDecisions(), ContractDecisionAction.Moment.TRIAL_END));
+        }
+        if (dto.getEndDecisions() != null) {
+            config.setEndDecisions(decisionsCsv(dto.getEndDecisions(), ContractDecisionAction.Moment.CONTRACT_END));
+        }
         if (dto.getAlertDaysBeforeExpiry()      != null) config.setAlertDaysBeforeExpiry(dto.getAlertDaysBeforeExpiry());
         if (dto.getAlertDaysBeforeTrialEnd()    != null) config.setAlertDaysBeforeTrialEnd(dto.getAlertDaysBeforeTrialEnd());
         if (dto.getIndemnityRatePct()           != null) config.setIndemnityRatePct(dto.getIndemnityRatePct());
@@ -486,6 +654,35 @@ public class EmployeeLifecycleService {
 
         logConfigChange(config, updatedBy);
         return mapToConfigDto(config);
+    }
+
+    /**
+     * Action codes sent by the admin screen → the stored CSV. An unknown code, or one that
+     * belongs to the other moment (RENEW_CDD offered at the end of a trial…), is refused
+     * rather than silently dropped: the admin must see what was not kept.
+     */
+    public static String decisionsCsv(List<String> codes, ContractDecisionAction.Moment moment) {
+        List<String> out = new ArrayList<>();
+        for (String code : codes) {
+            ContractDecisionAction a = ContractDecisionAction.parse(code).orElseThrow(() ->
+                new BusinessRuleException("D3-105", "Décision inconnue : " + code
+                    + " — attendu : " + ContractDecisionAction.codes()));
+            if (a.moment() != moment) {
+                throw new BusinessRuleException("D3-105", "La décision " + a.name()
+                    + " ne s'applique pas à ce moment du contrat.");
+            }
+            if (!out.contains(a.name())) out.add(a.name());
+        }
+        return String.join(",", out);
+    }
+
+    /** Decisions a config row offers at a moment — its CSV, or the nature's defaults when NULL. */
+    public static List<ContractDecisionAction> decisionsOf(ContractTypeConfig c, String nature,
+                                                           ContractDecisionAction.Moment moment) {
+        String csv = c == null ? null
+            : moment == ContractDecisionAction.Moment.TRIAL_END ? c.getTrialDecisions() : c.getEndDecisions();
+        List<ContractDecisionAction> parsed = ContractDecisionAction.parseCsv(csv);
+        return parsed != null ? parsed : ContractDecisionAction.defaults(nature, moment);
     }
 
     /** Also enforced by the DTO's @Min/@Max; repeated here because createConfig calls in directly. */
@@ -620,6 +817,29 @@ public class EmployeeLifecycleService {
     void logTransition(EmployeeContract contract, String statutAvant, String statutApres,
                         String actionCode, Long triggeredBy,
                         String commentaire, String documentReference) {
+        logTransition(contract, statutAvant, statutApres, actionCode, triggeredBy, commentaire, documentReference, null);
+    }
+
+    /** Metadata of a date move — « from=2026-11-19;to=2026-12-19 », read back by mapToHistoryDto. */
+    static String dateMove(LocalDate from, LocalDate to) {
+        if (from == null && to == null) return null;
+        return "from=" + (from != null ? from : "") + ";to=" + (to != null ? to : "");
+    }
+
+    private static LocalDate metaDate(String metadata, String key) {
+        if (metadata == null) return null;
+        for (String part : metadata.split(";")) {
+            String[] kv = part.split("=", 2);
+            if (kv.length == 2 && kv[0].trim().equals(key) && !kv[1].isBlank()) {
+                try { return LocalDate.parse(kv[1].trim()); } catch (Exception ignored) { return null; }
+            }
+        }
+        return null;
+    }
+
+    void logTransition(EmployeeContract contract, String statutAvant, String statutApres,
+                        String actionCode, Long triggeredBy,
+                        String commentaire, String documentReference, String metadata) {
         try {
             EmployeeLifecycleTransition t = EmployeeLifecycleTransition.builder()
                 .contract(contract)
@@ -631,6 +851,7 @@ public class EmployeeLifecycleService {
                 .triggeredAt(OffsetDateTime.now())
                 .commentaire(commentaire)
                 .documentReference(documentReference)
+                .metadata(metadata)
                 .build();
             transitionRepo.save(t);
         } catch (Exception e) {
@@ -701,6 +922,14 @@ public class EmployeeLifecycleService {
         return contractTypeRefs.natureOf(c.getContractTypeId(), c.getPaysId());
     }
 
+    /** The « Décider » rules of a contract: its type's own, else its nature's (see ContractRules). */
+    public ContractRules rulesOf(EmployeeContract c) {
+        String nature = natureOf(c);
+        ContractTypeConfig config = configRepo.findForNature(c.getPaysId(), nature).orElse(null);
+        return ContractRules.resolve(contractTypeRefs.find(c.getContractTypeId(), c.getPaysId()).orElse(null),
+            config, nature);
+    }
+
     /** The contract type as people know it (« contrat », « CDI — Durée indéterminée »…). */
     String contractTypeLabel(EmployeeContract c) {
         return contractTypeRefs.find(c.getContractTypeId(), c.getPaysId())
@@ -752,6 +981,10 @@ public class EmployeeLifecycleService {
     }
 
     ContractListDto mapToListDto(EmployeeContract c) {
+        ContractRules rules = rulesOf(c);
+        Integer defaultNotice = c.getNoticePeriodDays() == null
+            ? queryNotice(GRADE_NOTICE_SQL, c.getEmployeeProfile().getId())
+            : null;
         return ContractListDto.builder()
             .id(c.getId())
             .employeeProfileId(c.getEmployeeProfile().getId())
@@ -762,6 +995,13 @@ public class EmployeeLifecycleService {
             .dateDebut(c.getDateDebut())
             .dateFinPrevue(c.getDateFinPrevue())
             .dateFinPeriodeEssai(c.getDateFinPeriodeEssai())
+            .periodeEssaiRenouvelee(c.getPeriodeEssaiRenouvelee())
+            .dateFinPeRenouvellement(c.getDateFinPeRenouvellement())
+            .trialRenewalCount(trialRenewalCount(c.getId()))
+            .trialRenewable(rules.trialRenewable())
+            .trialMaxRenewals(rules.trialMaxRenewals())
+            .defaultNoticeDays(defaultNotice)
+            .dateFinReelle(c.getDateFinReelle())
             .noticePeriodDays(c.getNoticePeriodDays())
             .noticePeriodSource(c.getNoticePeriodSource())
             .isActive(c.getIsActive())
@@ -783,6 +1023,8 @@ public class EmployeeLifecycleService {
             .triggeredAt(t.getTriggeredAt())
             .commentaire(t.getCommentaire())
             .documentReference(t.getDocumentReference())
+            .previousDate(metaDate(t.getMetadata(), "from"))
+            .newDate(metaDate(t.getMetadata(), "to"))
             .build();
     }
 
@@ -811,6 +1053,11 @@ public class EmployeeLifecycleService {
             .trialPeriodDaysStandard(c.getTrialPeriodDaysStandard())
             .trialPeriodDaysManager(c.getTrialPeriodDaysManager())
             .trialPeriodRenewable(c.getTrialPeriodRenewable())
+            .trialMaxRenewals(c.getTrialMaxRenewals())
+            .trialDecisions(decisionsOf(c, c.getContractTypeCode(), ContractDecisionAction.Moment.TRIAL_END)
+                .stream().map(Enum::name).toList())
+            .endDecisions(decisionsOf(c, c.getContractTypeCode(), ContractDecisionAction.Moment.CONTRACT_END)
+                .stream().map(Enum::name).toList())
             .alertDaysBeforeExpiry(c.getAlertDaysBeforeExpiry())
             .alertDaysBeforeTrialEnd(c.getAlertDaysBeforeTrialEnd())
             .indemnityRatePct(c.getIndemnityRatePct())

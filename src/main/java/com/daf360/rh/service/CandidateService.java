@@ -106,6 +106,11 @@ public class CandidateService {
         }
 
         Candidate candidate = mapper.toEntity(request);
+        // Prénom with leading capitals, NOM in capitals — the same rule as the profile page.
+        String firstName = com.daf360.rh.common.PersonNameFormatter.formatFirstName(request.getFirstName());
+        String lastName  = com.daf360.rh.common.PersonNameFormatter.formatLastName(request.getLastName());
+        if (firstName != null) candidate.setFirstName(firstName);
+        if (lastName  != null) candidate.setLastName(lastName);
         candidate.setGender(com.daf360.rh.common.GenderNormalizer.normalize(request.getGender()));
         applyDimensionFks(candidate,
                 request.getNationalityId(), request.getAppliedGradeId(),

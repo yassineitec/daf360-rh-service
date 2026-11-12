@@ -34,6 +34,18 @@ public class EmployeeProfileUpdateDto {
     @Size(max = 255) private String regimeReason;
 
     // ── Personal ──────────────────────────────────────────────────────────
+    /**
+     * Prénom and NOM, written together to Users.fullName as "Prénom NOM" (there are no
+     * separate name columns). EmployeeProfileService writes [dbo].[Users] itself. When both
+     * are null or blank the stored name is left untouched.
+     */
+    @Size(max = 100) private String firstName;
+    @Size(max = 100) private String lastName;
+    /**
+     * Single-field form, kept for callers that still send it; ignored when firstName or
+     * lastName is present.
+     */
+    @Size(max = 255) private String fullName;
     private LocalDate dateOfBirth;
     @Size(max = 20)
     private String gender;  // valeur libre — ex: Homme, Femme, Autre, Non précisé

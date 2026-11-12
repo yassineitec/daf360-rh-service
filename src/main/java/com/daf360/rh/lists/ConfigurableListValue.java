@@ -65,6 +65,35 @@ public class ConfigurableListValue {
     @Column(name = "lifecycle_nature", length = 30)
     private String lifecycleNature;
 
+    /**
+     * CONTRACT_DECISION only: what the choice does — a
+     * {@link com.daf360.rh.lifecycle.ContractDecisionAction} code. The label stays free.
+     */
+    @Column(name = "decision_action", length = 30)
+    private String decisionAction;
+
+    /*
+     * CONTRACT_TYPE only: this type's own « Décider » rules. All NULL = the type inherits the
+     * rules of its nature (contract_type_config, Échéances de contrat) — see ContractRules.
+     * trialDecisions / endDecisions hold a CSV of ContractDecisionAction codes ('' = none).
+     */
+    @Column(name = "trial_renewable")
+    private Boolean trialRenewable;
+
+    @Column(name = "trial_max_renewals")
+    private Integer trialMaxRenewals;
+
+    @Column(name = "trial_decisions", columnDefinition = "NVARCHAR(500)")
+    private String trialDecisions;
+
+    @Column(name = "end_decisions", columnDefinition = "NVARCHAR(500)")
+    private String endDecisions;
+
+    /** Whether this type has its own « Décider » rules instead of its nature's. */
+    public boolean hasOwnDecisionRules() {
+        return trialRenewable != null || trialMaxRenewals != null || trialDecisions != null || endDecisions != null;
+    }
+
     @PrePersist
     protected void prePersist() {
         if (createdAt == null) {

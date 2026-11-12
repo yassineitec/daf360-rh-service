@@ -13,4 +13,7 @@ public interface EmployeeLifecycleTransitionRepository
 
     /** Full history for an employee across all their contracts. */
     List<EmployeeLifecycleTransition> findByEmployeeProfileIdOrderByTriggeredAtAsc(Long employeeProfileId);
+
+    /** How many times an action was taken on a contract (e.g. RENEW_TRIAL). */
+    long countByContract_IdAndActionCode(Long contractId, String actionCode);
 }

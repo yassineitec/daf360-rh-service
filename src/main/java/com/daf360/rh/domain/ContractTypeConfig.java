@@ -40,6 +40,22 @@ public class ContractTypeConfig {
     @Builder.Default
     private Boolean trialPeriodRenewable = false;
 
+    /** How many times the trial may be renewed (decision RENEW_TRIAL), when renewable. */
+    @Column(name = "trial_max_renewals", nullable = false)
+    @Builder.Default
+    private Integer trialMaxRenewals = 1;
+
+    /**
+     * Decisions offered at the end of the trial — CSV of {@code ContractDecisionAction}
+     * (« CONFIRM_TRIAL,RENEW_TRIAL,BREAK_TRIAL »). NULL = the nature's defaults; empty = none.
+     */
+    @Column(name = "trial_decisions", length = 500)
+    private String trialDecisions;
+
+    /** Decisions offered at the planned end of the contract — same format as trialDecisions. */
+    @Column(name = "end_decisions", length = 500)
+    private String endDecisions;
+
     // No préavis here. It was briefly modelled as (pays × contract type) — wrong premise:
     // the préavis is negotiated per employee, defaults per GRADE (see Grade.noticePeriodDays)
     // and is frozen on the contract (EmployeeContract.noticePeriodDays). Two people in the

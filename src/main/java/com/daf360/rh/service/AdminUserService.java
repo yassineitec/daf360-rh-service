@@ -1,5 +1,6 @@
 package com.daf360.rh.service;
 
+import com.daf360.rh.common.PersonNameFormatter;
 import com.daf360.rh.common.UserScope;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
@@ -148,7 +149,12 @@ public class AdminUserService {
      */
     @Transactional
     public AdminUserRow create(CreateUserRequest req, Long actorId) {
-        require(req.getFullName(), "fullName");
+        // "Prénom NOM" from the two fields (the profile page's rule); the single fullName
+        // field is still accepted from callers that send it.
+        String fullName = (req.getFirstName() != null || req.getLastName() != null)
+            ? PersonNameFormatter.compose(req.getFirstName(), req.getLastName())
+            : PersonNameFormatter.format(req.getFullName());
+        require(fullName, "fullName");
         require(req.getEmail(), "email");
         if (req.getPaysId() == null) badRequest("paysId is required");
         if (req.getRoleId() == null) badRequest("roleId is required");
@@ -171,7 +177,7 @@ public class AdminUserService {
                 "Un compte existe déjà avec cet e-mail ou cet identifiant.");
         }
 
-        jdbc.update(INSERT_SQL, req.getFullName().trim(), username, email, email,
+        jdbc.update(INSERT_SQL, fullName, username, email, email,
             req.getPaysId(), req.getRoleId(), isEmployee ? 1 : 0);
 
         Long newId = jdbc.queryForObject(
@@ -362,6 +368,10 @@ public class AdminUserService {
 
     @Data
     public static class CreateUserRequest {
+        /** Prénom and NOM, joined into Users.fullName as "Prénom NOM". */
+        private String firstName;
+        private String lastName;
+        /** Single-field form; used only when firstName and lastName are both absent. */
         private String fullName;
         private String email;
         /** Defaults to the e-mail when omitted. */
