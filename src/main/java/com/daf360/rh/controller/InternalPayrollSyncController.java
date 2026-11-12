@@ -10,13 +10,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -93,6 +97,36 @@ public class InternalPayrollSyncController {
                 .toList();
     }
 
+    /**
+     * PUT /api/hr/internal/payroll-sync/employees/{userId}/current-net-salary
+     * Payroll is the owner of the employee's salary (Rémunération tab / payroll
+     * employee-config); after each save it mirrors the engine-computed net here, so what still
+     * reads {@code salaire_net_rh} — the salary certificate, the offboarding settlement, Cohort
+     * projections — stops showing the onboarding-time figure forever. 204 on success, 404
+     * when the user has no HR profile.
+     */
+    @PutMapping("/api/hr/internal/payroll-sync/employees/{userId}/current-net-salary")
+    @Transactional
+    public ResponseEntity<Void> updateCurrentNetSalary(
+            @PathVariable Long userId,
+            @RequestBody CurrentNetSalaryRequest body,
+            @RequestHeader(value = HEADER, required = false) String key) {
+        requireInternalKey(key);
+        if (body == null || body.netSalary() == null || body.netSalary().signum() < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "netSalary must be a non-negative amount");
+        }
+        EmployeeProfile profile = profileRepo.findByUserId(userId)
+                .filter(p -> !Boolean.TRUE.equals(p.getDeleted()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No HR profile for user " + userId));
+        // employee_profiles.salaire_net_rh is DECIMAL(10,3).
+        profile.setSalaireNetRh(body.netSalary().setScale(3, RoundingMode.HALF_UP));
+        profileRepo.save(profile);
+        log.info("salaire_net_rh synced from payroll for user {}: {}", userId, profile.getSalaireNetRh());
+        return ResponseEntity.noContent().build();
+    }
+
+    public record CurrentNetSalaryRequest(BigDecimal netSalary) {}
+
     private EmployeeDto toDto(EmployeeProfile p) {
         return new EmployeeDto(
                 p.getUserId(),
@@ -100,7 +134,22 @@ public class InternalPayrollSyncController {
                 contractTypeRefs.codeOf(p.getContractTypeId(), p.getPaysId()),
                 p.getGrade() != null ? p.getGrade().getCode() : null,
                 p.getDiscipline() != null ? p.getDiscipline().getCode() : null,
-                p.getSalaireNetRh());
+                p.getSalaireNetRh(),
+                isMarried(p.getMaritalStatus()),
+                p.getNumberOfChildren() != null ? Math.max(p.getNumberOfChildren(), 0) : 0);
+    }
+
+    /**
+     * MARITAL_STATUS list code MARRIED (V9 seed). Older free-text values typed before the
+     * configurable list (« Marié », « Mariée »…) are accepted too. Never null: payroll reads
+     * a null as "older RH build" and keeps its cached value.
+     */
+    static boolean isMarried(String maritalStatus) {
+        if (maritalStatus == null) return false;
+        String s = java.text.Normalizer.normalize(maritalStatus.trim(), java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")
+                .toUpperCase(java.util.Locale.ROOT);
+        return s.equals("MARRIED") || s.startsWith("MARIE");
     }
 
     private void requireInternalKey(String provided) {
@@ -123,6 +172,9 @@ public class InternalPayrollSyncController {
             String contractType,
             String grade,
             String discipline,
-            BigDecimal salaireNetRh
+            BigDecimal salaireNetRh,
+            /** Family situation for payroll's IRPP family deduction — RH is the source of truth. */
+            Boolean married,
+            Integer childrenCount
     ) {}
 }
