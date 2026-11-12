@@ -186,10 +186,38 @@ public class ConfigurableListService {
         }
         v.setTrialRenewable(Boolean.TRUE.equals(renewable));
         v.setTrialMaxRenewals(maxRenewals != null ? maxRenewals : 1);
-        v.setTrialDecisions(com.daf360.rh.lifecycle.EmployeeLifecycleService.decisionsCsv(
-                trial != null ? trial : List.of(), com.daf360.rh.lifecycle.ContractDecisionAction.Moment.TRIAL_END));
-        v.setEndDecisions(com.daf360.rh.lifecycle.EmployeeLifecycleService.decisionsCsv(
-                end != null ? end : List.of(), com.daf360.rh.lifecycle.ContractDecisionAction.Moment.CONTRACT_END));
+        v.setTrialDecisions(choicesCsv(trial, com.daf360.rh.lifecycle.ContractDecisionAction.Moment.TRIAL_END));
+        v.setEndDecisions(choicesCsv(end, com.daf360.rh.lifecycle.ContractDecisionAction.Moment.CONTRACT_END));
+    }
+
+    /**
+     * A contract type's own choices → the stored CSV of CONTRACT_DECISION value codes. A code
+     * that is no choice of the list, or whose action belongs to the other moment (« Renouveler
+     * le CDD » offered at the end of a trial…), is refused: the admin must see what was not kept.
+     */
+    private String choicesCsv(List<String> codes, com.daf360.rh.lifecycle.ContractDecisionAction.Moment moment) {
+        if (codes == null || codes.isEmpty()) return "";
+        List<ConfigurableListValue> choices = typeRepo.findByCode(com.daf360.rh.lifecycle.ContractDecisionService.LIST_CODE)
+                .map(t -> valueRepo.findByListTypeIdOrderBySortOrderAscLabelFrAsc(t.getId()))
+                .orElse(List.of());
+        List<String> out = new ArrayList<>();
+        for (String raw : codes) {
+            String code = raw == null ? "" : raw.trim();
+            ConfigurableListValue choice = choices.stream()
+                    .filter(c -> code.equals(c.getValueCode()))
+                    .findFirst()
+                    .orElseThrow(() -> new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                            "Décision inconnue : « " + code + " » — elle n'existe pas dans la liste « Décision de contrat »."));
+            boolean rightMoment = com.daf360.rh.lifecycle.ContractDecisionAction.parse(choice.getDecisionAction())
+                    .map(a -> a.moment() == moment)
+                    .orElse(false);
+            if (!rightMoment) {
+                throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                        "La décision « " + choice.getLabelFr() + " » ne s'applique pas à ce moment du contrat.");
+            }
+            if (!out.contains(code)) out.add(code);
+        }
+        return String.join(",", out);
     }
 
     @PreAuthorize("hasAuthority('ADMIN_LISTS')")
@@ -356,7 +384,7 @@ public class ConfigurableListService {
 
     private static List<String> csvToList(String csv) {
         if (csv == null) return null;
-        return com.daf360.rh.lifecycle.ContractDecisionAction.parseCsv(csv).stream().map(Enum::name).toList();
+        return com.daf360.rh.lifecycle.ContractRules.parseChoices(csv);
     }
 
     private List<ListValueResponse> toValueResponseList(List<ConfigurableListValue> values,

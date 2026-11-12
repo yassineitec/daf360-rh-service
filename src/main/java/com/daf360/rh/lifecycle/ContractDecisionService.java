@@ -62,12 +62,12 @@ public class ContractDecisionService {
         }
         String nature = nature(c);
         ContractRules rules = lifecycleService.rulesOf(c);
-        List<ContractDecisionAction> offered = rules.decisionsAt(moment);
 
         List<ContractDecisionOptionsDto.Option> options = new ArrayList<>();
-        for (ConfigurableListValue v : decisionValues(c.getPaysId())) {
+        List<ConfigurableListValue> choices = decisionValues(c.getPaysId());
+        for (ConfigurableListValue v : choices) {
             ContractDecisionAction a = ContractDecisionAction.parse(v.getDecisionAction()).orElse(null);
-            if (a == null || a.moment() != moment || !offered.contains(a)) continue;
+            if (a == null || a.moment() != moment || !rules.offers(v, a, choices)) continue;
             options.add(ContractDecisionOptionsDto.Option.builder()
                 .id(v.getId())
                 .action(a.name())
