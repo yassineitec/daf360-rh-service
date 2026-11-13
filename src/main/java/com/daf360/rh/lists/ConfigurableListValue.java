@@ -75,7 +75,8 @@ public class ConfigurableListValue {
     /*
      * CONTRACT_TYPE only: this type's own « Décider » rules. All NULL = the type inherits the
      * rules of its nature (contract_type_config, Échéances de contrat) — see ContractRules.
-     * trialDecisions / endDecisions hold a CSV of ContractDecisionAction codes ('' = none).
+     * trialDecisions / endDecisions hold a CSV of CONTRACT_DECISION value codes ('' = none);
+     * rows saved before that hold ContractDecisionAction codes, still read (ContractRules.offers).
      */
     @Column(name = "trial_renewable")
     private Boolean trialRenewable;
