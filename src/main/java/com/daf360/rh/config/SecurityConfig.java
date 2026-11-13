@@ -62,6 +62,11 @@ public class SecurityConfig {
                 // routing engine lives here). Same X-Internal-Key check, inside
                 // InternalSalaryAdvanceController.
                 .requestMatchers(HttpMethod.POST, "/api/hr/internal/notifications").permitAll()
+                // payroll-service has the salary-advance debt contract generated and the signed
+                // copy archived in the employee's folder (rh V128). Same X-Internal-Key check.
+                .requestMatchers(HttpMethod.POST,
+                        "/api/hr/internal/salary-advances/*/contract",
+                        "/api/hr/internal/salary-advances/*/signed-contract").permitAll()
                 // payroll-service mirrors the saved net salary into salaire_net_rh. Same
                 // X-Internal-Key check, inside InternalPayrollSyncController.
                 .requestMatchers(HttpMethod.PUT, "/api/hr/internal/payroll-sync/employees/*/current-net-salary").permitAll()

@@ -7,15 +7,24 @@ import com.daf360.rh.notification.NotificationEntityType;
 import com.daf360.rh.notification.NotificationRoutingService;
 import com.daf360.rh.notification.RoutingContext;
 import com.daf360.rh.repository.EmployeeProfileRepository;
+import com.daf360.rh.service.EmployeeDocumentService;
 import com.daf360.rh.service.PaysTimezoneService;
+import com.daf360.rh.service.SalaryAdvanceContractService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
@@ -56,6 +65,7 @@ public class InternalSalaryAdvanceController {
     private final NotificationRoutingService notificationRoutingService;
     private final JdbcTemplate               jdbcTemplate;
     private final AppProperties              appProperties;
+    private final SalaryAdvanceContractService contractService;
 
     /** The facts one employee's advance request is checked against. 204 = no employee profile. */
     @GetMapping("/api/hr/internal/salary-advances/employees/{userId}")
@@ -107,6 +117,47 @@ public class InternalSalaryAdvanceController {
                 .entityType(NotificationEntityType.SALARY_ADVANCE)
                 .entityId(req.entityId())
                 .build());
+    }
+
+    // ── Debt contract (spec §5–6, rh V128) ───────────────────────────────────
+
+    /** Renders the contract from the country template and files it in the employee's folder. */
+    @PostMapping("/api/hr/internal/salary-advances/{advanceId}/contract")
+    public SalaryAdvanceContractService.DocumentRef generateContract(
+            @PathVariable Long advanceId,
+            @RequestBody SalaryAdvanceContractService.ContractRequest req,
+            @RequestHeader(value = HEADER, required = false) String key) throws IOException {
+        requireInternalKey(key);
+        if (req.userId() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "userId required");
+        return contractService.generate(advanceId, req);
+    }
+
+    /** Files the signed, legalised scan the DAF uploaded (forwarded by payroll). */
+    @PostMapping(value = "/api/hr/internal/salary-advances/{advanceId}/signed-contract",
+                 consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public SalaryAdvanceContractService.DocumentRef archiveSignedContract(
+            @PathVariable Long advanceId,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("userId") Long userId,
+            @RequestParam(value = "uploadedBy", required = false) Long uploadedBy,
+            @RequestHeader(value = HEADER, required = false) String key) throws IOException {
+        requireInternalKey(key);
+        return contractService.archiveSigned(advanceId, userId, uploadedBy,
+                file.getBytes(), file.getOriginalFilename(), file.getContentType());
+    }
+
+    /** One salary-advance contract of this employee — never any other document type. */
+    @GetMapping("/api/hr/internal/salary-advances/employees/{userId}/contracts/{documentId}")
+    public ResponseEntity<Resource> downloadContract(@PathVariable Long userId,
+                                                     @PathVariable Long documentId,
+                                                     @RequestHeader(value = HEADER, required = false) String key) {
+        requireInternalKey(key);
+        EmployeeDocumentService.DownloadPayload payload = contractService.download(userId, documentId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, payload.contentType())
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline()
+                        .filename(payload.fileName(), StandardCharsets.UTF_8).build().toString())
+                .body(payload.resource());
     }
 
     private EmployeeFacts facts(EmployeeProfile p) {

@@ -60,7 +60,11 @@ public final class DocumentFolderMapping {
             Map.entry("MEDICAL_CERTIFICATE", LEAVES),
 
             // The evaluation a CIVP → CDI request is filed with (V120).
-            Map.entry("EVALUATION_CIVP",  EVALUATIONS));
+            Map.entry("EVALUATION_CIVP",  EVALUATIONS),
+
+            // Salary-advance debt contracts, generated and signed (V128). Same folder V128
+            // seeds in sharepoint_locations — the two must agree (see templateFor).
+            Map.entry("CONTRAT_AVANCE_SALAIRE", "Salary Advances"));
 
     private DocumentFolderMapping() {}
 

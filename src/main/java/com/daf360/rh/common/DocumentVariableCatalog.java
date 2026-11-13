@@ -55,6 +55,19 @@ public final class DocumentVariableCatalog {
         new VariableDef("document.verificationCode",           "Code de vérification",              "Document"),
         new VariableDef("document.date",                       "Date du document (jj mois aaaa)",   "Document"),
 
+        // ── Avance sur salaire (contrat de dette, rh V128) ─────────────────────
+        // Filled only when the contract is generated from an approved advance; the admin
+        // preview shows sample values.
+        new VariableDef("advance.grantedAmount",               "Montant accordé",                   "Avance sur salaire"),
+        new VariableDef("advance.grantedAmountInWords",        "Montant accordé (en lettres)",      "Avance sur salaire"),
+        new VariableDef("advance.currency",                    "Devise",                            "Avance sur salaire"),
+        new VariableDef("advance.effectiveDate",               "Date d'effet",                      "Avance sur salaire"),
+        new VariableDef("advance.installments",                "Nombre de mensualités",             "Avance sur salaire"),
+        new VariableDef("advance.monthlyAmount",               "Montant d'une mensualité",          "Avance sur salaire"),
+        new VariableDef("advance.firstDeductionMonth",         "Début du prélèvement (mois)",       "Avance sur salaire"),
+        new VariableDef("advance.lastDeductionMonth",          "Dernière mensualité (mois)",        "Avance sur salaire"),
+        new VariableDef("advance.scheduleTable",               "Échéancier (tableau)",              "Avance sur salaire"),
+
         // ── Date ──────────────────────────────────────────────────────────────
         new VariableDef("date.today",                          "Date du jour (jj/mm/aaaa)",         "Date"),
         new VariableDef("date.day",                            "Jour (numérique)",                  "Date"),

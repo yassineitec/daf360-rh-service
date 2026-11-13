@@ -192,14 +192,48 @@ public class DocumentTemplateService {
         DocumentTemplate tmpl = findOrThrow(templateId);
         assertPaysOwnership(tmpl);
         Map<String, String> ctx = resolveContext(employeeProfileId, tmpl.getPaysId(), tmpl.getLang());
+        putAdvanceSamples(ctx, tmpl.getLang());
         String resolved = replaceVariables(tmpl.getHtmlContent(), ctx);
         return pdfClient.generatePdfFromHtml(resolved, sanitizeFilename(tmpl.getName()) + ".pdf");
+    }
+
+    /**
+     * Sample values for the advance.* variables (rh V128) in the admin previews only — the
+     * real ones exist only once an advance is approved, and arrive through renderByName's
+     * extraCtx. Without them the preview printed the raw {{advance.x}} tokens.
+     */
+    private static void putAdvanceSamples(Map<String, String> ctx, String lang) {
+        boolean en = "en".equalsIgnoreCase(lang);
+        ctx.putIfAbsent("advance.grantedAmount",        "1 500,000");
+        ctx.putIfAbsent("advance.grantedAmountInWords", en ? "one thousand five hundred" : "mille cinq cents");
+        ctx.putIfAbsent("advance.currency",             "TND");
+        ctx.putIfAbsent("advance.effectiveDate",        "01/12/2026");
+        ctx.putIfAbsent("advance.installments",         "3");
+        ctx.putIfAbsent("advance.monthlyAmount",        "500,000");
+        ctx.putIfAbsent("advance.firstDeductionMonth",  en ? "January 2027" : "janvier 2027");
+        ctx.putIfAbsent("advance.lastDeductionMonth",   en ? "March 2027" : "mars 2027");
+        ctx.putIfAbsent("advance.scheduleTable", en
+                ? "<table class=\"s\"><tr><th>No.</th><th>Payroll month</th><th>Amount</th></tr>"
+                  + "<tr><td>1</td><td>January 2027</td><td>500,000 TND</td></tr>"
+                  + "<tr><td>2</td><td>February 2027</td><td>500,000 TND</td></tr>"
+                  + "<tr><td>3</td><td>March 2027</td><td>500,000 TND</td></tr></table>"
+                : "<table class=\"s\"><tr><th>N°</th><th>Mois de paie</th><th>Montant</th></tr>"
+                  + "<tr><td>1</td><td>janvier 2027</td><td>500,000 TND</td></tr>"
+                  + "<tr><td>2</td><td>février 2027</td><td>500,000 TND</td></tr>"
+                  + "<tr><td>3</td><td>mars 2027</td><td>500,000 TND</td></tr></table>");
+    }
+
+    /** The language of the active template of this name for this country, if any. */
+    @Transactional(readOnly = true)
+    public Optional<String> activeLang(String name, Long paysId) {
+        return repo.findFirstByPaysIdAndNameAndIsActiveTrue(paysId, name).map(DocumentTemplate::getLang);
     }
 
     /** Admin raw-HTML preview — renders arbitrary HTML without saving. */
     public byte[] previewRaw(String htmlContent, Long paysId, Long employeeProfileId, String lang) {
         Long effectivePaysId = tenantService.isAdmin() ? paysId : TenantContext.get();
         Map<String, String> ctx = resolveContext(employeeProfileId, effectivePaysId, lang);
+        putAdvanceSamples(ctx, lang);
         String resolved = replaceVariables(htmlContent, ctx);
         return pdfClient.generatePdfFromHtml(resolved, "apercu.pdf");
     }

@@ -63,7 +63,22 @@ public class EmployeeDocumentService {
             "DIPLOMA", "CV", "MEDICAL_CERTIFICATE",
             "RIB", "CNSS", "TAX_FORM",
             "PHOTO", "RESIGNATION", "DISCHARGE", "OTHER",
-            "EVALUATION_CIVP");
+            "EVALUATION_CIVP", "CONTRAT_AVANCE_SALAIRE");
+
+    /** The salary-advance debt contract (rh V128): generated at approval, signed copy filed later. */
+    public static final String SALARY_ADVANCE_CONTRACT = "CONTRAT_AVANCE_SALAIRE";
+
+    /**
+     * Types only RH, the salary-advance desks and the employee themselves may open (spec §6:
+     * « accessible aux utilisateurs RH et DAF disposant des autorisations nécessaires »). Every
+     * other type keeps the profile page's own rule — reading a profile is open to any
+     * authenticated user, and tightening that is a platform decision, not this feature's.
+     */
+    private static final Set<String> RESTRICTED_TYPES = Set.of(SALARY_ADVANCE_CONTRACT);
+    private static final Set<String> RESTRICTED_READERS = Set.of(
+            "HR_CREATE_PROFILE", "HR_UPDATE_PROFILE", "HR_ADMIN_ROLES", "ADMIN_ROLES",
+            "FACT_APPROVE_SALARY_ADVANCE", "FACT_VIEW_SALARY_ADVANCES",
+            "FACT_VALIDATE_SALARY_ADVANCE_ABOVE_THRESHOLD", "PAYROLL_MANAGE_SALARY_ADVANCES");
 
 
     private static final String USER_NAME_SQL =
@@ -152,6 +167,79 @@ public class EmployeeDocumentService {
         auditService.log(actorId(auth), "UPLOAD_DOCUMENT", "EmployeeDocument", saved.getId(),
                 null, type);
         return toDto(saved);
+    }
+
+    /**
+     * Files bytes the app produced itself (or received service-to-service) as an employee
+     * document — same storage, same row, same SharePoint mirror as {@link #upload}, without
+     * a browser upload behind it. Used for the salary-advance contracts (rh V128).
+     */
+    public DocumentUploadResponseDto storeFile(Long profileId, String documentType, String fileName,
+                                               String contentType, byte[] bytes, String notes,
+                                               Long uploadedBy) throws IOException {
+        EmployeeProfile profile = profileRepository.findById(profileId).orElseThrow(() ->
+                new AppException(ErrorCode.EMPLOYEE_NOT_FOUND, "Profil introuvable: id=" + profileId));
+        String type = normaliseType(profile.getPaysId(), documentType);
+        if (contentType == null || !ALLOWED_TYPES.contains(contentType)) {
+            throw new AppException(ErrorCode.DOCUMENT_TYPE_UNSUPPORTED);
+        }
+        if (bytes == null || bytes.length == 0 || bytes.length > MAX_BYTES) {
+            throw new AppException(ErrorCode.DOCUMENT_SIZE_EXCEEDED);
+        }
+        String ext = (fileName != null && fileName.contains("."))
+                ? fileName.substring(fileName.lastIndexOf('.'))
+                : contentTypeToExt(contentType);
+
+        Path dir = Paths.get(storagePath, String.valueOf(profileId));
+        Files.createDirectories(dir);
+        Path dest = dir.resolve(UUID.randomUUID() + ext);
+        Files.write(dest, bytes);
+
+        EmployeeDocument saved = documentRepository.save(EmployeeDocument.builder()
+                .employeeProfileId(profileId)
+                .documentType(type)
+                .fileName(fileName)
+                .fileUrl(dest.toString())
+                .fileSizeKb(bytes.length / 1024)
+                .notes(trimToNull(notes))
+                .verificationStatus("PENDING")
+                .uploadedAt(OffsetDateTime.now())
+                .uploadedBy(uploadedBy)
+                .storageProvider("LOCAL")
+                .isDeleted(false)
+                .build());
+
+        mirrorToSharePoint(saved, profile, bytes);
+        auditService.log(uploadedBy == null ? "SYSTEM" : String.valueOf(uploadedBy),
+                "UPLOAD_DOCUMENT", "EmployeeDocument", saved.getId(), null, type);
+        return toDto(saved);
+    }
+
+    /** The type of one document of this profile — 404 when it is not this profile's. */
+    @Transactional(readOnly = true)
+    public String typeOf(Long profileId, Long docId) {
+        EmployeeDocument doc = findOrThrow(docId);
+        if (!doc.getEmployeeProfileId().equals(profileId)) {
+            throw new AppException(ErrorCode.NOT_FOUND,
+                    "Document " + docId + " n'appartient pas au profil " + profileId);
+        }
+        return doc.getDocumentType();
+    }
+
+    /**
+     * Refuses a restricted type ({@link #RESTRICTED_TYPES}) to anyone who is neither a reader
+     * nor the employee. Every other type passes: their rule is the endpoint's own.
+     */
+    @Transactional(readOnly = true)
+    public void assertTypeReadable(Long profileId, String documentType, Authentication auth) {
+        if (documentType == null || !RESTRICTED_TYPES.contains(documentType.trim().toUpperCase())) return;
+        boolean reader = auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> RESTRICTED_READERS.contains(a.getAuthority()));
+        if (reader) return;
+        Long caller = extractUserId(auth);
+        Long owner = profileRepository.findById(profileId).map(EmployeeProfile::getUserId).orElse(null);
+        if (caller != null && caller.equals(owner)) return;
+        throw new AppException(ErrorCode.FORBIDDEN, "Document réservé aux RH, au DAF et au collaborateur");
     }
 
     /**
