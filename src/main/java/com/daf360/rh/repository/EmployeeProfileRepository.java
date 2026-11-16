@@ -127,6 +127,15 @@ public interface EmployeeProfileRepository
                                   @Param("search")    String search,
                                   Pageable pageable);
 
+    /**
+     * {@code [id, staff_type]} of the pays' non-deleted profiles. staff_type is not mapped on
+     * the entity (legacy text column, stored with trailing spaces: "Technical ") -- read here
+     * for the F.04 rate inputs only.
+     */
+    @Query(value = "SELECT id, staff_type FROM employee_profiles WHERE pays_id = :paysId AND deleted = 0",
+           nativeQuery = true)
+    List<Object[]> findStaffTypesByPaysId(@Param("paysId") Long paysId);
+
     java.util.List<EmployeeProfile> findByPaysIdAndDeletedFalse(Long paysId);
 
     long countByRegimeTemplateIdAndDeletedFalse(Long regimeTemplateId);
