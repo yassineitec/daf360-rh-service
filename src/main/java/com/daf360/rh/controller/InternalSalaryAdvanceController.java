@@ -95,26 +95,39 @@ public class InternalSalaryAdvanceController {
     }
 
     /**
-     * Dispatches one salary-advance notification through the routing engine. Fire-and-forget
-     * on this side too: the engine is async and never throws, so payroll's own transaction
-     * is never at the mercy of a mail server.
+     * Dispatches one notification from another service through the routing engine — the
+     * salary-advance events (payroll-service) and the TIMESHEET_* events (timesheet app, V131).
+     * Fire-and-forget on this side too: the engine is async and never throws, so the caller's
+     * own transaction is never at the mercy of a mail server.
      */
     @PostMapping("/api/hr/internal/notifications")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public void notify(@RequestBody NotificationRequest req,
                        @RequestHeader(value = HEADER, required = false) String key) {
         requireInternalKey(key);
-        if (req.eventCode() == null || !req.eventCode().startsWith("SALARY_ADVANCE_")) {
-            // Only the salary-advance events: this endpoint must not become a way for any
-            // holder of the key to notify anyone about anything.
+        String code = req.eventCode();
+        NotificationEntityType kind;
+        // Only these two families: this endpoint must not become a way for any holder of the
+        // key to notify anyone about anything.
+        if (code != null && code.startsWith("SALARY_ADVANCE_")) {
+            kind = NotificationEntityType.SALARY_ADVANCE;
+        } else if (code != null && code.startsWith("TIMESHEET_")) {
+            // The timesheet names the list to open; anything but its own kinds is refused, so
+            // it cannot point an alert at an RH record.
+            kind = NotificationEntityType.fromNullable(req.entityType());
+            if (kind != null && !NotificationEntityType.isTimesheet(kind)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported entity type");
+            }
+        } else {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported event");
         }
         notificationRoutingService.resolveAndDispatch(RoutingContext.builder()
-                .eventCode(req.eventCode())
+                .eventCode(code)
                 .paysId(req.paysId())
                 .subjectUserId(req.subjectUserId())
+                .actorUserId(req.actorUserId())
                 .templateVars(req.templateVars() == null ? Map.of() : req.templateVars())
-                .entityType(NotificationEntityType.SALARY_ADVANCE)
+                .entityType(kind)
                 .entityId(req.entityId())
                 .build());
     }
@@ -207,11 +220,18 @@ public class InternalSalaryAdvanceController {
             String    currentMonth
     ) {}
 
+    /**
+     * {@code entityType} and {@code actorUserId} are optional (payroll sends neither): the
+     * kind is only read for TIMESHEET_* events, and the actor is left out of the audience so a
+     * manager approving their own entries is not told about it.
+     */
     public record NotificationRequest(
             String              eventCode,
             Long                paysId,
             Long                subjectUserId,
             Long                entityId,
-            Map<String, String> templateVars
+            Map<String, String> templateVars,
+            String              entityType,
+            Long                actorUserId
     ) {}
 }

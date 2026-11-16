@@ -42,7 +42,28 @@ public enum NotificationEntityType {
     /** A day or half day of remote work (V116) — its own kind, its own screens. */
     TELETRAVAIL,
     /** A CIVP → CDI conversion request (V119) — /rh/cdi-conversions/{id}. */
-    CDI_CONVERSION;
+    CDI_CONVERSION,
+
+    // ── Timesheet (V131) ────────────────────────────────────────────────────────
+    // Written by the timesheet app through /api/hr/internal/notifications. Its pages are
+    // LISTS, not one-record screens, so each kind names the list to open and the id only
+    // records what the notice was about (an entry, a manager, an employee) — the shell
+    // never appends it.
+
+    /** The manager's validation queue (/timesheet/tasks/manager). */
+    TIMESHEET_REVIEW,
+    /** The collaborator's rejected entries, to correct (/timesheet/tasks/rejected). */
+    TIMESHEET_REJECTED,
+    /** The collaborator's own history, approved entries included (/timesheet/tasks/history). */
+    TIMESHEET_HISTORY,
+    /** The time-entry screen, for a week left short (/timesheet/tasks/new-task). */
+    TIMESHEET_ENTRY;
+
+    /** The kinds the timesheet app may ask for — nothing else crosses the internal endpoint. */
+    public static boolean isTimesheet(NotificationEntityType type) {
+        return type == TIMESHEET_REVIEW || type == TIMESHEET_REJECTED
+            || type == TIMESHEET_HISTORY || type == TIMESHEET_ENTRY;
+    }
 
     /**
      * Parses a stored/configured value, tolerating null, blank and unknown names.

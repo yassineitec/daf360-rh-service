@@ -54,15 +54,20 @@ public class NotificationController {
      *
      * @param module optional filter, for the panel's module chips (RH, POINTAGE, ...).
      * @param limit  optional page size, capped at {@link #MAX_LIMIT}.
+     * @param offset optional number of rows to skip — the full /notifications page walks the
+     *               whole history in pages; without it a user could never see past the
+     *               newest {@link #MAX_LIMIT} rows.
      */
     @GetMapping
     public List<NotifDto> list(Authentication auth,
                                @RequestParam(required = false) String module,
-                               @RequestParam(required = false) Integer limit) {
+                               @RequestParam(required = false) Integer limit,
+                               @RequestParam(required = false) Integer offset) {
         Long userId = actorId(auth);
         if (userId == null) return List.of();
 
         int size = clampLimit(limit);
+        int skip = offset == null || offset < 0 ? 0 : offset;
         List<Object> args = new ArrayList<>();
         args.add(userId);
 
@@ -73,8 +78,11 @@ public class NotificationController {
             args.add(module.trim().toUpperCase());
         }
         // ORDER BY + OFFSET is served by IX_Notif_User_Created (user_id, created_at DESC).
-        // `size` is an int clamped above, never caller text — no injection surface.
-        sql.append("ORDER BY created_at DESC OFFSET 0 ROWS FETCH NEXT ")
+        // `skip` and `size` are ints clamped above, never caller text — no injection surface.
+        // id DESC breaks created_at ties so consecutive pages never swap or repeat rows.
+        sql.append("ORDER BY created_at DESC, id DESC OFFSET ")
+           .append(skip)
+           .append(" ROWS FETCH NEXT ")
            .append(size)
            .append(" ROWS ONLY");
 
