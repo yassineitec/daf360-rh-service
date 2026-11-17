@@ -23,21 +23,19 @@ import java.time.LocalDateTime;
  *
  * WHAT IS ACTUALLY ENFORCED
  * -----------------------------------------------------------------------------
- * Verified against master (2026-08-18) rather than assumed from the field names — two of
- * these columns are edited in the admin screen and read by nothing:
+ * The timesheet stored two of these and read neither; both are enforced here since
+ * 2026-11-04:
  *
- *   ENFORCED   tracksBalance + balanceField  → whether and which balance is debited
- *              maxDays                       → rejected above this many days
- *              requiresJustification         → a request without one is rejected
- *              includedInHrStats             → filters the HR statistics query
- *              managerCanView                → filters what a manager's queue shows
- *
- *   INERT      allowedGender                 → stored, never checked
- *              approverResolutionStrategy    → stored, never read; see the enum
- *
- * Both inert fields are mapped anyway so the admin screen round-trips them. Being explicit
- * about which is which is the point: a reader who assumes `allowedGender` gates maternity
- * leave would be wrong, and would only find out from a user.
+ *   tracksBalance + balanceField  → whether and which balance is debited
+ *   maxDays                       → rejected above this many days
+ *   requiresJustification         → a request without one is rejected
+ *   advanceNoticeDays/leaveGapDays→ LeaveRequestService.validateScheduling
+ *   includedInHrStats             → filters the HR statistics query
+ *   managerCanView                → filters what a manager's queue shows
+ *   allowedGender                 → type hidden from, and refused for, the other gender
+ *                                   (LeaveRequestService.genderAllows)
+ *   approverResolutionStrategy    → which holders of the approver roles are offered
+ *                                   (LeaveApproverService.eligibleApproversFor)
  */
 @Entity
 /*
@@ -151,7 +149,7 @@ public class AbsenceType {
     @Column(name = "description", length = 1000, columnDefinition = "nvarchar(1000)")
     private String description;
 
-    /** INERT — see the class comment. */
+    /** ALL / MALE / FEMALE — who may ask for this type. Null reads as ALL. */
     @Enumerated(EnumType.STRING)
     @Column(name = "allowed_gender", length = 16)
     private Gender allowedGender;
@@ -165,7 +163,7 @@ public class AbsenceType {
     @Column(name = "manager_can_view", nullable = false)
     private Boolean managerCanView;
 
-    /** INERT — see {@link ApproverResolutionStrategy}. */
+    /** How the approver roles resolve to people — see {@link ApproverResolutionStrategy}. Null reads as TOP_OF_HIERARCHY. */
     @Enumerated(EnumType.STRING)
     @Column(name = "approver_resolution_strategy", length = 32)
     private ApproverResolutionStrategy approverResolutionStrategy;

@@ -86,7 +86,9 @@ public class EmployeeDocumentController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Resource> downloadRemote(@PathVariable Long profileId,
                                                    @RequestParam String type,
-                                                   @RequestParam String name) {
+                                                   @RequestParam String name,
+                                                   Authentication auth) {
+        documentService.assertTypeReadable(profileId, type, auth);
         EmployeeDocumentService.DownloadPayload payload =
                 documentService.downloadRemote(profileId, type, name);
         String encoded = java.net.URLEncoder.encode(payload.fileName(), StandardCharsets.UTF_8)
@@ -137,7 +139,10 @@ public class EmployeeDocumentController {
     @GetMapping("/{docId}/download")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Resource> download(@PathVariable Long profileId,
-                                             @PathVariable Long docId) {
+                                             @PathVariable Long docId,
+                                             Authentication auth) {
+        // Salary-advance contracts: RH, the advance desks and the employee only (rh V128).
+        documentService.assertTypeReadable(profileId, documentService.typeOf(profileId, docId), auth);
         EmployeeDocumentService.DownloadPayload payload = documentService.download(profileId, docId);
         String encoded = java.net.URLEncoder.encode(payload.fileName(), StandardCharsets.UTF_8)
                 .replace("+", "%20");

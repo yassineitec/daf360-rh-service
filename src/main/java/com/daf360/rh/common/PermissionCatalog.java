@@ -53,6 +53,14 @@ public final class PermissionCatalog {
     public static final String GET_HR_STATS            = "GET_HR_STATS";
     public static final String BULK_APPROVE_LEAVES     = "BULK_APPROVE_LEAVES";
     public static final String DELETE_LEAVE            = "DELETE_LEAVE";
+    /* Modifying or cancelling a congé that is ALREADY VALIDATED — its own two-stage workflow
+       (responsable then RH for a modification, RH alone for an annulation), so its own codes.
+       Carried over unchanged from the timesheet with the congé module's second wave
+       (2026-10-01); seeded and granted by implication in V111. */
+    public static final String REQUEST_LEAVE_MODIFICATION   = "REQUEST_LEAVE_MODIFICATION";
+    public static final String RESPOND_MODIFICATION_MANAGER = "RESPOND_MODIFICATION_MANAGER";
+    public static final String RESPOND_MODIFICATION_HR      = "RESPOND_MODIFICATION_HR";
+    public static final String GET_LEAVE_MODIFICATIONS      = "GET_LEAVE_MODIFICATIONS";
     /* Administering the leave-type catalogue: the screen that decides what a congé IS.
        Separate from DELETE_LEAVE, which is about one request. */
     public static final String CREATE_ABSENCE_TYPE     = "CREATE_ABSENCE_TYPE";
@@ -66,6 +74,23 @@ public final class PermissionCatalog {
     public static final String CREATE_TSR              = "CREATE_TSR";
     public static final String RESPOND_TSR             = "RESPOND_TSR";
     public static final String GET_GLOBAL_TSR          = "GET_GLOBAL_TSR";
+    /* The rest of the timesheet module's codes (2026-10-20). They existed only in the
+       timesheet's own role tables, so no CORE360 role could hold them and the pages they gate
+       were unreachable from the platform token. Codes unchanged, so a role already holding them
+       in the timesheet keeps working. All are timesheet-only — the shell excludes them from
+       its RH link test. */
+    public static final String DELETE_TSR              = "DELETE_TSR";
+    public static final String GET_EMPLOYEES_TSR       = "GET_EMPLOYEES_TSR";
+    public static final String GET_TSR_AFFAIRE         = "GET_TSR_AFFAIRE";
+
+    // ── Timesheet — pilotage ──────────────────────────────────────────────────
+    public static final String VIEW_PRODUCTIVITY_DASHBOARD = "VIEW_PRODUCTIVITY_DASHBOARD";
+    public static final String VIEW_ATTENDANCE_DASHBOARD   = "VIEW_ATTENDANCE_DASHBOARD";
+    /* The timesheet's employees page — NOT the RH employee directory, despite the name. */
+    public static final String GET_EMPLOYEES           = "GET_EMPLOYEES";
+    public static final String GET_ASSIGNMENTS         = "GET_ASSIGNMENTS";
+    public static final String ASSIGN_USER_AFFAIRE     = "ASSIGN_USER_AFFAIRE";
+    public static final String VIEW_AUDIT_LOG          = "VIEW_AUDIT_LOG";
 
     // ── Module RH ────────────────────────────────────────────────────────────
     public static final String HR_CREATE_PROFILE       = "HR_CREATE_PROFILE";
@@ -200,8 +225,15 @@ public final class PermissionCatalog {
         new PermGroup("Congés",              List.of(GET_LEAVES, ADD_LEAVE, RESPONSE_LEAVE, GET_GLOBAL_LEAVES, SETTLE_LEAVES,
                                                      GET_EMPLOYEES_LEAVES, GET_HR_STATS, BULK_APPROVE_LEAVES, DELETE_LEAVE,
                                                      CREATE_ABSENCE_TYPE)),
+        new PermGroup("Modifications de congé",
+                                             List.of(REQUEST_LEAVE_MODIFICATION, RESPOND_MODIFICATION_MANAGER,
+                                                     RESPOND_MODIFICATION_HR, GET_LEAVE_MODIFICATIONS)),
         new PermGroup("Catégories",          List.of(GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY)),
-        new PermGroup("Timesheets",          List.of(GET_TSR, CREATE_TSR, RESPOND_TSR, GET_GLOBAL_TSR)),
+        new PermGroup("Timesheets",          List.of(GET_TSR, CREATE_TSR, RESPOND_TSR, GET_GLOBAL_TSR,
+                                                     DELETE_TSR, GET_EMPLOYEES_TSR, GET_TSR_AFFAIRE)),
+        new PermGroup("Timesheet — pilotage", List.of(VIEW_PRODUCTIVITY_DASHBOARD, VIEW_ATTENDANCE_DASHBOARD,
+                                                     GET_EMPLOYEES, GET_ASSIGNMENTS, ASSIGN_USER_AFFAIRE,
+                                                     VIEW_AUDIT_LOG)),
         new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND, RH_HIRE_CANDIDATE, APPROVE_HIRING_COST, RH_MANAGE_PAYSLIPS)),
         new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS, RH_MANAGE_OFFBOARDING, RH_VALIDATE_OFFBOARDING, RH_COMPLETE_OFFBOARDING_TASK, RH_CONDUCT_EXIT_INTERVIEW, RH_OFFBOARDING_STAGE_HANDOVER, RH_OFFBOARDING_STAGE_IT, RH_OFFBOARDING_STAGE_PAYROLL, RH_SUSPEND_PROFILE,
                                                      RH_REQUEST_CDI_CONVERSION, RH_VALIDATE_CDI_CONVERSION, RH_ARBITRATE_CDI_CONVERSION)),

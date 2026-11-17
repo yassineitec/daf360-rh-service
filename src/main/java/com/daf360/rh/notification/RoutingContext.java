@@ -65,6 +65,13 @@ public class RoutingContext {
     private final Long entityId;
 
     /**
+     * The page the notification opens, when the kind alone cannot say — the same congé sends
+     * the manager to the queue and the employee to « Mes absences ». Wins over the frontend's
+     * kind → route table; the entity is still recorded beside it.
+     */
+    private final String link;
+
+    /**
      * Permission to use for PERMISSION-mode recipients, overriding the rule's own
      * `permission_code` for this dispatch only.
      *

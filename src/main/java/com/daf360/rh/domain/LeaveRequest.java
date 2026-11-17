@@ -164,6 +164,17 @@ public class LeaveRequest {
     private DemandeEtat etatDemande;
 
     /** Set when refused, cleared when approved. Never both. */
+    /**
+     * Why the congé was CANCELLED — the employee's own account, not an approver's.
+     *
+     * Distinct from {@code reason} (why they wanted it, still true afterwards) and from
+     * {@code motifRefus} (why an approver said no, which renders under « Motif du refus » and
+     * would read as a refusal nobody gave). Written by a withdrawal of a pending request, or
+     * copied from an approved ANNULATION proposal when it is applied. V112.
+     */
+    @Column(name = "motif_annulation", columnDefinition = "NVARCHAR(MAX)")
+    private String motifAnnulation;
+
     @Column(name = "motif_refus", columnDefinition = "NVARCHAR(MAX)")
     private String motifRefus;
 

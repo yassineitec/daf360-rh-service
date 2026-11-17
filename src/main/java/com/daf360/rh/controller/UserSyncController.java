@@ -1,13 +1,17 @@
 package com.daf360.rh.controller;
 
 import com.daf360.rh.dto.PaysForSyncDto;
+import com.daf360.rh.dto.RoleForSyncDto;
 import com.daf360.rh.dto.UserForSyncDto;
+import com.daf360.rh.dto.leave.LeaveApproverDto;
+import com.daf360.rh.service.LeaveApproverService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -24,6 +28,7 @@ import java.util.List;
 public class UserSyncController {
 
     private final JdbcTemplate jdbcTemplate;
+    private final LeaveApproverService leaveApprovers;
 
     /**
      * The user replica the finance, payroll and pointage services copy into their own
@@ -41,7 +46,7 @@ public class UserSyncController {
         log.debug("UserSyncController: serving users-for-sync");
         String sql = """
                 SELECT u.id, u.azure_oid, u.fullName, u.email, u.pays_id,
-                       r.frenchName AS role_name, u.isActive, u.is_employee
+                       r.frenchName AS role_name, u.isActive, u.is_employee, u.role_id
                 FROM Users u
                 LEFT JOIN Roles r ON r.id = u.role_id
                 WHERE u.isActive = 1
@@ -61,7 +66,31 @@ public class UserSyncController {
                 rs.getObject("pays_id", Long.class),
                 rs.getString("role_name"),
                 rs.getBoolean("isActive"),
-                rs.getBoolean("is_employee")
+                rs.getBoolean("is_employee"),
+                rs.getObject("role_id", Long.class)
+        ));
+    }
+
+    /**
+     * Roles for the timesheet's `roles_ref` replica: task categories are restricted to roles,
+     * and the timesheet keys them on these ids. Soft-deleted roles are INCLUDED, flagged — a
+     * category may still name one, and the replica must keep the row its foreign key points
+     * at; the timesheet's pickers filter them out.
+     */
+    @GetMapping("/roles-for-sync")
+    public List<RoleForSyncDto> rolesForSync() {
+        log.debug("UserSyncController: serving roles-for-sync");
+        String sql = """
+                SELECT id, frenchName, englishName, parent_role_id, deleted
+                FROM Roles
+                ORDER BY id
+                """;
+        return jdbcTemplate.query(sql, (rs, rn) -> new RoleForSyncDto(
+                rs.getLong("id"),
+                rs.getString("frenchName"),
+                rs.getString("englishName"),
+                rs.getObject("parent_role_id", Long.class),
+                rs.getBoolean("deleted")
         ));
     }
 
@@ -104,11 +133,27 @@ public class UserSyncController {
      * "managers" included the Egyptian ones. A hierarchy that crosses entities is not one.
      * Users with no pays_id fall back to the unfiltered set rather than to nothing.
      */
+    /**
+     * Who may approve a request from this user — the SAME resolution as a congé request
+     * (LeaveApproverService.approversFor: the whole role hierarchy upward, root roles from
+     * any country, peers when the role has showAll, the Egypt rule), optionally narrowed to
+     * roles assigned {@code permission}. Requires a valid token, like /managers below.
+     *
+     * Used by pointage for the lunch-shift request's Responsable / Responsable adjoint
+     * pickers, with permission=POINTAGE_RESPOND_REQUESTS.
+     */
+    @GetMapping("/users/{userId}/approvers")
+    public List<LeaveApproverDto> approversForUser(
+            @PathVariable Long userId,
+            @RequestParam(required = false) String permission) {
+        return leaveApprovers.approversWithPermission(userId, permission);
+    }
+
     @GetMapping("/users/{userId}/managers")
     public List<UserForSyncDto> managersForUser(@PathVariable Long userId) {
         String sql = """
                 SELECT u.id, u.azure_oid, u.fullName, u.email, u.pays_id,
-                       r.frenchName AS role_name, u.isActive
+                       r.frenchName AS role_name, u.isActive, u.role_id
                 FROM Users u
                 LEFT JOIN Roles r ON r.id = u.role_id
                 WHERE u.isActive = 1
@@ -135,7 +180,8 @@ public class UserSyncController {
                 rs.getString("role_name"),
                 rs.getBoolean("isActive"),
                 // Always true here: the query already restricts to is_employee = 1.
-                true
+                true,
+                rs.getObject("role_id", Long.class)
         ), userId, userId, userId);
     }
 
@@ -174,7 +220,7 @@ public class UserSyncController {
                     WHERE (c.deleted = 0 OR c.deleted IS NULL)
                 )
                 SELECT u.id, u.azure_oid, u.fullName, u.email, u.pays_id,
-                       r.frenchName AS role_name, u.isActive
+                       r.frenchName AS role_name, u.isActive, u.role_id
                 FROM Users u
                 LEFT JOIN Roles r ON r.id = u.role_id
                 WHERE u.isActive = 1
@@ -196,7 +242,8 @@ public class UserSyncController {
                 rs.getString("role_name"),
                 rs.getBoolean("isActive"),
                 // Always true here: the query already restricts to is_employee = 1.
-                true
+                true,
+                rs.getObject("role_id", Long.class)
         ), userId, userId, userId, userId);
     }
 }

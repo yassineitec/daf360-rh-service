@@ -3,6 +3,7 @@ package com.daf360.rh.controller;
 import com.daf360.rh.domain.LeaveRequest;
 import com.daf360.rh.domain.enums.DemandeEtat;
 import com.daf360.rh.dto.leave.*;
+import com.daf360.rh.export.XlsxExport;
 import com.daf360.rh.mapper.LeaveRequestMapper;
 import com.daf360.rh.service.LeaveRequestService;
 import jakarta.validation.Valid;
@@ -320,6 +321,38 @@ public class LeaveRequestController {
         return pageResponse(rows, lang);
     }
 
+    /**
+     * The global list as an Excel file — same filters, same role pays scope (it is the same
+     * service call), unpaged up to {@link XlsxExport#MAX_ROWS}. Replaces the timesheet's
+     * congé export, which left with that module.
+     */
+    @GetMapping("/global/export")
+    @PreAuthorize("hasAuthority('GET_GLOBAL_LEAVES')")
+    public ResponseEntity<byte[]> exportGlobal(@RequestParam(required = false) Long paysId,
+                                               @RequestParam(required = false) DemandeEtat etat,
+                                               @RequestParam(required = false) String type,
+                                               @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                               @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+                                               @RequestParam(required = false) Long collaborateurId,
+                                               @RequestParam(required = false) String search,
+                                               @RequestParam(required = false) String sort,
+                                               @RequestParam(defaultValue = "desc") String dir,
+                                               @RequestParam(defaultValue = "fr") String lang) {
+        List<LeaveRequestDto> rows = mapper.toDtos(service.global(paysId, etat, type, from, to, collaborateurId,
+                search, PageRequest.of(0, XlsxExport.MAX_ROWS, sortOf(sort, dir, "dateDebut"))).getContent(), lang);
+        boolean fr = !"en".equalsIgnoreCase(lang);
+        return XlsxExport.response("conges.xlsx", fr ? "Congés" : "Leave",
+                fr ? List.of("Collaborateur", "Type", "Catégorie", "Début", "Fin", "Jours", "État",
+                             "Responsable", "Décidé le", "Décidé par", "Motif de refus", "Motif d'annulation", "Saisi par")
+                   : List.of("Employee", "Type", "Category", "Start", "End", "Days", "State",
+                             "Manager", "Decided on", "Decided by", "Rejection reason", "Cancellation reason", "Filed by"),
+                rows.stream().map(d -> java.util.Arrays.<Object>asList(
+                        d.collaborateurName(), d.typeLabel(), d.categoryLabel(), d.dateDebut(), d.dateFin(),
+                        d.totalJours(), XlsxExport.stateLabel(d.etatDemande(), lang), d.responsableName(),
+                        d.dateValidation(), d.decidedByName(), d.motifRefus(), d.motifAnnulation(),
+                        d.createdByName())).toList());
+    }
+
     @GetMapping("/global/counts")
     @PreAuthorize("hasAuthority('GET_GLOBAL_LEAVES')")
     public Map<String, Long> globalCounts(@RequestParam(required = false) Long paysId) {
@@ -411,6 +444,22 @@ public class LeaveRequestController {
      * Archive. The only removal there is — a congé stays part of the employee's record even
      * once cancelled, and an approved one has its days refunded on the way out.
      */
+    /**
+     * The employee takes back their own request, while it is still pending.
+     *
+     * ADD_LEAVE, not DELETE_LEAVE: whoever may file may unfile. The service refuses anything
+     * that is not the caller's own pending request, so the weaker code cannot reach further
+     * than archive() below — which stays HR's power to remove any congé at all.
+     */
+    @PutMapping("/{id}/withdraw")
+    @PreAuthorize("hasAuthority('ADD_LEAVE')")
+    public LeaveRequestDto withdraw(@PathVariable Long id,
+                                    @Valid @RequestBody LeaveWithdrawRequest body,
+                                    @RequestParam(defaultValue = "fr") String lang,
+                                    Authentication auth) {
+        return mapper.toDto(service.withdraw(id, body.getMotif(), actorId(auth)), lang);
+    }
+
     @PutMapping("/{id}/archive")
     @PreAuthorize("hasAuthority('DELETE_LEAVE')")
     public LeaveRequestDto archive(@PathVariable Long id,

@@ -7,15 +7,24 @@ import com.daf360.rh.notification.NotificationEntityType;
 import com.daf360.rh.notification.NotificationRoutingService;
 import com.daf360.rh.notification.RoutingContext;
 import com.daf360.rh.repository.EmployeeProfileRepository;
+import com.daf360.rh.service.EmployeeDocumentService;
 import com.daf360.rh.service.PaysTimezoneService;
+import com.daf360.rh.service.SalaryAdvanceContractService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
@@ -56,6 +65,7 @@ public class InternalSalaryAdvanceController {
     private final NotificationRoutingService notificationRoutingService;
     private final JdbcTemplate               jdbcTemplate;
     private final AppProperties              appProperties;
+    private final SalaryAdvanceContractService contractService;
 
     /** The facts one employee's advance request is checked against. 204 = no employee profile. */
     @GetMapping("/api/hr/internal/salary-advances/employees/{userId}")
@@ -85,28 +95,82 @@ public class InternalSalaryAdvanceController {
     }
 
     /**
-     * Dispatches one salary-advance notification through the routing engine. Fire-and-forget
-     * on this side too: the engine is async and never throws, so payroll's own transaction
-     * is never at the mercy of a mail server.
+     * Dispatches one notification from another service through the routing engine — the
+     * salary-advance events (payroll-service) and the TIMESHEET_* events (timesheet app, V131).
+     * Fire-and-forget on this side too: the engine is async and never throws, so the caller's
+     * own transaction is never at the mercy of a mail server.
      */
     @PostMapping("/api/hr/internal/notifications")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public void notify(@RequestBody NotificationRequest req,
                        @RequestHeader(value = HEADER, required = false) String key) {
         requireInternalKey(key);
-        if (req.eventCode() == null || !req.eventCode().startsWith("SALARY_ADVANCE_")) {
-            // Only the salary-advance events: this endpoint must not become a way for any
-            // holder of the key to notify anyone about anything.
+        String code = req.eventCode();
+        NotificationEntityType kind;
+        // Only these two families: this endpoint must not become a way for any holder of the
+        // key to notify anyone about anything.
+        if (code != null && code.startsWith("SALARY_ADVANCE_")) {
+            kind = NotificationEntityType.SALARY_ADVANCE;
+        } else if (code != null && code.startsWith("TIMESHEET_")) {
+            // The timesheet names the list to open; anything but its own kinds is refused, so
+            // it cannot point an alert at an RH record.
+            kind = NotificationEntityType.fromNullable(req.entityType());
+            if (kind != null && !NotificationEntityType.isTimesheet(kind)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported entity type");
+            }
+        } else {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported event");
         }
         notificationRoutingService.resolveAndDispatch(RoutingContext.builder()
-                .eventCode(req.eventCode())
+                .eventCode(code)
                 .paysId(req.paysId())
                 .subjectUserId(req.subjectUserId())
+                .actorUserId(req.actorUserId())
                 .templateVars(req.templateVars() == null ? Map.of() : req.templateVars())
-                .entityType(NotificationEntityType.SALARY_ADVANCE)
+                .entityType(kind)
                 .entityId(req.entityId())
                 .build());
+    }
+
+    // ── Debt contract (spec §5–6, rh V128) ───────────────────────────────────
+
+    /** Renders the contract from the country template and files it in the employee's folder. */
+    @PostMapping("/api/hr/internal/salary-advances/{advanceId}/contract")
+    public SalaryAdvanceContractService.DocumentRef generateContract(
+            @PathVariable Long advanceId,
+            @RequestBody SalaryAdvanceContractService.ContractRequest req,
+            @RequestHeader(value = HEADER, required = false) String key) throws IOException {
+        requireInternalKey(key);
+        if (req.userId() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "userId required");
+        return contractService.generate(advanceId, req);
+    }
+
+    /** Files the signed, legalised scan the DAF uploaded (forwarded by payroll). */
+    @PostMapping(value = "/api/hr/internal/salary-advances/{advanceId}/signed-contract",
+                 consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public SalaryAdvanceContractService.DocumentRef archiveSignedContract(
+            @PathVariable Long advanceId,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("userId") Long userId,
+            @RequestParam(value = "uploadedBy", required = false) Long uploadedBy,
+            @RequestHeader(value = HEADER, required = false) String key) throws IOException {
+        requireInternalKey(key);
+        return contractService.archiveSigned(advanceId, userId, uploadedBy,
+                file.getBytes(), file.getOriginalFilename(), file.getContentType());
+    }
+
+    /** One salary-advance contract of this employee — never any other document type. */
+    @GetMapping("/api/hr/internal/salary-advances/employees/{userId}/contracts/{documentId}")
+    public ResponseEntity<Resource> downloadContract(@PathVariable Long userId,
+                                                     @PathVariable Long documentId,
+                                                     @RequestHeader(value = HEADER, required = false) String key) {
+        requireInternalKey(key);
+        EmployeeDocumentService.DownloadPayload payload = contractService.download(userId, documentId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, payload.contentType())
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline()
+                        .filename(payload.fileName(), StandardCharsets.UTF_8).build().toString())
+                .body(payload.resource());
     }
 
     private EmployeeFacts facts(EmployeeProfile p) {
@@ -156,11 +220,18 @@ public class InternalSalaryAdvanceController {
             String    currentMonth
     ) {}
 
+    /**
+     * {@code entityType} and {@code actorUserId} are optional (payroll sends neither): the
+     * kind is only read for TIMESHEET_* events, and the actor is left out of the audience so a
+     * manager approving their own entries is not told about it.
+     */
     public record NotificationRequest(
             String              eventCode,
             Long                paysId,
             Long                subjectUserId,
             Long                entityId,
-            Map<String, String> templateVars
+            Map<String, String> templateVars,
+            String              entityType,
+            Long                actorUserId
     ) {}
 }

@@ -60,16 +60,43 @@ public class DashboardService {
      * anywhere in scope (the caller then has nothing to report).
      */
     private String requirementsSql(Long scopedPaysId) {
+        return requirementsSql(scopedPaysId, false);
+    }
+
+    /**
+     * Types never reported by the « Tous les documents » view of the pop-up: the alias of
+     * CONTRACT (already one slot with it), the departure paperwork — which an employee in
+     * service is not supposed to have — and the catch-all OTHER.
+     */
+    private static final java.util.Set<String> NOT_EXPECTED_IN_SERVICE =
+            java.util.Set.of("CONTRACT_SIGNED", "RESIGNATION", "DISCHARGE", "OTHER");
+
+    /**
+     * Same as {@link #requirementsSql(Long)}, with a 4th column {@code is_required} (1/0).
+     *
+     * @param allTypes false = the country's required list only (card, default);
+     *                 true  = every active type of the country, minus {@link #NOT_EXPECTED_IN_SERVICE}
+     */
+    private String requirementsSql(Long scopedPaysId, boolean allTypes) {
         List<Long> paysIds = scopedPaysId != null
                 ? List.of(scopedPaysId)
                 : jdbcTemplate.queryForList(
                         "SELECT DISTINCT pays_id FROM [dbo].[employee_profiles] " +
                         "WHERE deleted = 0 AND pays_id IS NOT NULL", Long.class);
         String rows = paysIds.stream()
-                .flatMap(p -> documentTypeService.requiredCodes(p).stream()
-                        .map(code -> "(" + p + "," + acceptedDocCodesSql(code) + ")"))
+                .flatMap(p -> {
+                    List<String> required = documentTypeService.requiredCodes(p);
+                    List<String> codes = allTypes
+                            ? documentTypeService.forPays(p).stream()
+                                    .map(com.daf360.rh.service.document.DocumentTypeService.DocumentType::code)
+                                    .filter(c -> !NOT_EXPECTED_IN_SERVICE.contains(c) || required.contains(c))
+                                    .toList()
+                            : required;
+                    return codes.stream().map(code -> "(" + p + "," + acceptedDocCodesSql(code) + ","
+                            + (required.contains(code) ? 1 : 0) + ")");
+                })
                 .collect(Collectors.joining(","));
-        return rows.isEmpty() ? null : "(VALUES " + rows + ") AS req(pays_id, doc_type, alias_type) ";
+        return rows.isEmpty() ? null : "(VALUES " + rows + ") AS req(pays_id, doc_type, alias_type, is_required) ";
     }
 
     /**
@@ -742,9 +769,24 @@ public class DashboardService {
     // The required doc types of each profile's country (RH's choice, V121)
 
     public PreviewResponse<MissingDocumentDto> getMissingDocuments(Long requestedPaysId) {
+        return getMissingDocuments(requestedPaysId, false);
+    }
+
+    /** {@code all} = every employee concerned (pop-up « Voir tout »), not the card's top 5. */
+    public PreviewResponse<MissingDocumentDto> getMissingDocuments(Long requestedPaysId, boolean all) {
+        return getMissingDocuments(requestedPaysId, all, false);
+    }
+
+    /**
+     * @param allTypes false = the country's required documents only (card, default);
+     *                 true  = every document type of the country (pop-up filter « Tous les
+     *                 documents ») — each item then says which of its missing types are required.
+     */
+    public PreviewResponse<MissingDocumentDto> getMissingDocuments(Long requestedPaysId, boolean all,
+                                                                   boolean allTypes) {
         Long paysId = scopePaysId(requestedPaysId);
         Object[] params = paysId != null ? new Object[]{ paysId } : new Object[0];
-        String requirements = requirementsSql(paysId);
+        String requirements = requirementsSql(paysId, allTypes);
         if (requirements == null) return new PreviewResponse<>(List.of(), 0L);
         String fromWhere =
                 "FROM [dbo].[employee_profiles] ep " +
@@ -770,18 +812,20 @@ public class DashboardService {
                 "SELECT COUNT(DISTINCT ep.id) " + fromWhere, Long.class, params);
 
         // Flat rows ordered by urgency desc so most-urgent employees come first
-        record FlatRow(long pid, long paysId, String fullName, String docType, int months) {}
+        record FlatRow(long pid, long paysId, String fullName, String docType, int months, boolean required) {}
         List<FlatRow> rows = jdbcTemplate.query(
-                "SELECT ep.id AS profile_id, ep.pays_id, u.fullName, req.doc_type, " +
+                "SELECT ep.id AS profile_id, ep.pays_id, u.fullName, req.doc_type, req.is_required, " +
                 "       DATEDIFF(month, ep.hire_date, GETDATE()) AS months_since_hire " +
                 fromWhere +
-                "ORDER BY months_since_hire DESC, ep.id ASC",
+                // Required types first inside one employee's list.
+                "ORDER BY months_since_hire DESC, ep.id ASC, req.is_required DESC",
                 (rs, rowNum) -> new FlatRow(
                         rs.getLong("profile_id"),
                         rs.getLong("pays_id"),
                         rs.getString("fullName"),
                         rs.getString("doc_type"),
-                        rs.getInt("months_since_hire")),
+                        rs.getInt("months_since_hire"),
+                        rs.getInt("is_required") == 1),
                 params);
 
         // Group by employee, preserving urgency order; take first 5 employees. Labels come
@@ -792,14 +836,15 @@ public class DashboardService {
             MissingDocumentDto dto = grouped.computeIfAbsent(row.pid(), k -> {
                 String urgency = row.months() >= 3 ? "HIGH" : row.months() >= 1 ? "MEDIUM" : "LOW";
                 return new MissingDocumentDto(row.pid(), row.fullName(), new ArrayList<>(),
-                        new ArrayList<>(), urgency);
+                        new ArrayList<>(), urgency, row.paysId(), new ArrayList<>());
             });
             dto.missingDocs().add(row.docType());
+            dto.missingDocRequired().add(row.required());
             dto.missingDocLabels().add(documentTypeService.labelFr(row.paysId(), row.docType()));
         }
 
         List<MissingDocumentDto> items = grouped.values().stream()
-                .limit(5)
+                .limit(all ? Long.MAX_VALUE : 5)
                 .collect(Collectors.toList());
 
         return new PreviewResponse<>(items, total != null ? total : 0L);

@@ -30,5 +30,17 @@ public record LeaveHeadersDto(
          * Sat/Sun, so an Egyptian employee saw a preview a day or two out from what they were
          * actually charged. The server has always been right; now the form can be too.
          */
-        Set<String> weekendDays
+        Set<String> weekendDays,
+        /**
+         * When the employee's afternoon starts today (their regime, their zone), or null when
+         * it has passed or no regime says. Until then an afternoon half-day today may still be
+         * asked for — see HalfDayCutoffService.
+         */
+        java.time.OffsetDateTime todayAfternoonStart,
+        /**
+         * When the employee's working day starts today, or null when it has passed or no regime
+         * says. Until then today's full day, morning, or a period starting today may still be
+         * asked for.
+         */
+        java.time.OffsetDateTime todayDayStart
 ) {}

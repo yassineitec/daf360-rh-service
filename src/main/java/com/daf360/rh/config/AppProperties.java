@@ -44,6 +44,8 @@ public class AppProperties {
      */
     private String factApiBaseUrl    = "";
     private String payrollApiBaseUrl = "";
+    /** The timesheet backend, context path included (…/api/v1). */
+    private String timesheetApiBaseUrl = "";
 
     // ── Microsoft Graph / SharePoint (document storage) ────────────────────────
     // Blank tenant/client id/secret = integration disabled: GraphSharePointService

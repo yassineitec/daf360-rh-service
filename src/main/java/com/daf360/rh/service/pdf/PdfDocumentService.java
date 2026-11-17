@@ -95,9 +95,17 @@ public class PdfDocumentService {
             "WHERE ip.id = ? " +
             "GROUP BY ip.id, ip.license_other";
 
+    // cin_city / cin_date live on employee_profiles (V17), never on candidates: no migration
+    // adds them there, and selecting c.cin_city broke the décharge with "Invalid column name"
+    // on every database not patched by hand. Take them from the candidate's profile when one
+    // exists (OUTER APPLY TOP 1: at IT-provisioning time the profile may not exist yet).
     private static final String CAND_SQL =
-            "SELECT first_name, last_name, gender, national_id, pays_id, cin_city, cin_date " +
-            "FROM candidates WHERE id = ?";
+            "SELECT c.first_name, c.last_name, c.gender, c.national_id, c.pays_id, " +
+            "       ep.cin_city, ep.cin_date " +
+            "FROM [dbo].[candidates] c " +
+            "OUTER APPLY (SELECT TOP 1 e.cin_city, e.cin_date FROM [dbo].[employee_profiles] e " +
+            "             WHERE e.candidate_id = c.id ORDER BY e.id DESC) ep " +
+            "WHERE c.id = ?";
 
     private static final String PAYS_SQL =
             "SELECT french_label, iso_code FROM pays WHERE id = ?";

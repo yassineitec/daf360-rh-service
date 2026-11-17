@@ -211,7 +211,9 @@ public class NotificationRoutingService {
 
         // ── Step B: resolve template variables ────────────────────────────────
         Map<String, String> vars = new HashMap<>(ctx.getTemplateVars());
-        vars.put("date", LocalDate.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+        // Today only when the caller has no {date} of its own: a télétravail or an autorisation
+        // passes the day it is FOR, and overwriting it told every approver "le <today>".
+        vars.putIfAbsent("date", LocalDate.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
 
         String resolvedTitle   = resolveTemplate(rule.getInappTitleTemplate(), vars);
         String resolvedBody    = resolveTemplate(rule.getInappBodyTemplate(), vars);
@@ -301,11 +303,11 @@ public class NotificationRoutingService {
      * means no link — see NotificationTarget.of.
      */
     private NotificationTarget resolveTarget(NotificationRoutingRule rule, RoutingContext ctx) {
-        if (ctx.getEntityId() == null) return NotificationTarget.none();
+        if (ctx.getEntityId() == null) return NotificationTarget.link(ctx.getLink());
         NotificationEntityType type = ctx.getEntityType() != null
             ? ctx.getEntityType()
             : NotificationEntityType.fromNullable(rule.getEventType().getDefaultEntityType());
-        return NotificationTarget.of(type, ctx.getEntityId());
+        return NotificationTarget.of(type, ctx.getEntityId(), ctx.getLink());
     }
 
     private List<Long> resolveInappRecipients(NotificationRoutingRule rule, RoutingContext ctx) {

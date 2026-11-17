@@ -15,5 +15,11 @@ public record UserForSyncDto(
          * mirror ACCOUNTS and resolve real traffic against the copy, so a missing row could
          * break a foreign key. They filter it in their own PICKERS instead.
          */
-        Boolean isEmployee
+        Boolean isEmployee,
+        /**
+         * The account's role id. Last, and additive: the consumers that only read roleName
+         * (finance, payroll) ignore it; the timesheet replicates Roles and needs the id to
+         * restrict task categories by role.
+         */
+        Long roleId
 ) {}

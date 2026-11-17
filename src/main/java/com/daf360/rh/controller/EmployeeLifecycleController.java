@@ -18,6 +18,7 @@ public class EmployeeLifecycleController {
 
     private final EmployeeLifecycleService lifecycleService;
     private final LifecycleAlertJob        alertJob;
+    private final com.daf360.rh.lifecycle.ContractDecisionService decisionService;
 
     // ── Employee contracts ────────────────────────────────────────────────────
 
@@ -79,6 +80,20 @@ public class EmployeeLifecycleController {
             @Valid @RequestBody ConvertToCDIRequest dto,
             Authentication auth) {
         return lifecycleService.convertToCDI(id, dto, actorId(auth));
+    }
+
+    /** The choices offered on this contract's current deadline (end of trial / of contract). */
+    @GetMapping("/api/hr/contracts/{id}/decisions")
+    public ContractDecisionOptionsDto getDecisions(@PathVariable Long id) {
+        return decisionService.getOptions(id);
+    }
+
+    @PostMapping("/api/hr/contracts/{id}/decide")
+    public ContractDetailDto decide(
+            @PathVariable Long id,
+            @Valid @RequestBody ContractDecisionRequest dto,
+            Authentication auth) {
+        return decisionService.decide(id, dto, actorId(auth));
     }
 
     @GetMapping("/api/hr/contracts/{id}/history")

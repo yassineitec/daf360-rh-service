@@ -19,6 +19,15 @@ public class ListValueResponse {
     private String         payrollContractCode;
     /** CONTRACT_TYPE only: CDI, CDD, CIVP, STAGE, FREELANCE or DETACHEMENT — see ContractTypeRefs. */
     private String         lifecycleNature;
+    /** CONTRACT_DECISION only: CONFIRM_TRIAL, RENEW_TRIAL… — see ContractDecisionAction. */
+    private String         decisionAction;
+    /** CONTRACT_TYPE only: true when the type has its own « Décider » rules (else it inherits its nature's). */
+    private Boolean        customDecisions;
+    private Boolean        trialRenewable;
+    private Integer        trialMaxRenewals;
+    /** Own choices, as stored — null when inherited. */
+    private java.util.List<String> trialDecisions;
+    private java.util.List<String> endDecisions;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

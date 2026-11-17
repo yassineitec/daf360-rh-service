@@ -15,6 +15,10 @@ public class ContractTypeConfigDto {
     private Integer trialPeriodDaysStandard;
     private Integer trialPeriodDaysManager;
     private Boolean trialPeriodRenewable;
+    private Integer trialMaxRenewals;
+    /** Effective decisions (the nature's defaults when the row says nothing) — action codes. */
+    private java.util.List<String> trialDecisions;
+    private java.util.List<String> endDecisions;
     private Integer alertDaysBeforeExpiry;
     private Integer alertDaysBeforeTrialEnd;
     private BigDecimal indemnityRatePct;

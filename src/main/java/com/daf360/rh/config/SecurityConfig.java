@@ -49,10 +49,11 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/hr/profiles/*/photo").permitAll()
-                // Internal service-to-service sync endpoints (facturation- and
-                // payroll-service read both every 15 min, with no user token).
+                // Internal service-to-service sync endpoints (facturation-, payroll- and
+                // timesheet-service read them every 15 min, with no user token).
                 .requestMatchers(HttpMethod.GET, "/api/hr/users-for-sync").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/hr/pays-for-sync").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/hr/roles-for-sync").permitAll()
                 // Service-to-service reads for background jobs with no user token
                 // (log-service presence scheduler). Authenticated by the X-Internal-Key
                 // shared secret inside InternalRegimeController — fails closed when unset.
@@ -61,6 +62,14 @@ public class SecurityConfig {
                 // routing engine lives here). Same X-Internal-Key check, inside
                 // InternalSalaryAdvanceController.
                 .requestMatchers(HttpMethod.POST, "/api/hr/internal/notifications").permitAll()
+                // payroll-service has the salary-advance debt contract generated and the signed
+                // copy archived in the employee's folder (rh V128). Same X-Internal-Key check.
+                .requestMatchers(HttpMethod.POST,
+                        "/api/hr/internal/salary-advances/*/contract",
+                        "/api/hr/internal/salary-advances/*/signed-contract").permitAll()
+                // payroll-service mirrors the saved net salary into salaire_net_rh. Same
+                // X-Internal-Key check, inside InternalPayrollSyncController.
+                .requestMatchers(HttpMethod.PUT, "/api/hr/internal/payroll-sync/employees/*/current-net-salary").permitAll()
                 // Baseline: every other endpoint requires a valid session. Privileged
                 // actions add a specific @PreAuthorize on top; the rest are simply
                 // authenticated-only (any logged-in user).

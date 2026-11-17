@@ -14,6 +14,13 @@ public interface CandidateCostApprovalRepository extends JpaRepository<Candidate
     List<CandidateCostApproval> findByCandidateIdOrderBySubmittedAtDesc(Long candidateId);
 
     /**
+     * The candidate's standalone budget pre-validations (no offer round) still waiting for
+     * finance, newest first — re-submitting updates the first one instead of queueing another.
+     */
+    List<CandidateCostApproval> findByCandidateIdAndJobOfferIdIsNullAndStatusOrderBySubmittedAtDesc(
+            Long candidateId, String status);
+
+    /**
      * Has this offer round cleared the budget gate? Read by {@code OfferService.sendOffer}.
      *
      * <p>Per round rather than per candidate: an approval belongs to the figure it reviewed,

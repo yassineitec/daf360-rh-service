@@ -98,6 +98,8 @@ app:
   # Defaut vide = module absent de ce deploiement : aucun appel, et surtout aucun faux echec.
   fact-api-base-url: ${FACT_API_BASE_URL:}
   payroll-api-base-url: ${PAYROLL_API_BASE_URL:}
+  # The timesheet backend WITH its context path, e.g. http://timesheet-backend:8080/api/v1.
+  timesheet-api-base-url: ${TIMESHEET_API_BASE_URL:}
   # Shared secret for /api/hr/internal/** (log-service presence scheduler). MUST match
   # log-service's rh.internal-api-key. Blank = internal endpoints return 403.
   internal-api-key: ${INTERNAL_API_KEY:daf360-internal-change-me}

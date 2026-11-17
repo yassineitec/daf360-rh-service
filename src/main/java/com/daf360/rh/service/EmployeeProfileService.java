@@ -270,6 +270,14 @@ public class EmployeeProfileService {
         profile.setUpdatedAt(OffsetDateTime.now(PARIS));
         EmployeeProfile saved = profileRepository.save(profile);
 
+        // The name lives in [dbo].[Users], not in employee_profiles: write it there, and only
+        // when it actually changed so a plain save does not touch the Users row.
+        // Prénom + NOM when the client sends them; the single fullName field otherwise.
+        String requestedFullName = (dto.getFirstName() != null || dto.getLastName() != null)
+                ? com.daf360.rh.common.PersonNameFormatter.compose(dto.getFirstName(), dto.getLastName())
+                : com.daf360.rh.common.PersonNameFormatter.format(dto.getFullName());
+        String fullNameChange = applyFullName(saved.getUserId(), requestedFullName);
+
         // The contract-end and trial-end alerts read the contract, not the profile.
         lifecycleService.syncContractDatesFromProfile(saved.getCurrentContractId(),
                 dto.getContractEndDate(), dto.getProbationEndDate());
@@ -279,8 +287,30 @@ public class EmployeeProfileService {
                 + "\",\"data\":" + afterJson + "}";
         auditService.log(actorId(auth), "UPDATE_PROFILE", "EmployeeProfile", id,
                 before, afterWithReason);
+        if (fullNameChange != null) {
+            auditService.log(actorId(auth), "UPDATE_FULL_NAME", "EmployeeProfile", id,
+                    fullNameChange, requestedFullName + " | " + dto.getReason());
+        }
 
         return toResponseDto(saved, auth);
+    }
+
+    /**
+     * Writes a new {@code Users.fullName} for the profile's user.
+     *
+     * @param next the name already in "Prénom NOM" form (PersonNameFormatter), or null
+     * @return the previous name when the row was changed, or null when nothing was written
+     *         (no user, no name, or the same name).
+     */
+    private String applyFullName(Long userId, String next) {
+        if (userId == null || next == null) return null;
+        List<String> current = jdbcTemplate.queryForList(
+                "SELECT fullName FROM [dbo].[Users] WHERE id = ?", String.class, userId);
+        if (current.isEmpty()) return null;
+        String previous = current.get(0);
+        if (next.equals(previous)) return null;
+        jdbcTemplate.update("UPDATE [dbo].[Users] SET fullName = ? WHERE id = ?", next, userId);
+        return previous == null ? "" : previous;
     }
 
     // ── Lifecycle transition ──────────────────────────────────────────────────

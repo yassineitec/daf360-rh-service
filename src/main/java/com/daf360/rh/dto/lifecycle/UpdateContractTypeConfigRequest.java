@@ -12,6 +12,13 @@ public class UpdateContractTypeConfigRequest {
     private Integer trialPeriodDaysStandard;
     private Integer trialPeriodDaysManager;
     private Boolean trialPeriodRenewable;
+    @Min(value = 0,  message = "Le nombre de renouvellements ne peut pas être négatif.")
+    @Max(value = 10, message = "Le nombre de renouvellements ne peut pas dépasser 10.")
+    private Integer trialMaxRenewals;
+    /** Action codes (ContractDecisionAction) offered at the end of the trial; null = no change. */
+    private java.util.List<String> trialDecisions;
+    /** Action codes offered at the planned end of the contract; null = no change. */
+    private java.util.List<String> endDecisions;
     @Min(value = 0,   message = "Le délai d'alerte ne peut pas être négatif.")
     @Max(value = 365, message = "Le délai d'alerte ne peut pas dépasser 365 jours.")
     private Integer alertDaysBeforeExpiry;

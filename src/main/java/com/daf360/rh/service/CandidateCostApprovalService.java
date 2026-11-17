@@ -92,23 +92,37 @@ public class CandidateCostApprovalService {
         return id != null ? String.valueOf(id) : ref;
     }
 
+    /**
+     * Standalone budget pre-validation (creation wizard, candidate Rémunération tab).
+     *
+     * <p>One request per candidate in finance's queue: while a pre-validation is still
+     * PENDING, submitting again <b>updates that request</b> (new figures, snapshot, author,
+     * date) instead of inserting another row. Before, every click on « Soumettre » added a
+     * line to finance's queue for the same candidate (test campaign TC-01.06). Once finance
+     * has decided (APPROVED / REJECTED), a new submission is a new request, so the decision
+     * history is kept. Offer rounds ({@link #submitForOffer}) are not affected.
+     */
     public CandidateCostApprovalDto submit(SubmitCostApprovalRequest req, Long submittedBy) {
         Candidate candidate = candidateRepo.findById(req.getCandidateId())
                 .orElseThrow(() -> new AppException(ErrorCode.NOT_FOUND,
                         "Candidat introuvable : id=" + req.getCandidateId()));
 
-        CandidateCostApproval approval = CandidateCostApproval.builder()
-                .candidateId(req.getCandidateId())
-                .paysId(req.getPaysId())
-                .fiscalYear(req.getFiscalYear())
-                .salaireNetRh(req.getSalaireNetRh())
-                .salaireNetCandidat(req.getSalaireNetCandidat())
-                .contractTypeId(storedContractType(candidate, req.getContractTypeCode(), req.getPaysId()))
-                .simulationSnapshot(req.getSimulationSnapshot())
-                .status("PENDING")
-                .submittedBy(submittedBy)
-                .submittedAt(OffsetDateTime.now())
-                .build();
+        CandidateCostApproval approval = approvalRepo
+                .findByCandidateIdAndJobOfferIdIsNullAndStatusOrderBySubmittedAtDesc(req.getCandidateId(), "PENDING")
+                .stream().findFirst()
+                .orElseGet(() -> CandidateCostApproval.builder()
+                        .candidateId(req.getCandidateId())
+                        .status("PENDING")
+                        .build());
+
+        approval.setPaysId(req.getPaysId());
+        approval.setFiscalYear(req.getFiscalYear());
+        approval.setSalaireNetRh(req.getSalaireNetRh());
+        approval.setSalaireNetCandidat(req.getSalaireNetCandidat());
+        approval.setContractTypeId(storedContractType(candidate, req.getContractTypeCode(), req.getPaysId()));
+        approval.setSimulationSnapshot(req.getSimulationSnapshot());
+        approval.setSubmittedBy(submittedBy);
+        approval.setSubmittedAt(OffsetDateTime.now());
 
         return toDto(approvalRepo.save(approval), candidate);
     }

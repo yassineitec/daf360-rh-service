@@ -22,6 +22,20 @@ public class ContractListDto {
     private LocalDate dateDebut;
     private LocalDate dateFinPrevue;
     private LocalDate dateFinPeriodeEssai;
+    /** Trial renewed (decision RENEW_TRIAL) — the trial then ends on dateFinPeRenouvellement. */
+    private Boolean periodeEssaiRenouvelee;
+    private LocalDate dateFinPeRenouvellement;
+    /** Times the trial was renewed. */
+    private Long trialRenewalCount;
+    /** The contract's resolved « Décider » rules (type, else nature — ContractRules). */
+    private Boolean trialRenewable;
+    private Integer trialMaxRenewals;
+    /**
+     * When no préavis was frozen on the contract: the employee's grade default, as a hint.
+     * Null when the contract has its own figure or the grade has none.
+     */
+    private Integer defaultNoticeDays;
+    private LocalDate dateFinReelle;
     /** Préavis frozen on this contract (V69); null before it existed. */
     private Integer noticePeriodDays;
     /** GRADE_DEFAULT | NEGOTIATED | MANUAL */
