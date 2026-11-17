@@ -20,4 +20,6 @@ public class RegimeRoleAssignmentResponse {
     private String notes;
     private Long assignedBy;
     private OffsetDateTime assignedAt;
+    /** Starts after the entity's today — scheduled, not yet in force. */
+    private boolean upcoming;
 }

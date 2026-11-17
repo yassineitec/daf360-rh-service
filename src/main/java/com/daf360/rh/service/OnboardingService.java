@@ -73,6 +73,8 @@ public class OnboardingService {
     private final com.daf360.rh.repository.NationalityRepository  natRepo;
     private final com.daf360.rh.repository.BankRepository         bankRepo;
     private final com.daf360.rh.lifecycle.ContractTypeBridge      contractTypeBridge;
+    /** Regime step: personal assignment only when the choice differs from the inherited regime (V127). */
+    private final EmployeeRegimeAssignmentService regimeAssignments;
     /** employee_profiles.contract_type stores the CONTRACT_TYPE row id, not the code. */
     private final com.daf360.rh.lists.ContractTypeRefs             contractTypeRefs;
     /**
@@ -197,8 +199,12 @@ public class OnboardingService {
         ItProvisioning prov = itProvisioningRepo.findByCandidateId(candidateId)
                 .orElse(null);
 
+        // Seasonal regimes are left out: they apply to the whole entity through their own
+        // window, and picked here they used to pin the new hire to summer hours all year.
         List<WorkingTimeRegime> regimes =
-                regimeRepo.findByPaysIdAndIsActiveTrue(candidate.getPaysId());
+                regimeRepo.findByPaysIdAndIsActiveTrue(candidate.getPaysId()).stream()
+                        .filter(r -> r.getSeasonalFrom() == null)
+                        .toList();
 
         // Load draft
         SaveDraftRequest draft    = null;
@@ -332,9 +338,12 @@ public class OnboardingService {
         if (dto.getAgreedNetSalary() != null) {
             profile.setSalaireNetRh(dto.getAgreedNetSalary());
         }
-        // Regime
+        // Regime — these two columns only RECORD the wizard's choice (dashboard completeness,
+        // re-opening the wizard). What applies is decided after the save below by
+        // EmployeeRegimeAssignmentService#recordOnboardingChoice (V127).
+        LocalDate regimeStart = dto.getRegimeStartDate() != null ? dto.getRegimeStartDate() : dto.getHireDate();
         profile.setRegimeTemplateId(dto.getRegimeTemplateId());
-        profile.setRegimeStartDate(dto.getRegimeStartDate());
+        profile.setRegimeStartDate(regimeStart);
         // Personal & Social
         profile.setCnssNumber(dto.getCnssNumber());
         profile.setCnssAffiliationDate(dto.getCnssAffiliationDate());
@@ -376,6 +385,13 @@ public class OnboardingService {
         if (dto.getBankId()        != null) bankRepo.findById(dto.getBankId()).ifPresent(profile::setBank);
 
         EmployeeProfile saved = profileRepo.save(profile);
+
+        // STEP 1b — Regime. Used to become a personal assignment for EVERY new hire, which
+        // outranks the role assignment and the entity default forever. Now a personal row is
+        // written only when RH picked something other than what the employee inherits on the
+        // start date; the regime is also checked (same entity, active, not seasonal).
+        regimeAssignments.recordOnboardingChoice(saved, dto.getRegimeTemplateId(), regimeStart,
+                hrOfficerId != null ? hrOfficerId : prov.getUserId());
 
         // STEP 2 — Update candidate to HIRED
         candidate.setStatus(CandidateStatus.HIRED);

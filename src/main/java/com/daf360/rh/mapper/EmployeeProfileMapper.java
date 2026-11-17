@@ -79,5 +79,12 @@ public interface EmployeeProfileMapper {
     @Mapping(target = "contractTypeId",  ignore = true)
     // Write-once, guarded in EmployeeProfileService.applyPayrollMatricule.
     @Mapping(target = "payrollMatricule", ignore = true)
+    // Regime: written only through /regime/override and the onboarding wizard
+    // (entity check + history + dated rows, V127). The generic PATCH used to copy these
+    // four fields as-is, with no check at all.
+    @Mapping(target = "regimeTemplateId", ignore = true)
+    @Mapping(target = "regimeStartDate",  ignore = true)
+    @Mapping(target = "regimeEndDate",    ignore = true)
+    @Mapping(target = "regimeReason",     ignore = true)
     void updateEntityFromDto(EmployeeProfileUpdateDto dto, @MappingTarget EmployeeProfile profile);
 }

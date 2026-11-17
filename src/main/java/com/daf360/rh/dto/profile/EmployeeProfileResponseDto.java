@@ -53,7 +53,11 @@ public class EmployeeProfileResponseDto {
     private Long   nogLevelId;
     private String nogLevel;
     private Long   regimeTemplateId;
+    /** The regime that APPLIES today (resolved), not the raw personal column. */
     private String regimeLabelFr;
+    /** SEASONAL | EMPLOYEE_OVERRIDE | ROLE_ASSIGNMENT | DEFAULT — null when none is configured. */
+    private String regimeAssignmentLevel;
+    /** regimeTemplateId / start / end / reason: the personal assignment in force today, else the next one. */
     private LocalDate regimeStartDate;
     private LocalDate regimeEndDate;
     private String regimeReason;
