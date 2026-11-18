@@ -34,6 +34,8 @@ public class ResolvedRegimeDto {
     private Long      paysId;
     /** True when this regime won because of its seasonal window. */
     private Boolean   isSeasonal;
+    /** The calendar date (entity's zone) this resolution is valid for — today unless asked otherwise. */
+    private LocalDate resolvedForDate;
     /**
      * IANA zone the hour fields below are expressed in: the regime's own override if it has
      * one, otherwise the entity's (pays.timezone).

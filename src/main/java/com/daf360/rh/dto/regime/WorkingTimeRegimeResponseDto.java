@@ -24,4 +24,12 @@ public class WorkingTimeRegimeResponseDto {
     private java.time.LocalDate seasonalTo;
     /** IANA timezone override; null = the regime runs on its entity's clock. */
     private String timezone;
+    private String     descriptionFr;
+    private String     descriptionEn;
+    private Integer    breakDurationMin;
+    private Boolean    overtimeAllowed;
+    private BigDecimal maxHoursPerDay;
+    private java.time.LocalDateTime createdAt;
+    private java.time.LocalDateTime updatedAt;
+    private Long       updatedBy;
 }

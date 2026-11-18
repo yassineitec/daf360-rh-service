@@ -15,5 +15,7 @@ public class EmployeeRegimeOverview {
     private String roleNameEn;
     private Long resolvedRegimeId;
     private String resolvedRegimeLabelFr;
-    private String assignmentLevel; // EMPLOYEE_OVERRIDE | ROLE_ASSIGNMENT | DEFAULT | NONE
+    private String assignmentLevel; // SEASONAL | EMPLOYEE_OVERRIDE | ROLE_ASSIGNMENT | DEFAULT | null = none
+    /** The employee's personal regime in force today, even when a seasonal one outranks it. */
+    private Long personalRegimeId;
 }

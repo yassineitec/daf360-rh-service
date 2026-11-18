@@ -21,6 +21,26 @@ public class WorkingTimeRegimeCreateDto {
     @Size(max = 255)
     private String labelEn;
 
+    /* The four fields below exist on working_time_regimes and the admin form always sent
+       them, but they were missing here: MapStruct dropped them silently, so a régime was
+       saved without description, break, overtime flag or daily cap. */
+
+    @Size(max = 500)
+    private String descriptionFr;
+
+    @Size(max = 500)
+    private String descriptionEn;
+
+    /** Lunch break in minutes (0 = none). */
+    @Min(0) @Max(480)
+    private Integer breakDurationMin;
+
+    private Boolean overtimeAllowed;
+
+    /** Daily cap in hours (null = no cap). */
+    @DecimalMin("0.5") @DecimalMax("24.0")
+    private BigDecimal maxHoursPerDay;
+
     @NotNull @DecimalMin("1.0") @DecimalMax("60.0")
     private BigDecimal hoursPerWeek;
 

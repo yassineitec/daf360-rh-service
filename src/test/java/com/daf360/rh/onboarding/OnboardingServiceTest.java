@@ -50,6 +50,19 @@ class OnboardingServiceTest {
     @Mock ObjectMapper               objectMapper;
     @Mock com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
     @Mock com.daf360.rh.lists.ContractTypeRefs contractTypeRefs;
+    @Mock com.daf360.rh.service.EmployeeRegimeAssignmentService regimeAssignments;
+    @Mock com.daf360.rh.lifecycle.ContractTypeBridge contractTypeBridge;
+    // Collaborators added to OnboardingService after this test was written (tenant scope,
+    // référentiels, documents, post-commit side effects) — unmocked they were null → NPE.
+    @Mock com.daf360.rh.security.TenantService tenantService;
+    @Mock com.daf360.rh.repository.GradeRepository        gradeRepo;
+    @Mock com.daf360.rh.repository.DisciplineRepository   disciplineRepo;
+    @Mock com.daf360.rh.repository.NogLevelRepository     nogLevelRepo;
+    @Mock com.daf360.rh.repository.HrDepartmentRepository deptRepo;
+    @Mock com.daf360.rh.repository.NationalityRepository  natRepo;
+    @Mock com.daf360.rh.repository.BankRepository         bankRepo;
+    @Mock com.daf360.rh.service.EmployeeDocumentService   documentService;
+    @Mock com.daf360.rh.service.OnboardingSideEffects     sideEffects;
 
     @InjectMocks OnboardingService service;
 
@@ -168,6 +181,10 @@ class OnboardingServiceTest {
                 any());
         // Notifications dispatched via NotificationRoutingService (async) — not via direct jdbc
         verify(notificationRoutingService, atLeastOnce()).resolveAndDispatch(any());
+        // The regime step goes through the dated-assignment service (V127), never straight
+        // into a personal override.
+        verify(regimeAssignments).recordOnboardingChoice(
+                eq(savedProfile), eq(dto.getRegimeTemplateId()), any(), eq(HR_ID));
     }
 
     // ── Test 2: completeEmployeeProfile_candidateStatusHired_throwsStatusInvalid

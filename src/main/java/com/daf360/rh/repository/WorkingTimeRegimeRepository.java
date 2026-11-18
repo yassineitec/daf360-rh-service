@@ -36,8 +36,14 @@ public interface WorkingTimeRegimeRepository extends JpaRepository<WorkingTimeRe
     List<WorkingTimeRegime> findActiveSeasonalForPays(@Param("paysId") Long paysId,
                                                       @Param("date") java.time.LocalDate date);
 
+    /**
+     * Takes the default flag away from the entity's regimes, except {@code excludeId} (null = none).
+     * Must run BEFORE the new default is written: UX_WTR_OneDefaultPerPays is checked per statement,
+     * and an IDENTITY insert is executed at save() time, not at commit.
+     */
     @Modifying
     @Transactional
-    @Query("UPDATE WorkingTimeRegime r SET r.isDefault = false WHERE r.paysId = :paysId AND r.id <> :excludeId AND r.isDefault = true")
+    @Query("UPDATE WorkingTimeRegime r SET r.isDefault = false WHERE r.paysId = :paysId "
+         + "AND (:excludeId IS NULL OR r.id <> :excludeId) AND r.isDefault = true")
     void clearDefaultForPays(@Param("paysId") Long paysId, @Param("excludeId") Long excludeId);
 }

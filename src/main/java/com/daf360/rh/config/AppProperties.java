@@ -46,6 +46,13 @@ public class AppProperties {
     private String payrollApiBaseUrl = "";
     /** The timesheet backend, context path included (…/api/v1). */
     private String timesheetApiBaseUrl = "";
+    /**
+     * log-service (pointage) base URL, e.g. http://log-service:8080. Used only to tell its
+     * presence scheduler to drop cached schedules after a regime change
+     * (ScheduleCacheNotifier). Blank = not notified: the scheduler then picks the change up
+     * after its 5-minute cache, as before.
+     */
+    private String logApiBaseUrl = "";
 
     // ── Microsoft Graph / SharePoint (document storage) ────────────────────────
     // Blank tenant/client id/secret = integration disabled: GraphSharePointService

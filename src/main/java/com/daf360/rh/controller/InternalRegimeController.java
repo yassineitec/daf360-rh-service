@@ -39,14 +39,20 @@ public class InternalRegimeController {
      * The resolved regime including its break windows — everything the presence
      * scheduler needs in one call, so it no longer touches /api/hr/breaks/templates
      * (which requires ADMIN_BREAKS).
+     *
+     * Optional {@code ?date=YYYY-MM-DD}: the regime that applied on that date of the
+     * employee's calendar (default today) — for consumers recomputing a past period.
      */
     @GetMapping("/api/hr/internal/users/{userId}/regime")
     public ResponseEntity<ResolvedRegimeDto> getRegimeForUser(
             @PathVariable Long userId,
+            @org.springframework.web.bind.annotation.RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+            java.time.LocalDate date,
             @RequestHeader(value = HEADER, required = false) String key) {
 
         requireInternalKey(key);
-        ResolvedRegimeDto resolved = resolutionService.resolveForUser(userId);
+        ResolvedRegimeDto resolved = resolutionService.resolveForUser(userId, date);
         if (resolved == null) return ResponseEntity.noContent().build();
         return ResponseEntity.ok(resolved);
     }

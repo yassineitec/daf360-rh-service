@@ -69,7 +69,9 @@ public class EmployeeProfileService {
     private final HrDepartmentRepository departmentRepo;
     private final BankRepository         bankRepo;
     private final NationalityRepository        nationalityRepo;
-    private final WorkingTimeRegimeRepository  regimeRepo;
+    /** Effective regime (label) + personal assignment window for the profile response. */
+    private final RegimeResolutionService          regimeResolution;
+    private final EmployeeRegimeAssignmentService  regimeAssignments;
     /** Contract types come from Admin › Listes configurables › Type de contrat (CONTRACT_TYPE). */
     private final com.daf360.rh.lists.ConfigurableListService configurableListService;
     /** employee_profiles.contract_type stores the list row's id — converted here, both ways. */
@@ -1512,14 +1514,48 @@ public class EmployeeProfileService {
                     String.class, profile.getPaysId());
             dto.setPaysLabel(paysLabel);
         } catch (Exception ignored) {}
-        if (profile.getRegimeTemplateId() != null) {
-            regimeRepo.findById(profile.getRegimeTemplateId())
-                    .ifPresent(r -> dto.setRegimeLabelFr(r.getLabelFr()));
-        }
+        applyRegime(dto, profile);
         if (!hasSensitiveAccess(auth)) {
             maskSensitiveFields(dto);
         }
         return dto;
+    }
+
+    /**
+     * Regime fields of the profile response.
+     *
+     * regimeLabelFr / regimeAssignmentLevel = the regime that APPLIES today (resolver:
+     * seasonal → personal → role → default). It used to be the label of the raw
+     * regime_template_id column — still shown after a personal regime expired, and empty for
+     * everyone on a role or default regime (payroll's engine-results screen displays it).
+     *
+     * regimeTemplateId / start / end / reason = the employee's personal assignment in force
+     * today, else the next scheduled one (employee_regime_assignments, V127); all null when
+     * there is none. The profile columns of the same name now only record the onboarding
+     * choice and are never shown as "the regime".
+     */
+    private void applyRegime(EmployeeProfileResponseDto dto, EmployeeProfile profile) {
+        dto.setRegimeTemplateId(null);
+        dto.setRegimeStartDate(null);
+        dto.setRegimeEndDate(null);
+        dto.setRegimeReason(null);
+        dto.setRegimeLabelFr(null);
+        try {
+            regimeAssignments.currentOrNext(profile).ifPresent(a -> {
+                dto.setRegimeTemplateId(a.getRegime().getId());
+                dto.setRegimeStartDate(a.getEffectiveFrom());
+                dto.setRegimeEndDate(a.getEffectiveTo());
+                dto.setRegimeReason(a.getReason());
+            });
+            com.daf360.rh.dto.regime.ResolvedRegimeDto r = regimeResolution.resolveForEmployee(profile.getId());
+            if (r != null) {
+                dto.setRegimeLabelFr(r.getRegimeLabelFr());
+                dto.setRegimeAssignmentLevel(r.getAssignmentLevel());
+            }
+        } catch (Exception e) {
+            log.warn("Regime of profile {} could not be resolved for the profile response: {}",
+                    profile.getId(), e.getMessage());
+        }
     }
 
     private void maskSensitiveFields(EmployeeProfileResponseDto dto) {
