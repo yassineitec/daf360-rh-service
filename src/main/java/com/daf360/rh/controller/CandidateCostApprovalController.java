@@ -5,6 +5,7 @@ import com.daf360.rh.dto.hiring.CandidateSimulationSummaryDto;
 import com.daf360.rh.dto.hiring.ReviewCostApprovalRequest;
 import com.daf360.rh.dto.hiring.SubmitCostApprovalRequest;
 import com.daf360.rh.service.CandidateCostApprovalService;
+import com.daf360.rh.service.OfferService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -20,6 +21,8 @@ import java.util.List;
 public class CandidateCostApprovalController {
 
     private final CandidateCostApprovalService service;
+    /** Decisions on an offer round move the round too (V133) — the offer service owns that. */
+    private final OfferService offerService;
 
     /** HR officer submits a cost simulation for CD review. */
     @PostMapping
@@ -57,16 +60,20 @@ public class CandidateCostApprovalController {
     public CandidateCostApprovalDto approve(@PathVariable Long id,
                                             @Valid @RequestBody ReviewCostApprovalRequest request,
                                             Authentication auth) {
-        return service.approve(id, request.getNotes(), actorId(auth));
+        return offerService.decideByFinance(id, true, request.getNotes(), null, null, actorId(auth));
     }
 
-    /** CD rejects. */
+    /**
+     * CD rejects — optionally naming its own figure, which on an offer round goes straight to
+     * the candidate as the next round (see {@link OfferService#decideByFinance}).
+     */
     @PostMapping("/{id}/reject")
     @PreAuthorize("hasAuthority('APPROVE_HIRING_COST')")
     public CandidateCostApprovalDto reject(@PathVariable Long id,
                                            @Valid @RequestBody ReviewCostApprovalRequest request,
                                            Authentication auth) {
-        return service.reject(id, request.getNotes(), request.getContrePropSalaire(), actorId(auth));
+        return offerService.decideByFinance(id, false, request.getNotes(), request.getContrePropSalaire(),
+                request.getContrePropSimulationSnapshot(), actorId(auth));
     }
 
     private Long actorId(Authentication auth) {

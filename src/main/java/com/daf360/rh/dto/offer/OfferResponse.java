@@ -25,7 +25,9 @@ public record OfferResponse(
         OffsetDateTime sentAt,
         OffsetDateTime decidedAt,
         String status,
-        String rejectionReason
+        String rejectionReason,
+        /** RH | DAF | CANDIDATE — whose figure this round carries (V133). */
+        String proposedBy
 ) {
     public static OfferResponse from(JobOffer o) {
         return new OfferResponse(
@@ -43,7 +45,8 @@ public record OfferResponse(
                 o.getSentAt(),
                 o.getDecidedAt(),
                 o.getStatus() != null ? o.getStatus().name() : null,
-                o.getRejectionReason()
+                o.getRejectionReason(),
+                o.getProposedBy()
         );
     }
 }

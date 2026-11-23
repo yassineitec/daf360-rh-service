@@ -92,8 +92,12 @@ public class OnboardingService {
     private final OnboardingSideEffects                            sideEffects;
 
     // ─── Valid statuses for the onboarding pending list ──────────────────────
+    // Onboarding starts as soon as the offer is agreed, in parallel with IT (HiringHandoffService
+    // → HR_IN_PROGRESS). IT_IN_PROGRESS / EMAIL_RECEIVED are files from the old sequential flow.
+    // Completion still needs the Microsoft 365 account IT creates (STEP 0b below).
     private static final Set<CandidateStatus> PENDING_STATUSES =
-            EnumSet.of(CandidateStatus.EMAIL_RECEIVED, CandidateStatus.HR_IN_PROGRESS);
+            EnumSet.of(CandidateStatus.IT_IN_PROGRESS, CandidateStatus.EMAIL_RECEIVED,
+                       CandidateStatus.HR_IN_PROGRESS);
 
     // ─── Valid statuses for saving a draft ───────────────────────────────────
     private static final Set<CandidateStatus> DRAFT_ALLOWED_STATUSES =

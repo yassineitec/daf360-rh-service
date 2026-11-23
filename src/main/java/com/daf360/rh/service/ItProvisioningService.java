@@ -36,6 +36,11 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ItProvisioningService {
 
+    /** Candidates past the offer — the only ones IT prepares equipment for. */
+    private static final Set<CandidateStatus> HANDED_OFF = Set.of(
+            CandidateStatus.IT_IN_PROGRESS, CandidateStatus.EMAIL_RECEIVED,
+            CandidateStatus.HR_IN_PROGRESS, CandidateStatus.HIRED);
+
     private static final List<ItProvisioningStatus> OPEN_STATUSES = List.of(
             ItProvisioningStatus.PENDING,
             ItProvisioningStatus.IN_PROGRESS,
@@ -87,6 +92,17 @@ public class ItProvisioningService {
                 .map(ItProvisioning::getCandidateId).collect(Collectors.toSet());
         Map<Long, Candidate> candidateMap = candidateRepo.findAllById(candidateIds).stream()
                 .collect(Collectors.toMap(Candidate::getId, c -> c));
+
+        // IT works only for candidates whose offer is agreed. Files opened by the old flow at
+        // validation time — candidate still negotiating, or turned down since — stay out of
+        // the to-do list (they reappear once the offer is agreed, the hand-off reusing them).
+        provs = provs.stream()
+                .filter(p -> {
+                    Candidate c = candidateMap.get(p.getCandidateId());
+                    return c != null && HANDED_OFF.contains(c.getStatus());
+                })
+                .toList();
+        if (provs.isEmpty()) return List.of();
 
         // Batch-load assets to avoid N+1
         Set<Long> provIds = provs.stream().map(ItProvisioning::getId).collect(Collectors.toSet());
@@ -309,7 +325,12 @@ public class ItProvisioningService {
         prov.setUpdatedAt(OffsetDateTime.now());
         prov = itProvRepo.save(prov);
 
-        candidate.setStatus(CandidateStatus.EMAIL_RECEIVED);
+        // Onboarding runs in parallel now (HiringHandoffService): a candidate already in
+        // HR_IN_PROGRESS stays there — the account only unlocks the final « Créer le profil ».
+        // Only a file from the old sequential flow (IT_IN_PROGRESS) still advances here.
+        if (candidate.getStatus() == CandidateStatus.IT_IN_PROGRESS) {
+            candidate.setStatus(CandidateStatus.EMAIL_RECEIVED);
+        }
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidateRepo.save(candidate);
 

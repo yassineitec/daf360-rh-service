@@ -59,6 +59,23 @@ public class CandidateInterview {
     @Column(name = "graph_join_url", length = 1000)
     private String graphJoinUrl;
 
+    // ── RH validation of the PVs (V132) ─────────────────────────────────────────
+    // `result` above is written ONLY by that validation now: the interviewers say what
+    // they saw (CandidateInterviewReport), RH turns it into the decision.
+
+    @Column(name = "validated_by")
+    private Long validatedBy;
+
+    @Column(name = "validated_at", columnDefinition = "datetimeoffset(6)")
+    private OffsetDateTime validatedAt;
+
+    @Column(name = "validation_comment", length = 1000, columnDefinition = "nvarchar(1000)")
+    private String validationComment;
+
+    /** Stamped when the « dans une heure » reminder went out; reset when the slot moves. */
+    @Column(name = "reminder_sent_at", columnDefinition = "datetimeoffset(6)")
+    private OffsetDateTime reminderSentAt;
+
     @Column(name = "created_by", nullable = false)
     private Long createdBy;
 

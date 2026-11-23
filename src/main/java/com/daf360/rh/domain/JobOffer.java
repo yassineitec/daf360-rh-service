@@ -102,6 +102,20 @@ public class JobOffer {
     @Column(name = "status", nullable = false, length = 20)
     private OfferStatus status = OfferStatus.SENT;
 
+    /**
+     * Whose figure this round carries (V133) — the negotiation goes both ways:
+     * {@code RH} (prepared by RH, decided by the DAF, then sent), {@code DAF} (the DAF's own
+     * counter-proposal: approved by construction, sent to the candidate at once) or
+     * {@code CANDIDATE} (the candidate's counter: once the DAF approves it, both agree).
+     */
+    @Builder.Default
+    @Column(name = "proposed_by", nullable = false, length = 16)
+    private String proposedBy = PROPOSED_BY_RH;
+
+    public static final String PROPOSED_BY_RH        = "RH";
+    public static final String PROPOSED_BY_DAF       = "DAF";
+    public static final String PROPOSED_BY_CANDIDATE = "CANDIDATE";
+
     @Column(name = "rejection_reason", length = 500, columnDefinition = "nvarchar(500)")
     private String rejectionReason;
 

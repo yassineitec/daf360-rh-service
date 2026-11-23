@@ -4,17 +4,25 @@ import com.daf360.rh.common.UserScope;
 import com.daf360.rh.domain.Candidate;
 import com.daf360.rh.domain.CandidateInterview;
 import com.daf360.rh.domain.CandidateInterviewInterviewer;
+import com.daf360.rh.domain.CandidateInterviewReport;
 import com.daf360.rh.domain.InterviewType;
+import com.daf360.rh.domain.enums.InterviewOpinion;
 import com.daf360.rh.domain.enums.InterviewResult;
 import com.daf360.rh.domain.enums.InterviewStatus;
+import com.daf360.rh.dto.interview.AssignedInterviewDto;
 import com.daf360.rh.dto.interview.CandidateInterviewDto;
 import com.daf360.rh.dto.interview.CreateInterviewRequest;
+import com.daf360.rh.dto.interview.InterviewReportDto;
 import com.daf360.rh.dto.interview.MyInterviewEventDto;
+import com.daf360.rh.dto.interview.SubmitInterviewReportRequest;
 import com.daf360.rh.dto.interview.UpdateInterviewRequest;
 import com.daf360.rh.dto.interview.UserPickerDto;
+import com.daf360.rh.dto.interview.ValidateInterviewRequest;
 import com.daf360.rh.exception.BusinessRuleException;
 import com.daf360.rh.exception.ResourceNotFoundException;
+import com.daf360.rh.notification.InterviewNotifier;
 import com.daf360.rh.repository.CandidateInterviewInterviewerRepository;
+import com.daf360.rh.repository.CandidateInterviewReportRepository;
 import com.daf360.rh.repository.CandidateInterviewRepository;
 import com.daf360.rh.repository.CandidateRepository;
 import com.daf360.rh.repository.InterviewTypeRepository;
@@ -23,6 +31,7 @@ import com.daf360.rh.service.calendar.GraphCalendarService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,6 +59,11 @@ public class CandidateInterviewService {
     private final TenantService                tenantService;
     private final JdbcTemplate                 jdbcTemplate;
     private final GraphCalendarService          graphCalendarService;
+    // ── V132: PVs, RH validation, notifications ──
+    private final CandidateInterviewReportRepository reportRepo;
+    private final InterviewAccess                    access;
+    private final InterviewNotifier                  notifier;
+    private final PaysTimezoneService                paysTimezoneService;
 
     @PreAuthorize("hasPermission(null, 'RH_MANAGE_INTERVIEWS')")
     public List<UserPickerDto> listInterviewUsers(Long paysId) {
@@ -64,19 +78,37 @@ public class CandidateInterviewService {
                 filter);
     }
 
-    @PreAuthorize("hasPermission(null, 'RH_MANAGE_INTERVIEWS')")
+    /**
+     * The candidate's interview timeline.
+     *
+     * <p>Open to RH_MANAGE_INTERVIEWS (who plans them), to the PV readers (V132), and to any
+     * user sitting on one of this candidate's panels — an interviewer needs no RH code to see
+     * the interview they were given. What each caller reads of the PVs is decided per row in
+     * {@link #toDto}.
+     */
+    @Transactional(readOnly = true)
     public List<CandidateInterviewDto> listByCandidate(Long candidateId) {
-        loadCandidateWithTenantCheck(candidateId);
+        Candidate candidate = loadCandidateWithTenantCheck(candidateId);
+        if (!access.canListInterviews(candidateId)) {
+            throw new AccessDeniedException("Accès refusé aux entretiens de ce candidat");
+        }
         List<CandidateInterview> interviews =
                 interviewRepo.findByCandidateIdOrderBySequenceNumber(candidateId);
+        return toDtos(interviews, candidate);
+    }
+
+    /** Builds the DTOs of several interviews of ONE candidate with batched lookups (no N+1). */
+    private List<CandidateInterviewDto> toDtos(List<CandidateInterview> interviews, Candidate candidate) {
+        if (interviews.isEmpty()) return List.of();
         Set<Long> typeIds = interviews.stream()
                 .map(CandidateInterview::getInterviewTypeId)
                 .collect(Collectors.toSet());
         Map<Long, InterviewType> types = typeRepo.findAllById(typeIds).stream()
                 .collect(Collectors.toMap(InterviewType::getId, t -> t));
+        List<Long> ids = interviews.stream().map(CandidateInterview::getId).toList();
         // Panels for the whole timeline in one query + one name lookup (no N+1).
-        Map<Long, List<Long>> panels = panelsByInterview(
-                interviews.stream().map(CandidateInterview::getId).toList());
+        Map<Long, List<Long>> panels = panelsByInterview(ids);
+        Map<Long, List<CandidateInterviewReport>> reports = reportsByInterview(ids);
         // Le lead entre AUSSI dans la recherche de noms. Une ligne écrite avant V73 (ou dont
         // le backfill n'a pas tourné) porte `interviewer_user_id` sans aucune ligne de panel :
         // n'interroger que le panel laissait alors `interviewerName` à null, et l'intervieweur
@@ -87,10 +119,16 @@ public class CandidateInterviewService {
                 .map(CandidateInterview::getInterviewerUserId)
                 .filter(java.util.Objects::nonNull)
                 .forEach(nameIds::add);
+        // PV authors and validators are named too — an author may since have left the panel.
+        reports.values().forEach(list -> list.forEach(r -> nameIds.add(r.getAuthorUserId())));
+        interviews.stream().map(CandidateInterview::getValidatedBy)
+                .filter(java.util.Objects::nonNull).forEach(nameIds::add);
         Map<Long, String> names = userNames(nameIds);
+        ViewCtx ctx = viewCtx(candidate);
         return interviews.stream()
                 .map(ci -> toDto(ci, types.get(ci.getInterviewTypeId()),
-                                 panels.getOrDefault(ci.getId(), List.of()), names))
+                                 panels.getOrDefault(ci.getId(), List.of()),
+                                 reports.getOrDefault(ci.getId(), List.of()), names, ctx))
                 .toList();
     }
 
@@ -98,6 +136,7 @@ public class CandidateInterviewService {
     public CandidateInterviewDto create(Long candidateId, CreateInterviewRequest req, Long actorId) {
         Candidate candidate = loadCandidateWithTenantCheck(candidateId);
 
+        // Interviews are the first step of the process: no salary approval is waited on.
         InterviewType type = assertUsableType(req.interviewTypeId(), candidate.getPaysId());
         assertNoOtherPlannedOfType(candidateId, type, null);
 
@@ -128,8 +167,10 @@ public class CandidateInterviewService {
         if (!panel.isEmpty()) {
             savePanel(saved.getId(), panel);
             syncCalendarEvent(saved, panel, candidate);
+            notifier.assigned(panel, candidateId, fullName(candidate), type.getName(),
+                    saved.getScheduledAt(), saved.getLocation());
         }
-        return toDto(saved, type, panel, userNames(panel));
+        return toDto(saved, type, panel, List.of(), userNames(panel), viewCtx(candidate));
     }
 
     @PreAuthorize("hasPermission(null, 'RH_MANAGE_INTERVIEWS')")
@@ -146,16 +187,22 @@ public class CandidateInterviewService {
                     "Cet entretien est terminé et ne peut plus être modifié");
         }
 
-        // result (PASS/FAIL) can only be set when status = DONE
+        // V132: an interview is closed by its PVs, not by this form. It turns DONE when an
+        // interviewer files their PV, and its result is RH's validation of those PVs — so
+        // neither can be set here any more, or the PV step could simply be skipped.
         if (req.result() != null) {
-            InterviewStatus targetStatus = (req.status() != null)
-                    ? InterviewStatus.valueOf(req.status())
-                    : interview.getStatus();
-            if (targetStatus != InterviewStatus.DONE) {
-                throw new BusinessRuleException(
-                        "Le résultat (PASS/FAIL) ne peut être saisi qu'une fois l'entretien terminé (status = DONE)");
-            }
+            throw new BusinessRuleException(
+                    "Le résultat d'un entretien est fixé par la validation RH de son PV, pas depuis ce formulaire");
         }
+        if (req.status() != null && InterviewStatus.valueOf(req.status()) == InterviewStatus.DONE) {
+            throw new BusinessRuleException(
+                    "Un entretien passe à « terminé » quand un intervieweur dépose son PV");
+        }
+
+        // Before any change: who was on the panel, and when — to tell whoever is concerned.
+        InterviewStatus statusBefore = interview.getStatus();
+        OffsetDateTime slotBefore    = interview.getScheduledAt();
+        List<Long> panelBefore       = effectivePanel(interview, panelOf(interview.getId()));
 
         if (req.interviewTypeId() != null && !req.interviewTypeId().equals(interview.getInterviewTypeId())) {
             InterviewType newType = assertUsableType(req.interviewTypeId(), candidate.getPaysId());
@@ -167,8 +214,11 @@ public class CandidateInterviewService {
         if (req.location() != null)         interview.setLocation(req.location());
         if (req.interviewerNotes() != null) interview.setInterviewerNotes(req.interviewerNotes());
         if (req.status() != null)           interview.setStatus(InterviewStatus.valueOf(req.status()));
-        if (req.result() != null)           interview.setResult(InterviewResult.valueOf(req.result()));
         interview.setUpdatedAt(OffsetDateTime.now());
+        // A moved slot gets its own « dans une heure » reminder.
+        boolean slotMoved = slotBefore != null && interview.getScheduledAt() != null
+                && !slotBefore.isEqual(interview.getScheduledAt());
+        if (slotMoved) interview.setReminderSentAt(null);
 
         // A null panel means "leave it alone"; an empty list clears it.
         List<Long> panel = req.interviewerUserIds() != null
@@ -202,7 +252,193 @@ public class CandidateInterviewService {
         }
 
         InterviewType type = typeRepo.findById(saved.getInterviewTypeId()).orElse(null);
-        return toDto(saved, type, panel, userNames(panel));
+        notifyPanelChanges(saved, candidate, type, statusBefore, panelBefore, panel, slotMoved);
+        return toDto(saved, type, panel,
+                reportsByInterview(List.of(saved.getId())).getOrDefault(saved.getId(), List.of()),
+                userNames(panel), viewCtx(candidate));
+    }
+
+    /**
+     * Who hears about an edit: a cancellation reaches the whole panel; otherwise a new member
+     * is told they were assigned, a removed one that they no longer are, and the members who
+     * stay are told only when the slot moved.
+     */
+    private void notifyPanelChanges(CandidateInterview saved, Candidate candidate, InterviewType type,
+                                    InterviewStatus statusBefore, List<Long> panelBefore,
+                                    List<Long> panelAfter, boolean slotMoved) {
+        String name     = fullName(candidate);
+        String typeName = type != null ? type.getName() : null;
+        if (saved.getStatus() == InterviewStatus.CANCELLED) {
+            if (statusBefore != InterviewStatus.CANCELLED) {
+                notifier.cancelled(panelBefore, candidate.getId(), name, typeName, saved.getScheduledAt());
+            }
+            return;
+        }
+        if (saved.getStatus() != InterviewStatus.PLANNED) return;
+
+        List<Long> added   = panelAfter.stream().filter(id -> !panelBefore.contains(id)).toList();
+        List<Long> removed = panelBefore.stream().filter(id -> !panelAfter.contains(id)).toList();
+        List<Long> kept    = panelAfter.stream().filter(panelBefore::contains).toList();
+
+        notifier.assigned(added, candidate.getId(), name, typeName, saved.getScheduledAt(), saved.getLocation());
+        notifier.unassigned(removed, name, typeName, saved.getScheduledAt());
+        if (slotMoved) {
+            notifier.rescheduled(kept, candidate.getId(), name, typeName, saved.getScheduledAt());
+        }
+    }
+
+    // ── PV (V132) ─────────────────────────────────────────────────────────────
+
+    /**
+     * An interviewer files — or rewrites — their PV: a summary of the interview and their
+     * opinion on the candidate.
+     *
+     * <p>No permission: the right is sitting on this interview's panel. Open once the slot has
+     * started, closed once RH has validated (the decision was taken on what the PVs said).
+     * The first PV turns the interview DONE; the RH validators are told each time a panel
+     * member files theirs for the first time.
+     */
+    public CandidateInterviewDto submitReport(Long interviewId, SubmitInterviewReportRequest req, Long actorId) {
+        CandidateInterview interview = interviewRepo.findById(interviewId)
+                .orElseThrow(() -> new ResourceNotFoundException("CandidateInterview", interviewId));
+        Candidate candidate = loadCandidateWithTenantCheck(interview.getCandidateId());
+
+        List<Long> panel = effectivePanel(interview, panelOf(interviewId));
+        if (actorId == null || !panel.contains(actorId)) {
+            throw new AccessDeniedException("Seuls les intervieweurs de cet entretien peuvent rédiger son PV");
+        }
+        if (interview.getStatus() == InterviewStatus.CANCELLED) {
+            throw new BusinessRuleException("Cet entretien a été annulé : il n'y a pas de PV à rédiger");
+        }
+        if (interview.getResult() != null) {
+            throw new BusinessRuleException(
+                    "Cet entretien a déjà été validé par RH : les PV ne peuvent plus être modifiés");
+        }
+        if (!hasStarted(interview, candidate.getPaysId())) {
+            throw new BusinessRuleException("Le PV se rédige une fois l'entretien commencé (prévu le "
+                    + InterviewNotifier.formatSlot(interview.getScheduledAt()) + ")");
+        }
+
+        OffsetDateTime now = OffsetDateTime.now();
+        var existing = reportRepo.findByInterviewIdAndAuthorUserId(interviewId, actorId);
+        CandidateInterviewReport report = existing.orElseGet(() -> CandidateInterviewReport.builder()
+                .interviewId(interviewId).authorUserId(actorId).submittedAt(now).build());
+        report.setSummary(req.summary().trim());
+        report.setOpinion(InterviewOpinion.valueOf(req.opinion()));
+        if (existing.isPresent()) report.setUpdatedAt(now);
+        reportRepo.save(report);
+
+        if (interview.getStatus() == InterviewStatus.PLANNED) {
+            interview.setStatus(InterviewStatus.DONE);
+            interview.setUpdatedAt(now);
+            interviewRepo.save(interview);
+        }
+
+        InterviewType type = typeRepo.findById(interview.getInterviewTypeId()).orElse(null);
+        if (existing.isEmpty()) {
+            notifier.reportSubmitted(candidate.getPaysId(), candidate.getId(), fullName(candidate),
+                    type != null ? type.getName() : null,
+                    userNames(List.of(actorId)).get(actorId));
+        }
+        return toDtos(List.of(interview), candidate).get(0);
+    }
+
+    /**
+     * RH reads the PVs and decides: PASS lets the candidature move on, FAIL blocks it (and must
+     * say why). Needs at least one PV — a decision with nothing written behind it is exactly
+     * what this step exists to prevent. Final: a validated interview is a record.
+     */
+    @PreAuthorize("hasPermission(null, 'RH_VALIDATE_INTERVIEW')")
+    public CandidateInterviewDto validate(Long interviewId, ValidateInterviewRequest req, Long actorId) {
+        CandidateInterview interview = interviewRepo.findById(interviewId)
+                .orElseThrow(() -> new ResourceNotFoundException("CandidateInterview", interviewId));
+        Candidate candidate = loadCandidateWithTenantCheck(interview.getCandidateId());
+
+        if (interview.getResult() != null) {
+            throw new BusinessRuleException("Cet entretien a déjà été validé");
+        }
+        if (interview.getStatus() != InterviewStatus.DONE || reportRepo.countByInterviewId(interviewId) == 0) {
+            throw new BusinessRuleException(
+                    "Aucun PV n'a encore été déposé pour cet entretien : la validation se fait après lecture des PV");
+        }
+        InterviewResult decision = InterviewResult.valueOf(req.decision());
+        String comment = req.comment() != null ? req.comment().trim() : null;
+        if (decision == InterviewResult.FAIL && (comment == null || comment.isEmpty())) {
+            throw new BusinessRuleException("Indiquez le motif de l'échec : il bloque la candidature");
+        }
+
+        interview.setResult(decision);
+        interview.setValidatedBy(actorId);
+        interview.setValidatedAt(OffsetDateTime.now());
+        interview.setValidationComment(comment == null || comment.isEmpty() ? null : comment);
+        interview.setUpdatedAt(OffsetDateTime.now());
+        interviewRepo.save(interview);
+        return toDtos(List.of(interview), candidate).get(0);
+    }
+
+    /**
+     * « Mes entretiens »: every interview the caller sits on, cancelled ones excluded, from
+     * four months back. Self-scoped, no permission. {@code myReportAt} says whether the
+     * caller's PV is in.
+     */
+    @Transactional(readOnly = true)
+    public List<AssignedInterviewDto> listAssigned(Long userId) {
+        if (userId == null) return List.of();
+        String sql = """
+            SELECT ci.id, ci.candidate_id, ci.scheduled_at, ci.location, ci.status, ci.result,
+                   ci.graph_join_url, c.first_name, c.last_name, c.applied_position,
+                   it.name AS type_name, it.name_en AS type_name_en,
+                   r.submitted_at AS my_report_at
+              FROM [dbo].[candidate_interviews] ci
+              JOIN [dbo].[candidates] c ON c.id = ci.candidate_id
+              LEFT JOIN [dbo].[interview_types] it ON it.id = ci.interview_type_id
+              LEFT JOIN [dbo].[candidate_interview_reports] r
+                     ON r.interview_id = ci.id AND r.author_user_id = ?
+             WHERE (ci.interviewer_user_id = ?
+                    OR EXISTS (SELECT 1 FROM [dbo].[candidate_interview_interviewers] p
+                                WHERE p.interview_id = ci.id AND p.user_id = ?))
+               AND ci.status <> 'CANCELLED'
+               AND ci.scheduled_at >= DATEADD(day, -120, SYSDATETIMEOFFSET())
+             ORDER BY ci.scheduled_at DESC
+            """;
+        return jdbcTemplate.query(sql, (rs, rn) -> {
+            String first = rs.getString("first_name");
+            String last  = rs.getString("last_name");
+            return new AssignedInterviewDto(
+                    rs.getLong("id"),
+                    rs.getLong("candidate_id"),
+                    ((first != null ? first : "") + " " + (last != null ? last : "")).trim(),
+                    rs.getString("applied_position"),
+                    rs.getString("type_name"),
+                    rs.getString("type_name_en"),
+                    rs.getObject("scheduled_at", OffsetDateTime.class),
+                    rs.getString("location"),
+                    rs.getString("status"),
+                    rs.getString("result"),
+                    rs.getObject("my_report_at", OffsetDateTime.class),
+                    rs.getString("graph_join_url"));
+        }, userId, userId, userId);
+    }
+
+    // ── time ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Has the slot started? The slot is stored as the wall clock RH typed, stamped +00:00, so
+     * the real instant is that wall clock in the candidate's entity zone (UTC when unset).
+     */
+    private boolean hasStarted(CandidateInterview ci, Long paysId) {
+        return realStart(ci.getScheduledAt(), paysId).isBefore(java.time.Instant.now().plusSeconds(1));
+    }
+
+    java.time.Instant realStart(OffsetDateTime stored, Long paysId) {
+        java.time.ZoneId zone = paysId != null ? paysTimezoneService.zoneFor(paysId) : null;
+        return stored.withOffsetSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime()
+                .atZone(zone != null ? zone : java.time.ZoneOffset.UTC).toInstant();
+    }
+
+    private static String fullName(Candidate c) {
+        return ((c.getFirstName() != null ? c.getFirstName() : "") + " "
+                + (c.getLastName() != null ? c.getLastName() : "")).trim();
     }
 
     /**
@@ -391,14 +627,48 @@ public class CandidateInterviewService {
         return ci.getInterviewerUserId() != null ? List.of(ci.getInterviewerUserId()) : List.of();
     }
 
-    private CandidateInterviewDto toDto(CandidateInterview ci, InterviewType type,
-                                        List<Long> panel, Map<Long, String> names) {
-        List<UserPickerDto> interviewers = effectivePanel(ci, panel).stream()
+    /** What the caller may do, resolved once per request rather than per row. */
+    private record ViewCtx(Long me, boolean readAllReports, boolean mayValidate, Long paysId) {}
+
+    private ViewCtx viewCtx(Candidate candidate) {
+        return new ViewCtx(access.currentUserId(), access.canReadAllReports(),
+                access.has(com.daf360.rh.common.PermissionCatalog.RH_VALIDATE_INTERVIEW),
+                candidate != null ? candidate.getPaysId() : null);
+    }
+
+    private Map<Long, List<CandidateInterviewReport>> reportsByInterview(Collection<Long> interviewIds) {
+        if (interviewIds.isEmpty()) return Map.of();
+        Map<Long, List<CandidateInterviewReport>> byInterview = new LinkedHashMap<>();
+        for (CandidateInterviewReport r : reportRepo.findByInterviewIdInOrderBySubmittedAtAsc(interviewIds)) {
+            byInterview.computeIfAbsent(r.getInterviewId(), k -> new ArrayList<>()).add(r);
+        }
+        return byInterview;
+    }
+
+    private CandidateInterviewDto toDto(CandidateInterview ci, InterviewType type, List<Long> panel,
+                                        List<CandidateInterviewReport> reports,
+                                        Map<Long, String> names, ViewCtx ctx) {
+        List<Long> effective = effectivePanel(ci, panel);
+        List<UserPickerDto> interviewers = effective.stream()
                 .map(uid -> new UserPickerDto(uid, names.get(uid)))
                 .toList();
         String leadName = ci.getInterviewerUserId() != null
                 ? names.get(ci.getInterviewerUserId())
                 : null;
+
+        // An RH reader sees every PV; a panel member only their own — the others' opinions
+        // must not colour theirs, and are not theirs to read.
+        List<InterviewReportDto> visible = reports.stream()
+                .filter(r -> ctx.readAllReports() || (ctx.me() != null && ctx.me().equals(r.getAuthorUserId())))
+                .map(r -> new InterviewReportDto(r.getId(), r.getAuthorUserId(), names.get(r.getAuthorUserId()),
+                        r.getSummary(), r.getOpinion().name(), r.getSubmittedAt(), r.getUpdatedAt()))
+                .toList();
+        boolean open = ci.getStatus() != InterviewStatus.CANCELLED && ci.getResult() == null;
+        boolean canWrite = open && ctx.me() != null && effective.contains(ctx.me())
+                && ci.getScheduledAt() != null && hasStarted(ci, ctx.paysId());
+        boolean canValidate = ctx.mayValidate() && ci.getStatus() == InterviewStatus.DONE
+                && ci.getResult() == null && !reports.isEmpty();
+
         return new CandidateInterviewDto(
                 ci.getId(),
                 ci.getCandidateId(),
@@ -415,7 +685,15 @@ public class CandidateInterviewService {
                 ci.getResult() != null ? ci.getResult().name() : null,
                 ci.getSequenceNumber(),
                 ci.getCreatedAt(),
-                ci.getGraphJoinUrl());
+                ci.getGraphJoinUrl(),
+                visible,
+                reports.size(),
+                canWrite,
+                canValidate,
+                ci.getValidatedBy(),
+                ci.getValidatedBy() != null ? names.get(ci.getValidatedBy()) : null,
+                ci.getValidatedAt(),
+                ci.getValidationComment());
     }
 
     // ── calendar sync (Outlook/Teams) ────────────────────────────────────────

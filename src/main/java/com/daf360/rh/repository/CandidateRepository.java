@@ -100,13 +100,13 @@ public interface CandidateRepository extends JpaRepository<Candidate, Long> {
           AND (:search IS NULL
                OR LOWER(c.firstName)       LIKE LOWER(CONCAT('%', :search, '%'))
                OR LOWER(c.lastName)        LIKE LOWER(CONCAT('%', :search, '%'))
+               OR LOWER(c.emailPersonal)   LIKE LOWER(CONCAT('%', :search, '%'))
                OR LOWER(c.appliedPosition) LIKE LOWER(CONCAT('%', :search, '%')))
           AND (:departmentId IS NULL OR c.department.id = :departmentId)
           AND (:demandId IS NULL OR c.recruitmentDemandId = :demandId)
           AND (:spontaneousOnly = false OR c.recruitmentDemandId IS NULL)
           AND (:createdFrom IS NULL OR c.createdAt >= :createdFrom)
           AND (:createdTo IS NULL OR c.createdAt < :createdTo)
-        ORDER BY c.createdAt DESC
         """,
         countQuery = """
         SELECT COUNT(c) FROM Candidate c
@@ -115,6 +115,7 @@ public interface CandidateRepository extends JpaRepository<Candidate, Long> {
           AND (:search IS NULL
                OR LOWER(c.firstName)       LIKE LOWER(CONCAT('%', :search, '%'))
                OR LOWER(c.lastName)        LIKE LOWER(CONCAT('%', :search, '%'))
+               OR LOWER(c.emailPersonal)   LIKE LOWER(CONCAT('%', :search, '%'))
                OR LOWER(c.appliedPosition) LIKE LOWER(CONCAT('%', :search, '%')))
           AND (:departmentId IS NULL OR c.department.id = :departmentId)
           AND (:demandId IS NULL OR c.recruitmentDemandId = :demandId)

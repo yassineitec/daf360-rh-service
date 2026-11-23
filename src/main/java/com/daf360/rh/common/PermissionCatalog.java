@@ -115,6 +115,14 @@ public final class PermissionCatalog {
     // ── Entretiens (V37) ──────────────────────────────────────────────────────
     public static final String RH_ADMIN_INTERVIEW_TYPES     = "RH_ADMIN_INTERVIEW_TYPES";
     public static final String RH_MANAGE_INTERVIEWS         = "RH_MANAGE_INTERVIEWS";
+    /**
+     * Interview PVs (V132). Writing a PV is NOT a permission: it belongs to whoever sits on
+     * the interview's panel, RH code or not. These two cover the RH side — reading every
+     * PV of a candidate, and turning them into the PASS / FAIL decision that lets the
+     * candidature move on.
+     */
+    public static final String RH_VALIDATE_INTERVIEW        = "RH_VALIDATE_INTERVIEW";
+    public static final String RH_VIEW_INTERVIEW_REPORTS    = "RH_VIEW_INTERVIEW_REPORTS";
 
     // ── Employee Lifecycle Engine (V32) ───────────────────────────────────────
     public static final String RH_VIEW_CONTRACTS            = "RH_VIEW_CONTRACTS";
@@ -237,7 +245,8 @@ public final class PermissionCatalog {
         new PermGroup("Module RH",           List.of(HR_CREATE_PROFILE, HR_UPDATE_PROFILE, HR_ARCHIVE_PROFILE, HR_ONBOARDING, CREATE_CANDIDATE, EDIT_CANDIDATE, ACCEPT_REJECT_CANDIDATE, RH_VIEW_RECRUITMENT_DEMAND, RH_CREATE_RECRUITMENT_DEMAND, RH_APPROVE_RECRUITMENT_DEMAND, RH_HIRE_CANDIDATE, APPROVE_HIRING_COST, RH_MANAGE_PAYSLIPS)),
         new PermGroup("Cycle de vie",        List.of(RH_VIEW_CONTRACTS, RH_CREATE_CONTRACT, RH_MANAGE_LIFECYCLE, RH_VALIDATE_TRIAL_PERIOD, RH_MANAGE_ALERTS, RH_MANAGE_OFFBOARDING, RH_VALIDATE_OFFBOARDING, RH_COMPLETE_OFFBOARDING_TASK, RH_CONDUCT_EXIT_INTERVIEW, RH_OFFBOARDING_STAGE_HANDOVER, RH_OFFBOARDING_STAGE_IT, RH_OFFBOARDING_STAGE_PAYROLL, RH_SUSPEND_PROFILE,
                                                      RH_REQUEST_CDI_CONVERSION, RH_VALIDATE_CDI_CONVERSION, RH_ARBITRATE_CDI_CONVERSION)),
-        new PermGroup("Entretiens",          List.of(RH_ADMIN_INTERVIEW_TYPES, RH_MANAGE_INTERVIEWS)),
+        new PermGroup("Entretiens",          List.of(RH_ADMIN_INTERVIEW_TYPES, RH_MANAGE_INTERVIEWS,
+                                                     RH_VALIDATE_INTERVIEW, RH_VIEW_INTERVIEW_REPORTS)),
         // FACT_APPROVE_MISSION_COST is the third code of this process but it is NOT listed
         // here: FACT_* codes belong to the facturation catalog (FactPermissionCatalog), and
         // duplicating it would make it show up twice in role administration.

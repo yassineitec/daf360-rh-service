@@ -1,6 +1,9 @@
 package com.daf360.rh.controller;
 
+import com.daf360.rh.dto.interview.AssignedInterviewDto;
 import com.daf360.rh.dto.interview.CandidateInterviewDto;
+import com.daf360.rh.dto.interview.SubmitInterviewReportRequest;
+import com.daf360.rh.dto.interview.ValidateInterviewRequest;
 import com.daf360.rh.dto.interview.CreateInterviewRequest;
 import com.daf360.rh.dto.interview.MyInterviewEventDto;
 import com.daf360.rh.dto.interview.UpdateInterviewRequest;
@@ -39,6 +42,30 @@ public class CandidateInterviewController {
                                                   @RequestParam String to,
                                                   Authentication auth) {
         return service.listMyInterviews(actorId(auth), from, to);
+    }
+
+    /** « Mes entretiens » — every interview the caller sits on, with their PV state (V132). */
+    @GetMapping("/api/hr/interviews/assigned")
+    public List<AssignedInterviewDto> assigned(Authentication auth) {
+        return service.listAssigned(actorId(auth));
+    }
+
+    /** A panel member files or rewrites their PV (V132). No permission: the panel is the right. */
+    @PutMapping("/api/hr/candidates/{candidateId}/interviews/{interviewId}/report")
+    public CandidateInterviewDto submitReport(@PathVariable Long candidateId,
+                                              @PathVariable Long interviewId,
+                                              @Valid @RequestBody SubmitInterviewReportRequest req,
+                                              Authentication auth) {
+        return service.submitReport(interviewId, req, actorId(auth));
+    }
+
+    /** RH decides PASS / FAIL after reading the PVs (V132, RH_VALIDATE_INTERVIEW). */
+    @PostMapping("/api/hr/candidates/{candidateId}/interviews/{interviewId}/validate")
+    public CandidateInterviewDto validate(@PathVariable Long candidateId,
+                                          @PathVariable Long interviewId,
+                                          @Valid @RequestBody ValidateInterviewRequest req,
+                                          Authentication auth) {
+        return service.validate(interviewId, req, actorId(auth));
     }
 
     @PostMapping("/api/hr/candidates/{candidateId}/interviews")
