@@ -48,10 +48,17 @@ public class InterviewNotifier {
     private final InAppNotifier notifier;
     private final JdbcTemplate  jdbc;
 
-    /** Where an interviewer lands: the candidate, on the Entretiens tab. */
+    /** Where RH lands: the candidate, on the Entretiens tab (PV validation). */
     public static String interviewsLink(Long candidateId) {
         return "/rh/candidates/" + candidateId + "?tab=entretiens";
     }
+
+    /**
+     * Where an interviewer lands: the « Entretiens » tab of the shell's self-service, where they
+     * read the candidate, the CV, and write their PV. The RH candidate page no longer lets a
+     * panel member in — they may hold no RH permission at all.
+     */
+    public static final String INTERVIEWER_LINK = "/home/self-service?tab=entretiens";
 
     public static String formatSlot(OffsetDateTime scheduledAt) {
         return scheduledAt == null ? "" : scheduledAt.withOffsetSameInstant(ZoneOffset.UTC).format(WHEN);
@@ -62,9 +69,9 @@ public class InterviewNotifier {
         if (userIds == null || userIds.isEmpty()) return;
         String msg = label(typeName) + " avec " + candidateName + " le " + formatSlot(at)
                 + (location != null && !location.isBlank() ? " — " + location : "")
-                + ". Après l'entretien, rédigez votre PV depuis la fiche du candidat.";
+                + ". Après l'entretien, rédigez votre PV depuis Self-service › Entretiens.";
         afterCommit(() -> notifier.notifyUsers(userIds, InAppNotifier.MODULE_RH,
-                "Entretien assigné", msg, target(candidateId)));
+                "Entretien assigné", msg, interviewerTarget(candidateId)));
     }
 
     public void rescheduled(Collection<Long> userIds, Long candidateId, String candidateName,
@@ -72,7 +79,7 @@ public class InterviewNotifier {
         if (userIds == null || userIds.isEmpty()) return;
         String msg = label(typeName) + " avec " + candidateName + " est déplacé au " + formatSlot(at) + ".";
         afterCommit(() -> notifier.notifyUsers(userIds, InAppNotifier.MODULE_RH,
-                "Entretien reprogrammé", msg, target(candidateId)));
+                "Entretien reprogrammé", msg, interviewerTarget(candidateId)));
     }
 
     public void cancelled(Collection<Long> userIds, Long candidateId, String candidateName,
@@ -100,7 +107,7 @@ public class InterviewNotifier {
         String msg = label(typeName) + " avec " + candidateName + " commence dans moins d'une heure ("
                 + formatSlot(at) + (location != null && !location.isBlank() ? ", " + location : "") + ").";
         return notifier.notifyUsers(userIds, InAppNotifier.MODULE_RH,
-                "Rappel : entretien dans 1 heure", msg, target(candidateId));
+                "Rappel : entretien dans 1 heure", msg, interviewerTarget(candidateId));
     }
 
     /** A PV came in: whoever validates interviews in the candidate's entity. */
@@ -117,6 +124,10 @@ public class InterviewNotifier {
 
     private static NotificationTarget target(Long candidateId) {
         return NotificationTarget.of(NotificationEntityType.CANDIDATE, candidateId, interviewsLink(candidateId));
+    }
+
+    private static NotificationTarget interviewerTarget(Long candidateId) {
+        return NotificationTarget.of(NotificationEntityType.CANDIDATE, candidateId, INTERVIEWER_LINK);
     }
 
     private static String label(String typeName) {

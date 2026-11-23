@@ -38,6 +38,11 @@ public class RecruitmentDemandResponse {
 
     private Long urgencyLevelId;
     private String urgencyLevelLabel;
+    /**
+     * The level's `value_code` (FAIBLE / NORMAL / …): the self-service form drives urgency as a
+     * slider over codes, so recreating a demand from the library needs the code, not the id.
+     */
+    private String urgencyLevelCode;
 
     private Long cspCategoryId;
     private String cspCategoryLabel;

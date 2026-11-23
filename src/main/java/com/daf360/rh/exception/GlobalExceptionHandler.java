@@ -81,6 +81,22 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /**
+     * A path or query parameter of the wrong type — `/recruitment-demands/library` reaching
+     * `GET /{id}` on a build without the library endpoint, `?paysId=abc`… A client error, so a
+     * 400 naming the parameter. It used to fall into the generic handler below and come out as
+     * a 500 « unexpected error », which sent people looking for a crash that was not there.
+     */
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    public ProblemDetail handleTypeMismatch(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException ex) {
+        String expected = ex.getRequiredType() != null ? ex.getRequiredType().getSimpleName() : "?";
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
+                "Paramètre « " + ex.getName() + " » invalide : « " + ex.getValue() + " » n'est pas un " + expected + ".");
+        pd.setProperty("code", "INVALID_PARAMETER");
+        pd.setProperty("parameter", ex.getName());
+        return pd;
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGeneric(Exception ex) {
         log.error("Unexpected error", ex);

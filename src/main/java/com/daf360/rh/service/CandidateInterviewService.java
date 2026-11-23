@@ -12,6 +12,8 @@ import com.daf360.rh.domain.enums.InterviewStatus;
 import com.daf360.rh.dto.interview.AssignedInterviewDto;
 import com.daf360.rh.dto.interview.CandidateInterviewDto;
 import com.daf360.rh.dto.interview.CreateInterviewRequest;
+import com.daf360.rh.dto.interview.InterviewAnswerDto;
+import com.daf360.rh.dto.interview.InterviewQuestionDto;
 import com.daf360.rh.dto.interview.InterviewReportDto;
 import com.daf360.rh.dto.interview.MyInterviewEventDto;
 import com.daf360.rh.dto.interview.SubmitInterviewReportRequest;
@@ -64,18 +66,42 @@ public class CandidateInterviewService {
     private final InterviewAccess                    access;
     private final InterviewNotifier                  notifier;
     private final PaysTimezoneService                paysTimezoneService;
+    // ── V135: questionnaire answered in the PV ──
+    private final InterviewQuestionnaireService      questionnaire;
 
     @PreAuthorize("hasPermission(null, 'RH_MANAGE_INTERVIEWS')")
     public List<UserPickerDto> listInterviewUsers(Long paysId) {
         Long effectivePaysId = tenantService.getEffectivePaysId();
         Long filter = (effectivePaysId != null) ? effectivePaysId : paysId;
         return jdbcTemplate.query(
-                "SELECT id, fullName FROM Users u " +
+                "SELECT u.id, u.fullName, ep.profile_id, ep.photo_url, ep.gender FROM Users u " +
+                PROFILE_APPLY +
                 "WHERE u.isActive = 1 AND u.pays_id = ? " +
                 "AND " + UserScope.realPeople("u") + " " +
                 "ORDER BY u.fullName",
-                (rs, rn) -> new UserPickerDto(rs.getLong("id"), rs.getString("fullName")),
+                (rs, rn) -> mapUser(rs),
                 filter);
+    }
+
+    /**
+     * The user's RH profile, for the avatar: photo, gender, and the profile id the photo is
+     * served by. OUTER APPLY TOP 1 rather than a LEFT JOIN so a user holding more than one
+     * live profile row still comes back once — a plain join would list them twice in the
+     * picker. A user with no profile keeps all three columns null (initials on screen).
+     */
+    private static final String PROFILE_APPLY =
+            "OUTER APPLY (SELECT TOP 1 p.id AS profile_id, p.photo_url, p.gender " +
+            "             FROM [dbo].[employee_profiles] p " +
+            "             WHERE p.user_id = u.id AND p.deleted = 0 ORDER BY p.id DESC) ep ";
+
+    private static UserPickerDto mapUser(java.sql.ResultSet rs) throws java.sql.SQLException {
+        Object profileId = rs.getObject("profile_id");
+        return new UserPickerDto(
+                rs.getLong("id"),
+                rs.getString("fullName"),
+                profileId != null ? ((Number) profileId).longValue() : null,
+                rs.getString("photo_url"),
+                rs.getString("gender"));
     }
 
     /**
@@ -109,6 +135,7 @@ public class CandidateInterviewService {
         // Panels for the whole timeline in one query + one name lookup (no N+1).
         Map<Long, List<Long>> panels = panelsByInterview(ids);
         Map<Long, List<CandidateInterviewReport>> reports = reportsByInterview(ids);
+        Map<Long, List<InterviewAnswerDto>> answers = answersOf(reports.values().stream().flatMap(List::stream).toList());
         // Le lead entre AUSSI dans la recherche de noms. Une ligne écrite avant V73 (ou dont
         // le backfill n'a pas tourné) porte `interviewer_user_id` sans aucune ligne de panel :
         // n'interroger que le panel laissait alors `interviewerName` à null, et l'intervieweur
@@ -123,13 +150,32 @@ public class CandidateInterviewService {
         reports.values().forEach(list -> list.forEach(r -> nameIds.add(r.getAuthorUserId())));
         interviews.stream().map(CandidateInterview::getValidatedBy)
                 .filter(java.util.Objects::nonNull).forEach(nameIds::add);
-        Map<Long, String> names = userNames(nameIds);
+        Map<Long, UserPickerDto> names = users(nameIds);
         ViewCtx ctx = viewCtx(candidate);
         return interviews.stream()
                 .map(ci -> toDto(ci, types.get(ci.getInterviewTypeId()),
                                  panels.getOrDefault(ci.getId(), List.of()),
-                                 reports.getOrDefault(ci.getId(), List.of()), names, ctx))
+                                 reports.getOrDefault(ci.getId(), List.of()), answers, names, ctx))
                 .toList();
+    }
+
+    /**
+     * The questionnaire an interviewer fills in their PV (V135): the interview type's active
+     * questions, in order. Open to whoever may list this candidate's interviews — a panel
+     * member needs no RH code, same as the PV itself.
+     */
+    @Transactional(readOnly = true)
+    public List<InterviewQuestionDto> questionnaireFor(Long candidateId, Long interviewId) {
+        CandidateInterview interview = interviewRepo.findById(interviewId)
+                .orElseThrow(() -> new ResourceNotFoundException("CandidateInterview", interviewId));
+        if (!interview.getCandidateId().equals(candidateId)) {
+            throw new ResourceNotFoundException("CandidateInterview", interviewId);
+        }
+        loadCandidateWithTenantCheck(candidateId);
+        if (!access.canListInterviews(candidateId)) {
+            throw new AccessDeniedException("Accès refusé aux entretiens de ce candidat");
+        }
+        return questionnaire.activeQuestions(interview.getInterviewTypeId());
     }
 
     @PreAuthorize("hasPermission(null, 'RH_MANAGE_INTERVIEWS')")
@@ -170,7 +216,7 @@ public class CandidateInterviewService {
             notifier.assigned(panel, candidateId, fullName(candidate), type.getName(),
                     saved.getScheduledAt(), saved.getLocation());
         }
-        return toDto(saved, type, panel, List.of(), userNames(panel), viewCtx(candidate));
+        return toDto(saved, type, panel, List.of(), Map.of(), users(panel), viewCtx(candidate));
     }
 
     @PreAuthorize("hasPermission(null, 'RH_MANAGE_INTERVIEWS')")
@@ -253,9 +299,10 @@ public class CandidateInterviewService {
 
         InterviewType type = typeRepo.findById(saved.getInterviewTypeId()).orElse(null);
         notifyPanelChanges(saved, candidate, type, statusBefore, panelBefore, panel, slotMoved);
-        return toDto(saved, type, panel,
-                reportsByInterview(List.of(saved.getId())).getOrDefault(saved.getId(), List.of()),
-                userNames(panel), viewCtx(candidate));
+        List<CandidateInterviewReport> savedReports =
+                reportsByInterview(List.of(saved.getId())).getOrDefault(saved.getId(), List.of());
+        return toDto(saved, type, panel, savedReports, answersOf(savedReports),
+                users(panel), viewCtx(candidate));
     }
 
     /**
@@ -318,6 +365,9 @@ public class CandidateInterviewService {
             throw new BusinessRuleException("Le PV se rédige une fois l'entretien commencé (prévu le "
                     + InterviewNotifier.formatSlot(interview.getScheduledAt()) + ")");
         }
+        // V135: the questionnaire is checked before anything is written — a missing
+        // required answer must not leave a PV (or a DONE interview) behind.
+        var answerRows = questionnaire.prepareAnswers(interview.getInterviewTypeId(), req.answers());
 
         OffsetDateTime now = OffsetDateTime.now();
         var existing = reportRepo.findByInterviewIdAndAuthorUserId(interviewId, actorId);
@@ -326,7 +376,9 @@ public class CandidateInterviewService {
         report.setSummary(req.summary().trim());
         report.setOpinion(InterviewOpinion.valueOf(req.opinion()));
         if (existing.isPresent()) report.setUpdatedAt(now);
+        // IDENTITY: save() persists at once, so a new report has its id right after.
         reportRepo.save(report);
+        questionnaire.replaceAnswers(report.getId(), answerRows);
 
         if (interview.getStatus() == InterviewStatus.PLANNED) {
             interview.setStatus(InterviewStatus.DONE);
@@ -589,15 +641,29 @@ public class CandidateInterviewService {
 
     /** userId → fullName for a batch of users, in one query. */
     private Map<Long, String> userNames(Collection<Long> userIds) {
+        Map<Long, String> names = new LinkedHashMap<>();
+        users(userIds).forEach((id, u) -> names.put(id, u.fullName()));
+        return names;
+    }
+
+    /** userId → name + avatar fields for a batch of users, in one query. */
+    private Map<Long, UserPickerDto> users(Collection<Long> userIds) {
         if (userIds == null || userIds.isEmpty()) return Map.of();
         String placeholders = userIds.stream().map(id -> "?").collect(Collectors.joining(","));
         List<UserPickerDto> rows = jdbcTemplate.query(
-                "SELECT id, fullName FROM Users WHERE id IN (" + placeholders + ")",
-                (rs, rn) -> new UserPickerDto(rs.getLong("id"), rs.getString("fullName")),
+                "SELECT u.id, u.fullName, ep.profile_id, ep.photo_url, ep.gender FROM Users u " +
+                PROFILE_APPLY +
+                "WHERE u.id IN (" + placeholders + ")",
+                (rs, rn) -> mapUser(rs),
                 userIds.toArray());
-        Map<Long, String> names = new LinkedHashMap<>();
-        rows.forEach(u -> names.put(u.id(), u.fullName()));
-        return names;
+        Map<Long, UserPickerDto> byId = new LinkedHashMap<>();
+        rows.forEach(u -> byId.put(u.id(), u));
+        return byId;
+    }
+
+    private static String nameOf(Map<Long, UserPickerDto> users, Long id) {
+        UserPickerDto u = id != null ? users.get(id) : null;
+        return u != null ? u.fullName() : null;
     }
 
     private Candidate loadCandidateWithTenantCheck(Long candidateId) {
@@ -645,23 +711,32 @@ public class CandidateInterviewService {
         return byInterview;
     }
 
+    /** reportId → answers (V135) for a batch of PVs, in one query. */
+    private Map<Long, List<InterviewAnswerDto>> answersOf(Collection<CandidateInterviewReport> reports) {
+        if (reports == null || reports.isEmpty()) return Map.of();
+        Map<Long, List<InterviewAnswerDto>> byReport = questionnaire.answersByReport(
+                reports.stream().map(CandidateInterviewReport::getId).filter(java.util.Objects::nonNull).toList());
+        return byReport != null ? byReport : Map.of();
+    }
+
     private CandidateInterviewDto toDto(CandidateInterview ci, InterviewType type, List<Long> panel,
                                         List<CandidateInterviewReport> reports,
-                                        Map<Long, String> names, ViewCtx ctx) {
+                                        Map<Long, List<InterviewAnswerDto>> answers,
+                                        Map<Long, UserPickerDto> users, ViewCtx ctx) {
         List<Long> effective = effectivePanel(ci, panel);
+        // The full row (with the avatar fields), or the bare id when the user is unknown.
         List<UserPickerDto> interviewers = effective.stream()
-                .map(uid -> new UserPickerDto(uid, names.get(uid)))
+                .map(uid -> users.getOrDefault(uid, new UserPickerDto(uid, null)))
                 .toList();
-        String leadName = ci.getInterviewerUserId() != null
-                ? names.get(ci.getInterviewerUserId())
-                : null;
+        String leadName = nameOf(users, ci.getInterviewerUserId());
 
         // An RH reader sees every PV; a panel member only their own — the others' opinions
         // must not colour theirs, and are not theirs to read.
         List<InterviewReportDto> visible = reports.stream()
                 .filter(r -> ctx.readAllReports() || (ctx.me() != null && ctx.me().equals(r.getAuthorUserId())))
-                .map(r -> new InterviewReportDto(r.getId(), r.getAuthorUserId(), names.get(r.getAuthorUserId()),
-                        r.getSummary(), r.getOpinion().name(), r.getSubmittedAt(), r.getUpdatedAt()))
+                .map(r -> new InterviewReportDto(r.getId(), r.getAuthorUserId(), nameOf(users, r.getAuthorUserId()),
+                        r.getSummary(), r.getOpinion().name(), r.getSubmittedAt(), r.getUpdatedAt(),
+                        answers.getOrDefault(r.getId(), List.of())))
                 .toList();
         boolean open = ci.getStatus() != InterviewStatus.CANCELLED && ci.getResult() == null;
         boolean canWrite = open && ctx.me() != null && effective.contains(ctx.me())
@@ -691,7 +766,7 @@ public class CandidateInterviewService {
                 canWrite,
                 canValidate,
                 ci.getValidatedBy(),
-                ci.getValidatedBy() != null ? names.get(ci.getValidatedBy()) : null,
+                nameOf(users, ci.getValidatedBy()),
                 ci.getValidatedAt(),
                 ci.getValidationComment());
     }

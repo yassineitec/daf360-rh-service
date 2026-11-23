@@ -2,6 +2,7 @@ package com.daf360.rh.controller;
 
 import com.daf360.rh.dto.interview.AssignedInterviewDto;
 import com.daf360.rh.dto.interview.CandidateInterviewDto;
+import com.daf360.rh.dto.interview.InterviewQuestionDto;
 import com.daf360.rh.dto.interview.SubmitInterviewReportRequest;
 import com.daf360.rh.dto.interview.ValidateInterviewRequest;
 import com.daf360.rh.dto.interview.CreateInterviewRequest;
@@ -57,6 +58,13 @@ public class CandidateInterviewController {
                                               @Valid @RequestBody SubmitInterviewReportRequest req,
                                               Authentication auth) {
         return service.submitReport(interviewId, req, actorId(auth));
+    }
+
+    /** The questionnaire of this interview's type, answered in the PV (V135). */
+    @GetMapping("/api/hr/candidates/{candidateId}/interviews/{interviewId}/questions")
+    public List<InterviewQuestionDto> questionnaire(@PathVariable Long candidateId,
+                                                    @PathVariable Long interviewId) {
+        return service.questionnaireFor(candidateId, interviewId);
     }
 
     /** RH decides PASS / FAIL after reading the PVs (V132, RH_VALIDATE_INTERVIEW). */

@@ -54,6 +54,7 @@ class CandidateInterviewServiceTest {
     @Mock com.daf360.rh.service.InterviewAccess                       access;
     @Mock com.daf360.rh.notification.InterviewNotifier                notifier;
     @Mock com.daf360.rh.service.PaysTimezoneService                   paysTimezoneService;
+    @Mock com.daf360.rh.service.InterviewQuestionnaireService         questionnaire;
 
     @InjectMocks CandidateInterviewService service;
 
