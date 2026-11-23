@@ -555,7 +555,10 @@ public class CandidateService {
             // negotiation workflow. Once the offer is agreed the candidate is hired in all but
             // paperwork and lives in onboarding (IT provisioning included) — never here again.
             case "CANDIDATE_WORKFLOW"   -> CANDIDATE_WORKFLOW_STATUSES;
-            default                     -> List.of(CandidateStatus.values());
+            // « Pipeline RH » (/rh/recrutement): the whole lifecycle — in recruitment, in
+            // onboarding, hired, closed. Every status, newest first like the other stages.
+            case "LIFECYCLE"            -> List.of(CandidateStatus.values());
+            default                    -> List.of(CandidateStatus.values());
         };
     }
 

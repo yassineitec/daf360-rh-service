@@ -92,6 +92,8 @@ public class PipelineService {
             jo.asked_salary AS offer_asked_salary, jo.proposed_salary AS offer_salary,
             jo.expiry_date AS offer_expiry, jo.status AS offer_status,
             jo.notice_period_days AS offer_notice_period_days,
+            jo.proposed_by AS offer_proposed_by, jo.round_number AS offer_round,
+            iv.interviews_total, iv.interviews_filed, iv.interviews_validated,
             g.notice_period_days  AS grade_notice_period_days,
             -- Salary currency of the candidate's country: its DEVISE payroll parameter,
             -- else derived from the country ISO code (see currencyOf).
@@ -125,11 +127,20 @@ public class PipelineService {
              -- tiebreak, since nothing should ever leave two rounds unsuperseded.
              OUTER APPLY (
                  SELECT TOP 1 jo2.asked_salary, jo2.proposed_salary, jo2.expiry_date,
-                        jo2.status, jo2.notice_period_days
+                        jo2.status, jo2.notice_period_days, jo2.proposed_by, jo2.round_number
                  FROM [dbo].[job_offers] jo2
                  WHERE jo2.candidate_id = c.id AND jo2.superseded_at IS NULL
                  ORDER BY jo2.round_number DESC, jo2.id DESC
              ) jo
+             -- Interview progress for the card's « étape actuelle » (same rule as the rail on
+             -- the candidate page): live interviews, those with a PV in, those RH validated.
+             OUTER APPLY (
+                 SELECT COUNT(*) AS interviews_total,
+                        SUM(CASE WHEN ci2.status = 'DONE' THEN 1 ELSE 0 END)     AS interviews_filed,
+                        SUM(CASE WHEN ci2.result IS NOT NULL THEN 1 ELSE 0 END) AS interviews_validated
+                 FROM [dbo].[candidate_interviews] ci2
+                 WHERE ci2.candidate_id = c.id AND ci2.status <> 'CANCELLED'
+             ) iv
              LEFT JOIN [dbo].[grades] g ON g.id = c.applied_grade_id
              LEFT JOIN [dbo].[pays] p ON p.id = c.pays_id
              OUTER APPLY (
@@ -497,7 +508,12 @@ public class PipelineService {
                 toIntOrNull(r.get("grade_notice_period_days")),
                 toIsoLocal(r.get("next_interview_at")),
                 str(r, "next_interview_type"),
-                str(r, "next_interview_type_en")
+                str(r, "next_interview_type_en"),
+                (int) toLong(r.get("interviews_total")),
+                (int) toLong(r.get("interviews_filed")),
+                (int) toLong(r.get("interviews_validated")),
+                str(r, "offer_proposed_by"),
+                toIntOrNull(r.get("offer_round"))
         );
     }
 

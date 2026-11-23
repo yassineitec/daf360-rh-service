@@ -53,5 +53,19 @@ public record KanbanCandidateDto(
          */
         String nextInterviewAt,
         String nextInterviewType,
-        String nextInterviewTypeEn
+        String nextInterviewTypeEn,
+        /*
+         * Where the candidature stands in the recruitment steps (Entretiens → Validation RH →
+         * Offre) — the same facts the candidate page's rail reads, so a card and the rail never
+         * disagree. Interviews count without the CANCELLED ones.
+         */
+        int interviewsTotal,
+        /** Interviews with at least one PV filed (status DONE). */
+        int interviewsFiled,
+        /** Interviews RH has validated (result PASS/FAIL set). */
+        int interviewsValidated,
+        /** Who proposed the current offer round: RH | DAF | CANDIDATE; null before the first. */
+        String offerProposedBy,
+        /** Number of the current offer round; null before the first. */
+        Integer offerRound
 ) {}
