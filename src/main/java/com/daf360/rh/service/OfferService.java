@@ -6,11 +6,14 @@ import com.daf360.rh.domain.JobOffer;
 import com.daf360.rh.domain.enums.CandidateStatus;
 import com.daf360.rh.domain.enums.InterviewResult;
 import com.daf360.rh.domain.enums.OfferStatus;
+import com.daf360.rh.dto.email.CandidateEmailDtos.EmailPreviewDto;
+import com.daf360.rh.dto.hiring.CandidateCostApprovalDto;
 import com.daf360.rh.dto.offer.CreateOfferRequest;
 import com.daf360.rh.dto.offer.OfferResponse;
 import com.daf360.rh.dto.offer.RejectOfferRequest;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.notification.OfferNotifier;
 import com.daf360.rh.repository.CandidateInterviewRepository;
 import com.daf360.rh.repository.CandidateRepository;
 import com.daf360.rh.repository.JobOfferRepository;
@@ -57,10 +60,8 @@ public class OfferService {
     private final CandidateInterviewRepository interviewRepo;
     private final CandidateCostApprovalService costApprovalService;
     private final AuditService auditService;
-
-    /** Statuses of a round that is still live — one of these blocks drafting another. */
-    private static final List<OfferStatus> OPEN_STATUSES =
-            List.of(OfferStatus.DRAFT, OfferStatus.SENT);
+    private final OfferNotifier offerNotifier;
+    private final HiringHandoffService handoff;
 
     /** The candidate's current round, whatever its state. 404 when none was ever drafted. */
     @Transactional(readOnly = true)
@@ -98,22 +99,46 @@ public class OfferService {
             throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
                     "Le salaire proposé est obligatoire — c'est le montant soumis à la validation budgétaire.");
         }
-        if (offerRepo.existsByCandidateIdAndStatusIn(candidateId, OPEN_STATUSES)) {
-            throw new AppException(ErrorCode.OFFER_ALREADY_EXISTS,
-                    "Une offre est déjà en cours pour ce candidat — elle doit être décidée "
-                  + "ou renégociée avant d'en créer une autre.");
-        }
-
         JobOffer previous = offerRepo
                 .findFirstByCandidateIdAndSupersededAtIsNullOrderByRoundNumberDesc(candidateId)
                 .orElse(null);
 
+        // The candidate's counter (V133) answers an offer they HAVE: one that is with them.
+        boolean candidateCounter = Boolean.TRUE.equals(req.getCandidateCounter());
+        if (candidateCounter && (previous == null
+                || (previous.getStatus() != OfferStatus.SENT && previous.getStatus() != OfferStatus.EXPIRED))) {
+            throw new AppException(ErrorCode.OFFER_STATUS_INVALID,
+                    "Une contre-proposition du candidat répond à une offre qui lui a été envoyée.");
+        }
+
+        /*
+         * A renegotiation REPLACES the live round — so the live round being DRAFT or SENT is
+         * the normal case, not a conflict. The old guard refused any draft while a DRAFT/SENT
+         * round existed, which made « Réviser » (after a finance refusal) and « Renégocier »
+         * (offer with the candidate) fail every time: there is always such a round then.
+         *
+         *   no round        → first offer: candidate ACCEPTED + interviews passed
+         *   DRAFT           → revision (finance refused, or RH corrects before the answer):
+         *                     candidate ACCEPTED (first round) or OFFER_SENT (later round)
+         *   SENT / EXPIRED  → counter-proposal while the offer is with the candidate: OFFER_SENT
+         *   ACCEPTED / REJECTED → decided, the negotiation is over
+         */
         if (previous == null) {
             if (candidate.getStatus() != CandidateStatus.ACCEPTED) {
                 throw new AppException(ErrorCode.CANDIDATE_STATUS_INVALID,
                         "Une offre ne peut être préparée que pour un candidat au statut ACCEPTED.");
             }
             requireApprovedInterviews(candidateId);
+        } else if (previous.getStatus() == OfferStatus.ACCEPTED || previous.getStatus() == OfferStatus.REJECTED) {
+            throw new AppException(ErrorCode.OFFER_STATUS_INVALID,
+                    "L'offre a déjà été " + (previous.getStatus() == OfferStatus.ACCEPTED ? "acceptée" : "refusée")
+                  + " par le candidat : la négociation est close.");
+        } else if (previous.getStatus() == OfferStatus.DRAFT) {
+            if (candidate.getStatus() != CandidateStatus.ACCEPTED
+                    && candidate.getStatus() != CandidateStatus.OFFER_SENT) {
+                throw new AppException(ErrorCode.CANDIDATE_STATUS_INVALID,
+                        "La candidature n'est plus à l'étape de l'offre.");
+            }
         } else if (candidate.getStatus() != CandidateStatus.OFFER_SENT) {
             throw new AppException(ErrorCode.CANDIDATE_STATUS_INVALID,
                     "Le candidat n'est pas au statut OFFER_SENT : la candidature est close.");
@@ -136,8 +161,10 @@ public class OfferService {
                 .candidateId(candidateId)
                 .roundNumber(roundNumber)
                 .supersedesOfferId(previous != null ? previous.getId() : null)
-                .askedSalary(req.getAskedSalary())
+                // A candidate's counter carries THEIR figure: what they ask is what is proposed.
+                .askedSalary(candidateCounter ? req.getProposedSalary() : req.getAskedSalary())
                 .proposedSalary(req.getProposedSalary())
+                .proposedBy(candidateCounter ? JobOffer.PROPOSED_BY_CANDIDATE : JobOffer.PROPOSED_BY_RH)
                 .salaryNote(req.getSalaryNote())
                 .noticePeriodDays(noticeDays)
                 .noticePeriodNote(req.getNoticePeriodNote())
@@ -154,6 +181,11 @@ public class OfferService {
             previous.setSupersededAt(now);
             previous.setUpdatedAt(now);
             offerRepo.save(previous);
+            // A DRAFT replaced before finance answered: its request leaves the queue, or
+            // finance would be asked to decide on a figure nobody is offering any more.
+            if (previous.getStatus() == OfferStatus.DRAFT) {
+                costApprovalService.withdrawPendingForOffer(previous.getId());
+            }
         }
 
         // Same transaction: a DRAFT round with no pending decision would be invisible to
@@ -167,6 +199,7 @@ public class OfferService {
                         ? "round=" + previous.getRoundNumber() + "; proposedSalary=" + previous.getProposedSalary()
                         : null,
                 "round=" + roundNumber + "; proposedSalary=" + round.getProposedSalary()
+                        + "; proposedBy=" + round.getProposedBy()
                         + "; noticePeriodDays=" + noticeDays + "; status=DRAFT");
 
         return OfferResponse.from(round);
@@ -180,17 +213,31 @@ public class OfferService {
      * new round, which goes back through the queue.
      */
     public OfferResponse sendOffer(Long candidateId, Long actorUserId) {
+        return sendOffer(candidateId, actorUserId, null, null);
+    }
+
+    /**
+     * The email RH is about to send for the current round (V134) — the entity's template,
+     * rendered. Same gates as the send itself, so the preview never shows an email that
+     * could not go.
+     */
+    @Transactional(readOnly = true)
+    public EmailPreviewDto previewOfferEmail(Long candidateId) {
         Candidate candidate = findCandidateOrThrow(candidateId);
         JobOffer round = findCurrentOrThrow(candidateId);
+        assertSendable(candidate, round);
+        return offerNotifier.preview(candidate, round,
+                OfferNotifier.currencyOf(costApprovalService.snapshotForOffer(round.getId())));
+    }
 
-        if (round.getStatus() != OfferStatus.DRAFT) {
-            throw new AppException(ErrorCode.OFFER_STATUS_INVALID,
-                    "Seule une offre au statut DRAFT peut être envoyée au candidat.");
-        }
-        if (!costApprovalService.isOfferApproved(round.getId())) {
-            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
-                    "Cette offre n'a pas encore été validée par le contrôle budgétaire.");
-        }
+    /**
+     * Sends the approved round, with RH's edited subject and body when given (V134) — the
+     * modal shows the rendered template and RH may change it for this one send.
+     */
+    public OfferResponse sendOffer(Long candidateId, Long actorUserId, String emailSubject, String emailBody) {
+        Candidate candidate = findCandidateOrThrow(candidateId);
+        JobOffer round = findCurrentOrThrow(candidateId);
+        assertSendable(candidate, round);
 
         OffsetDateTime now = OffsetDateTime.now();
         round.setStatus(OfferStatus.SENT);
@@ -209,10 +256,162 @@ public class OfferService {
                 "status=OFFER_SENT; round=" + round.getRoundNumber()
                         + "; proposedSalary=" + round.getProposedSalary());
 
+        offerNotifier.offerToCandidate(candidate, round,
+                OfferNotifier.currencyOf(costApprovalService.snapshotForOffer(round.getId())),
+                emailSubject, emailBody);
+
         return OfferResponse.from(round);
     }
 
-    /** Candidate accepts the offer → offer ACCEPTED, candidate enters IT provisioning. */
+    /**
+     * An approved DRAFT round — RH's or the DAF's own — to a candidate who can receive it.
+     * No address, no send: the offer would be marked « envoyée » while nobody received it.
+     */
+    private void assertSendable(Candidate candidate, JobOffer round) {
+        if (round.getStatus() != OfferStatus.DRAFT) {
+            throw new AppException(ErrorCode.OFFER_STATUS_INVALID,
+                    "Seule une offre au statut DRAFT peut être envoyée au candidat.");
+        }
+        if (!costApprovalService.isOfferApproved(round.getId())) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Cette offre n'a pas encore été validée par le contrôle budgétaire.");
+        }
+        if (candidate.getEmailPersonal() == null || candidate.getEmailPersonal().isBlank()) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Le candidat n'a pas d'email personnel : renseignez-le dans l'onglet Profil avant d'envoyer l'offre.");
+        }
+    }
+
+    // ── The DAF's decision (finance approval queue) ──────────────────────────
+
+    /**
+     * The DAF decides on a request of its queue. The negotiation goes both ways (V133):
+     *
+     * <pre>
+     *   approve an RH round          → RH sends it (unchanged)
+     *   approve a CANDIDATE round    → both parties agree on the figure: offer ACCEPTED,
+     *                                  the offer step is over
+     *   refuse, no figure            → RH revises (unchanged)
+     *   refuse WITH a figure         → that figure is the DAF's own offer: a new round, already
+     *                                  approved (DRAFT); RH sends it — previewing and possibly
+     *                                  editing the email (V134) — and the candidate accepts,
+     *                                  refuses or counters
+     * </pre>
+     *
+     * A request that gates no round (a legacy pre-validation) is decided as before.
+     */
+    public CandidateCostApprovalDto decideByFinance(Long approvalId, boolean approve, String notes,
+                                                   java.math.BigDecimal contreProp, String contrePropSnapshot,
+                                                   Long actorUserId) {
+        CandidateCostApprovalDto decision = approve
+                ? costApprovalService.approve(approvalId, notes, actorUserId)
+                : costApprovalService.reject(approvalId, notes, contreProp, actorUserId);
+        applyDecisionToRound(decision, approve, notes, contreProp, contrePropSnapshot, actorUserId);
+        return decision;
+    }
+
+    private void applyDecisionToRound(CandidateCostApprovalDto decision, boolean approve, String notes,
+                                      java.math.BigDecimal contreProp, String contrePropSnapshot,
+                                      Long actorUserId) {
+        if (decision.getJobOfferId() == null) return;
+
+        JobOffer round = offerRepo.findById(decision.getJobOfferId()).orElse(null);
+        // Only the live DRAFT round moves; a superseded one keeps its decision as history.
+        if (round == null || round.getSupersededAt() != null || round.getStatus() != OfferStatus.DRAFT) return;
+        Candidate candidate = findCandidateOrThrow(round.getCandidateId());
+        String currency = OfferNotifier.currencyOf(decision.getSimulationSnapshot());
+
+        if (approve) {
+            if (JobOffer.PROPOSED_BY_CANDIDATE.equals(round.getProposedBy())) {
+                concludeAgreement(round, candidate, actorUserId);
+                offerNotifier.agreed(round.getCreatedBy(), candidate, round, currency);
+            } else {
+                offerNotifier.approvedToSend(round.getCreatedBy(), candidate, round);
+            }
+            return;
+        }
+        if (contreProp == null) {
+            offerNotifier.refused(round.getCreatedBy(), candidate, round, notes);
+            return;
+        }
+        if (contrePropSnapshot == null || contrePropSnapshot.isBlank()) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "La contre-proposition doit être chiffrée : lancez la simulation dans la fenêtre de décision.");
+        }
+        JobOffer counter = recordFinanceCounter(round, candidate, contreProp, contrePropSnapshot,
+                decision.getFiscalYear(), notes, actorUserId);
+        String counterCurrency = OfferNotifier.currencyOf(contrePropSnapshot);
+        offerNotifier.financeCounterReady(round.getCreatedBy(), candidate, counter,
+                counterCurrency != null ? counterCurrency : currency);
+    }
+
+    /**
+     * The DAF's figure becomes the next round — approved by its author, DRAFT until RH sends
+     * it. The candidate's status does not move: nothing has reached them yet.
+     */
+    private JobOffer recordFinanceCounter(JobOffer refused, Candidate candidate, java.math.BigDecimal salary,
+                                          String snapshot, Integer fiscalYear, String notes, Long actorUserId) {
+        OffsetDateTime now = OffsetDateTime.now();
+        Integer maxRound = offerRepo.findMaxRoundNumber(candidate.getId());
+        JobOffer counter = JobOffer.builder()
+                .candidateId(candidate.getId())
+                .roundNumber(maxRound != null ? maxRound + 1 : refused.getRoundNumber() + 1)
+                .supersedesOfferId(refused.getId())
+                .askedSalary(refused.getAskedSalary())
+                .proposedSalary(salary)
+                .proposedBy(JobOffer.PROPOSED_BY_DAF)
+                .salaryNote(refused.getSalaryNote())
+                .noticePeriodDays(refused.getNoticePeriodDays())
+                .noticePeriodNote(refused.getNoticePeriodNote())
+                .expectedHireDate(refused.getExpectedHireDate())
+                .expiryDate(refused.getExpiryDate())
+                .status(OfferStatus.DRAFT)
+                .createdBy(actorUserId)
+                .createdAt(now)
+                .updatedAt(now)
+                .build();
+        counter = offerRepo.save(counter);
+
+        refused.setSupersededAt(now);
+        refused.setUpdatedAt(now);
+        offerRepo.save(refused);
+
+        costApprovalService.recordFinanceCounter(counter, candidate, snapshot, fiscalYear, notes, actorUserId);
+
+        auditService.log(actorUserId != null ? actorUserId.toString() : "SYSTEM",
+                "FINANCE_COUNTER_OFFER", "CANDIDATE", candidate.getId(),
+                "round=" + refused.getRoundNumber() + "; proposedSalary=" + refused.getProposedSalary(),
+                "round=" + counter.getRoundNumber() + "; proposedSalary=" + salary
+                        + "; proposedBy=DAF; status=DRAFT (approved, to send)");
+        return counter;
+    }
+
+    /**
+     * The DAF approved the candidate's own figure: both parties agree. The round is closed
+     * ACCEPTED and the candidature leaves the offer step — exactly as when the candidate
+     * accepts an offer that was sent to them.
+     */
+    private void concludeAgreement(JobOffer round, Candidate candidate, Long actorUserId) {
+        OffsetDateTime now = OffsetDateTime.now();
+        round.setStatus(OfferStatus.ACCEPTED);
+        round.setDecidedAt(now);
+        round.setUpdatedAt(now);
+        offerRepo.save(round);
+
+        CandidateStatus before = candidate.getStatus();
+        // Out of the candidate workflow: onboarding and IT provisioning open together.
+        handoff.startOnboardingAndIt(candidate);
+
+        auditService.log(actorUserId != null ? actorUserId.toString() : "SYSTEM",
+                "OFFER_AGREED", "CANDIDATE", candidate.getId(),
+                "status=" + before, "status=HR_IN_PROGRESS (onboarding + IT); round=" + round.getRoundNumber()
+                        + "; proposedSalary=" + round.getProposedSalary() + "; proposedBy=CANDIDATE");
+    }
+
+    /**
+     * Candidate accepts the offer → offer ACCEPTED; the candidature leaves the candidate
+     * workflow and onboarding + IT provisioning start in parallel.
+     */
     public OfferResponse acceptOffer(Long candidateId, Long actorUserId) {
         JobOffer offer = findCurrentOrThrow(candidateId);
         Candidate candidate = findCandidateOrThrow(candidateId);
@@ -224,15 +423,12 @@ public class OfferService {
         offer.setUpdatedAt(now);
         offerRepo.save(offer);
 
-        // Offer accepted → begin IT provisioning (the ItProvisioning task already
-        // exists from acceptCandidate; here we only advance the candidate status).
-        candidate.setStatus(CandidateStatus.IT_IN_PROGRESS);
-        candidate.setUpdatedAt(now);
-        candidateRepo.save(candidate);
+        // Both parties agree: onboarding and IT provisioning open together.
+        handoff.startOnboardingAndIt(candidate);
 
         auditService.log(actorUserId != null ? actorUserId.toString() : "SYSTEM",
                 "ACCEPT_OFFER", "CANDIDATE", candidateId,
-                "status=OFFER_SENT", "status=IT_IN_PROGRESS");
+                "status=OFFER_SENT", "status=HR_IN_PROGRESS (onboarding + IT)");
 
         return OfferResponse.from(offer);
     }

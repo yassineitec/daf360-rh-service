@@ -48,6 +48,17 @@ public class RecruitmentDemandController {
         return service.listMine(actorId(auth), statut, pageable);
     }
 
+    /**
+     * « Bibliothèque des postes » (self-service): past approved / closed positions of the entity,
+     * one per post, with the values to raise the same demand again. Same gate as creating one,
+     * since that is all it is for.
+     */
+    @GetMapping("/library")
+    @PreAuthorize("hasPermission(null, 'RH_CREATE_RECRUITMENT_DEMAND')")
+    public List<JobLibraryEntry> library(@RequestParam Long paysId) {
+        return service.library(paysId);
+    }
+
     @GetMapping("/options")
     public List<ApprovedDemandOption> approvedOptions(@RequestParam Long paysId) {
         return service.getApprovedOptions(paysId);

@@ -68,6 +68,44 @@ public class CandidateCostApprovalService {
     }
 
     /**
+     * The decision record of a round the DAF proposed itself (V133): its counter-proposal,
+     * costed in the decision modal. It is the DAF's own figure, so it is recorded APPROVED by
+     * the same person at the same instant — never queued for a decision nobody else makes.
+     */
+    public CandidateCostApprovalDto recordFinanceCounter(JobOffer offer, Candidate candidate,
+                                                         String simulationSnapshot, Integer fiscalYear,
+                                                         String notes, Long financeUserId) {
+        OffsetDateTime now = OffsetDateTime.now();
+        CandidateCostApproval approval = CandidateCostApproval.builder()
+                .candidateId(candidate.getId())
+                .jobOfferId(offer.getId())
+                .paysId(candidate.getPaysId())
+                .fiscalYear(fiscalYear != null ? fiscalYear : java.time.Year.now().getValue())
+                .salaireNetRh(offer.getProposedSalary())
+                .salaireNetCandidat(candidate.getSalaireNetCandidat())
+                .proposedSalary(offer.getProposedSalary())
+                .contractTypeId(storedContractType(candidate, null, candidate.getPaysId()))
+                .simulationSnapshot(simulationSnapshot)
+                .status("APPROVED")
+                .submittedBy(financeUserId)
+                .submittedAt(now)
+                .approvedBy(financeUserId)
+                .approvedAt(now)
+                .approvalNotes(notes)
+                .build();
+        return toDto(approvalRepo.save(approval), candidate);
+    }
+
+    /** The costing stored with a round — the latest decision record's snapshot, or null. */
+    @Transactional(readOnly = true)
+    public String snapshotForOffer(Long jobOfferId) {
+        return approvalRepo.findByJobOfferIdOrderBySubmittedAtDesc(jobOfferId).stream()
+                .map(CandidateCostApproval::getSimulationSnapshot)
+                .filter(s -> s != null && !s.isBlank())
+                .findFirst().orElse(null);
+    }
+
+    /**
      * Has finance approved this exact round? The gate {@link OfferService#sendOffer} enforces.
      *
      * <p>Per round, deliberately: an approval belongs to the figure it reviewed, so revising
@@ -77,6 +115,17 @@ public class CandidateCostApprovalService {
     @Transactional(readOnly = true)
     public boolean isOfferApproved(Long jobOfferId) {
         return approvalRepo.existsByJobOfferIdAndStatus(jobOfferId, "APPROVED");
+    }
+
+    /**
+     * A DRAFT round was replaced by a new one before finance decided on it: its PENDING
+     * request is removed from the queue (it never got a decision, so no history is lost).
+     * Decided requests (APPROVED / REJECTED) stay as the record of that round.
+     */
+    public void withdrawPendingForOffer(Long jobOfferId) {
+        approvalRepo.findByJobOfferIdOrderBySubmittedAtDesc(jobOfferId).stream()
+                .filter(a -> "PENDING".equals(a.getStatus()))
+                .forEach(approvalRepo::delete);
     }
 
     /**
@@ -192,8 +241,10 @@ public class CandidateCostApprovalService {
      * round REJECTED here would overload a status that means "the candidate declined", which
      * is a different event with different consequences for the candidature.
      *
-     * <p>RH's way forward is a new round: drafting one supersedes this one and goes back
-     * through the queue. The counter-proposal below is what that round starts from.
+     * <p>Without a figure, RH's way forward is a new round: drafting one supersedes this one
+     * and goes back through the queue. WITH a figure on an offer round, the caller
+     * ({@link OfferService#decideByFinance}) turns it into the DAF's own round, sent straight
+     * to the candidate (V133).
      */
     public CandidateCostApprovalDto reject(Long id, String notes, BigDecimal contrePropSalaire, Long approvedBy) {
         CandidateCostApproval approval = findPending(id);

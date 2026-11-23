@@ -57,4 +57,8 @@ public class CandidateResponse {
 
     private BigDecimal salaireNetCandidat;
     private BigDecimal salaireNetRh;
+
+
+    /** V132 — true when the caller reads this record as an interviewer only (reduced record). */
+    private boolean interviewerView;
 }

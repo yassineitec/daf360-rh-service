@@ -1,16 +1,16 @@
 package com.daf360.rh.candidate;
 
 import com.daf360.rh.domain.Candidate;
-import com.daf360.rh.domain.ItProvisioning;
+import com.daf360.rh.domain.CandidateInterview;
 import com.daf360.rh.domain.enums.CandidateStatus;
-import com.daf360.rh.domain.enums.ItProvisioningStatus;
+import com.daf360.rh.domain.enums.InterviewResult;
+import com.daf360.rh.domain.enums.InterviewStatus;
 import com.daf360.rh.dto.candidate.*;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
 import com.daf360.rh.mapper.CandidateMapper;
-import com.daf360.rh.notification.NotificationEntityType;
 import com.daf360.rh.notification.NotificationRoutingService;
-import com.daf360.rh.notification.RoutingContext;
+import com.daf360.rh.repository.CandidateInterviewRepository;
 import com.daf360.rh.repository.CandidateRepository;
 import com.daf360.rh.repository.ItProvisioningRepository;
 import com.daf360.rh.service.AuditService;
@@ -18,7 +18,6 @@ import com.daf360.rh.service.CandidateService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -41,6 +40,7 @@ class CandidateServiceTest {
     @Mock AuditService             auditService;
     @Mock JdbcTemplate             jdbc;
     @Mock NotificationRoutingService notificationRoutingService;
+    @Mock CandidateInterviewRepository interviewRepo;
 
     @InjectMocks CandidateService service;
 
@@ -123,12 +123,23 @@ class CandidateServiceTest {
 
     // ── acceptCandidate ───────────────────────────────────────────────────────
 
+    /** One held interview, validated PASS — what the acceptance gate requires. */
+    private void stubPassedInterview(Long candidateId) {
+        when(interviewRepo.findByCandidateIdOrderBySequenceNumber(candidateId)).thenReturn(List.of(
+                CandidateInterview.builder()
+                        .candidateId(candidateId)
+                        .status(InterviewStatus.DONE)
+                        .result(InterviewResult.PASS)
+                        .build()));
+    }
+
     @Test
-    void acceptCandidate_pendingCandidate_createsProvisioningAndNotifies() {
+    void acceptCandidate_validated_opensNoItFileYet() {
         Candidate candidate = pendingCandidate(10L);
         when(candidateRepo.findById(10L)).thenReturn(Optional.of(candidate));
         when(candidateRepo.save(candidate)).thenReturn(candidate);
         when(mapper.toResponse(candidate)).thenReturn(stubResponse(candidate));
+        stubPassedInterview(10L);
 
         service.acceptCandidate(10L, ACTOR_ID);
 
@@ -136,11 +147,10 @@ class CandidateServiceTest {
         assertThat(candidate.getAcceptedBy()).isEqualTo(ACTOR_ID);
         assertThat(candidate.getAcceptedAt()).isNotNull();
 
-        // IT provisioning row created
-        ArgumentCaptor<ItProvisioning> provCaptor = ArgumentCaptor.forClass(ItProvisioning.class);
-        verify(itProvRepo).save(provCaptor.capture());
-        assertThat(provCaptor.getValue().getCandidateId()).isEqualTo(10L);
-        assertThat(provCaptor.getValue().getStatus()).isEqualTo(ItProvisioningStatus.PENDING);
+        // The candidature only moves on to the offer: IT and HR are told once the salary is
+        // agreed (HiringHandoffService), not here.
+        verify(itProvRepo, never()).save(any());
+        verify(notificationRoutingService, never()).resolveAndDispatch(any());
 
         verify(auditService).log(eq(ACTOR_ID.toString()), eq("ACCEPT"), eq("CANDIDATE"),
                 eq(10L), anyString(), anyString());
@@ -209,29 +219,5 @@ class CandidateServiceTest {
                         .isEqualTo(ErrorCode.CANDIDATE_STATUS_INVALID));
 
         verify(candidateRepo, never()).save(any());
-    }
-
-    @Test
-    void acceptCandidate_notifiesSpecificUsers() {
-        Candidate candidate = pendingCandidate(10L);
-        when(candidateRepo.findById(10L)).thenReturn(Optional.of(candidate));
-        when(candidateRepo.save(candidate)).thenReturn(candidate);
-        when(mapper.toResponse(candidate)).thenReturn(stubResponse(candidate));
-
-        service.acceptCandidate(10L, ACTOR_ID);
-
-        // Recipients are no longer resolved here: they are configured per role in the
-        // notification_routing_recipients table and resolved by NotificationRoutingService.
-        // What this service still owns is raising the right EVENT for the right candidate.
-        ArgumentCaptor<RoutingContext> ctxCaptor = ArgumentCaptor.forClass(RoutingContext.class);
-        verify(notificationRoutingService).resolveAndDispatch(ctxCaptor.capture());
-
-        RoutingContext ctx = ctxCaptor.getValue();
-        assertThat(ctx.getEventCode()).isEqualTo("CANDIDATE_ACCEPTED");
-        assertThat(ctx.getPaysId()).isEqualTo(PAYS_ID);
-        // Deep link: the notification points back at the candidate it is about.
-        assertThat(ctx.getEntityType()).isEqualTo(NotificationEntityType.CANDIDATE);
-        assertThat(ctx.getEntityId()).isEqualTo(10L);
-        assertThat(ctx.getTemplateVars()).containsEntry("candidateName", "Alice Martin");
     }
 }

@@ -61,4 +61,12 @@ public class CreateOfferRequest {
 
     /** Budget year the cost lands in. Absent → the current year. */
     private Integer fiscalYear;
+
+    /**
+     * True when RH records the CANDIDATE's counter-proposal (V133): the round carries the
+     * candidate's figure ({@code proposedSalary}) and goes to the DAF — whose approval then
+     * closes the negotiation, both parties agreeing. Only allowed while an offer is with the
+     * candidate. Absent / false = an RH round, as before.
+     */
+    private Boolean candidateCounter;
 }

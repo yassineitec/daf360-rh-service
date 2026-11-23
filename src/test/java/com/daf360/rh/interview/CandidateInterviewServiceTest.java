@@ -49,6 +49,12 @@ class CandidateInterviewServiceTest {
     @Mock TenantService                tenantService;
     @Mock JdbcTemplate                 jdbcTemplate;
     @Mock com.daf360.rh.service.calendar.GraphCalendarService graphCalendarService;
+    // V132
+    @Mock com.daf360.rh.repository.CandidateInterviewReportRepository reportRepo;
+    @Mock com.daf360.rh.service.InterviewAccess                       access;
+    @Mock com.daf360.rh.notification.InterviewNotifier                notifier;
+    @Mock com.daf360.rh.service.PaysTimezoneService                   paysTimezoneService;
+    @Mock com.daf360.rh.service.InterviewQuestionnaireService         questionnaire;
 
     @InjectMocks CandidateInterviewService service;
 
@@ -109,6 +115,7 @@ class CandidateInterviewServiceTest {
         when(interviewRepo.findByCandidateIdOrderBySequenceNumber(CANDIDATE_ID))
                 .thenReturn(List.of(plannedInterview()));
         when(typeRepo.findAllById(any())).thenReturn(List.of(activeType(PAYS_ID)));
+        when(access.canListInterviews(CANDIDATE_ID)).thenReturn(true);
 
         List<CandidateInterviewDto> result = service.listByCandidate(CANDIDATE_ID);
 
@@ -200,7 +207,7 @@ class CandidateInterviewServiceTest {
     // ── update ────────────────────────────────────────────────────────────────
 
     @Test
-    void update_setResultWhenStatusDone_succeeds() {
+    void update_setResultFromTheForm_isRejected_sinceV132() {
         CandidateInterview interview = CandidateInterview.builder()
                 .id(100L).candidateId(CANDIDATE_ID).interviewTypeId(TYPE_ID)
                 .scheduledAt(OffsetDateTime.now().minusDays(1))
@@ -209,15 +216,14 @@ class CandidateInterviewServiceTest {
         when(interviewRepo.findById(100L)).thenReturn(Optional.of(interview));
         when(tenantService.getEffectivePaysId()).thenReturn(PAYS_ID);
         when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(PAYS_ID)));
-        when(interviewRepo.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(typeRepo.findById(TYPE_ID)).thenReturn(Optional.of(activeType(PAYS_ID)));
 
-        // Setting status=DONE and result=PASS in same request
+        // The result is now RH's validation of the PVs, never a form field.
         UpdateInterviewRequest req = new UpdateInterviewRequest(null, null, null, null, null, "DONE", "PASS");
-        CandidateInterviewDto result = service.update(100L, req, ACTOR_ID);
+        BusinessRuleException ex = assertThrows(BusinessRuleException.class,
+                () -> service.update(100L, req, ACTOR_ID));
 
-        assertEquals("DONE", result.status());
-        assertEquals("PASS", result.result());
+        assertTrue(ex.getMessage().contains("validation RH"));
+        verify(interviewRepo, never()).save(any());
     }
 
     @Test
@@ -231,12 +237,12 @@ class CandidateInterviewServiceTest {
         when(tenantService.getEffectivePaysId()).thenReturn(PAYS_ID);
         when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(PAYS_ID)));
 
-        // result given but status stays PLANNED
-        UpdateInterviewRequest req = new UpdateInterviewRequest(null, null, null, null, null, null, "PASS");
+        // status=DONE alone is refused too: an interview turns DONE when a PV is filed.
+        UpdateInterviewRequest req = new UpdateInterviewRequest(null, null, null, null, null, "DONE", null);
         BusinessRuleException ex = assertThrows(BusinessRuleException.class,
                 () -> service.update(100L, req, ACTOR_ID));
 
-        assertTrue(ex.getMessage().contains("DONE"));
+        assertTrue(ex.getMessage().contains("PV"));
     }
 
     @Test
@@ -474,22 +480,57 @@ class CandidateInterviewServiceTest {
         assertNull(interview.getGraphEventId());
     }
 
+    // ── PV & validation (V132) ────────────────────────────────────────────────
+
     @Test
-    void update_toDone_neverTouchesCalendarService() {
+    void submitReport_byNonPanelMember_isDenied() {
         CandidateInterview interview = plannedInterview();
         interview.setInterviewerUserId(4L);
-        interview.setGraphEventId("evt-1");
-        interview.setGraphOrganizerEmail("lead@arx.ing");
+        interview.setScheduledAt(OffsetDateTime.now().minusHours(2));
         when(interviewRepo.findById(100L)).thenReturn(Optional.of(interview));
         when(tenantService.getEffectivePaysId()).thenReturn(PAYS_ID);
         when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(PAYS_ID)));
-        when(interviewRepo.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        UpdateInterviewRequest req = new UpdateInterviewRequest(
-                null, null, null, null, null, "DONE", "PASS");
-        service.update(100L, req, ACTOR_ID);
+        var req = new com.daf360.rh.dto.interview.SubmitInterviewReportRequest(
+                "Bon échange, solides bases techniques.", "FAVORABLE");
+        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                () -> service.submitReport(100L, req, 99L));
+        verify(reportRepo, never()).save(any());
+    }
 
-        verifyNoInteractions(graphCalendarService);
+    @Test
+    void submitReport_firstPv_turnsInterviewDone() {
+        CandidateInterview interview = plannedInterview();
+        interview.setInterviewerUserId(4L);
+        interview.setScheduledAt(OffsetDateTime.now().minusHours(2));
+        when(interviewRepo.findById(100L)).thenReturn(Optional.of(interview));
+        when(tenantService.getEffectivePaysId()).thenReturn(PAYS_ID);
+        when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(PAYS_ID)));
+        when(reportRepo.findByInterviewIdAndAuthorUserId(100L, 4L)).thenReturn(Optional.empty());
+        when(typeRepo.findById(TYPE_ID)).thenReturn(Optional.of(activeType(PAYS_ID)));
+        when(typeRepo.findAllById(any())).thenReturn(List.of(activeType(PAYS_ID)));
+
+        var req = new com.daf360.rh.dto.interview.SubmitInterviewReportRequest(
+                "Bon échange, solides bases techniques.", "FAVORABLE");
+        service.submitReport(100L, req, 4L);
+
+        assertEquals(InterviewStatus.DONE, interview.getStatus());
+        assertNull(interview.getResult(), "the result stays RH's decision");
+        verify(reportRepo).save(any());
+    }
+
+    @Test
+    void validate_failWithoutComment_isRejected() {
+        CandidateInterview done = plannedInterview();
+        done.setStatus(InterviewStatus.DONE);
+        when(interviewRepo.findById(100L)).thenReturn(Optional.of(done));
+        when(tenantService.getEffectivePaysId()).thenReturn(PAYS_ID);
+        when(candidateRepo.findById(CANDIDATE_ID)).thenReturn(Optional.of(candidate(PAYS_ID)));
+        when(reportRepo.countByInterviewId(100L)).thenReturn(1L);
+
+        var req = new com.daf360.rh.dto.interview.ValidateInterviewRequest("FAIL", " ");
+        assertThrows(BusinessRuleException.class, () -> service.validate(100L, req, ACTOR_ID));
+        assertNull(done.getResult());
     }
 
     @Test

@@ -6,7 +6,7 @@ import com.daf360.rh.domain.EmployeeProfile;
 import com.daf360.rh.domain.ItProvisioning;
 import com.daf360.rh.domain.RecruitmentDemand;
 import com.daf360.rh.domain.enums.CandidateStatus;
-import com.daf360.rh.domain.enums.ItProvisioningStatus;
+import com.daf360.rh.domain.enums.InterviewResult;
 import com.daf360.rh.domain.enums.LifecycleStatus;
 import com.daf360.rh.domain.enums.RecruitmentDemandStatus;
 import com.daf360.rh.dto.candidate.*;
@@ -37,7 +37,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import com.daf360.rh.notification.RoutingContext;
 
 import com.daf360.rh.dto.candidate.CandidateHistoryItem;
 
@@ -54,7 +53,9 @@ import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 
 @Slf4j
 @Service
@@ -79,7 +80,6 @@ public class CandidateService {
     private final AuditService               auditService;
     private final AppProperties              appProperties;
     private final JdbcTemplate               jdbc;
-    private final com.daf360.rh.notification.NotificationRoutingService notificationRoutingService;
     private final EmployeeLifecycleService   lifecycleService;
     private final ContractTypeBridge         contractTypeBridge;
     private final com.daf360.rh.lists.ContractTypeRefs contractTypeRefs;
@@ -97,6 +97,8 @@ public class CandidateService {
     private final ItAssetAssignmentService        assetAssignmentService;
     /** Entity timezone — reads the recruitment list's date filter as local calendar days. */
     private final PaysTimezoneService             paysTimezoneService;
+    /** V132: who may read the record (interviewers without RH codes included). */
+    private final InterviewAccess                 interviewAccess;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -171,35 +173,38 @@ public class CandidateService {
                     "Seuls les candidats PENDING peuvent être acceptés");
         }
 
+        // Step gate: the candidature only moves on once the interview step is done — at
+        // least one PASS and no FAIL, the same rule the offer applies. Accepting also opens
+        // the IT provisioning task, so letting it through earlier would start IT work for
+        // a candidate who has not been interviewed.
+        List<CandidateInterview> interviews = interviewRepo.findByCandidateIdOrderBySequenceNumber(id);
+        boolean anyPass = interviews.stream().anyMatch(i -> i.getResult() == InterviewResult.PASS);
+        boolean anyFail = interviews.stream().anyMatch(i -> i.getResult() == InterviewResult.FAIL);
+        if (!anyPass || anyFail) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "La candidature ne peut être validée qu'après au moins un entretien réussi et aucun échec.");
+        }
+        // V132: and nothing left open — an interview still planned, or held but whose PVs RH
+        // has not validated, could still turn into a FAIL.
+        boolean open = interviews.stream().anyMatch(i ->
+                i.getStatus() == com.daf360.rh.domain.enums.InterviewStatus.PLANNED
+                || (i.getStatus() == com.daf360.rh.domain.enums.InterviewStatus.DONE && i.getResult() == null));
+        if (open) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Des entretiens sont encore planifiés ou attendent la validation de leur PV : "
+                    + "terminez-les ou annulez-les avant de valider la candidature.");
+        }
+
         candidate.setStatus(CandidateStatus.ACCEPTED);
         candidate.setAcceptedBy(actorUserId);
         candidate.setAcceptedAt(OffsetDateTime.now());
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidate = candidateRepo.save(candidate);
 
-        // Create IT provisioning task
-        ItProvisioning prov = ItProvisioning.builder()
-                .candidateId(candidate.getId())
-                .status(ItProvisioningStatus.PENDING)
-                .createdAt(OffsetDateTime.now())
-                .updatedAt(OffsetDateTime.now())
-                .build();
-        itProvRepo.save(prov);
-
-        // Notify IT and HR via routing rules (CANDIDATE_ACCEPTED event)
-        notificationRoutingService.resolveAndDispatch(
-                RoutingContext.builder()
-                        .eventCode("CANDIDATE_ACCEPTED")
-                        .paysId(candidate.getPaysId())
-                        .entityType(com.daf360.rh.notification.NotificationEntityType.CANDIDATE)
-                        .entityId(candidate.getId())
-                        .templateVars(Map.of(
-                                "candidateName", candidate.getFirstName() + " " + candidate.getLastName(),
-                                "firstName",     candidate.getFirstName(),
-                                "lastName",      candidate.getLastName()
-                        ))
-                        .build()
-        );
+        // No IT provisioning here any more: the candidature only moves on to the offer. The IT
+        // file and onboarding open together once the salary is agreed — see
+        // HiringHandoffService, called by OfferService — so IT never prepares equipment for
+        // someone still negotiating. The CANDIDATE_ACCEPTED event moved there with it.
 
         auditService.log(actorUserId != null ? actorUserId.toString() : "SYSTEM",
                 "ACCEPT", "CANDIDATE", candidate.getId(),
@@ -343,9 +348,16 @@ public class CandidateService {
                 : filter.createdTo().plusDays(1).atStartOfDay(zone).toOffsetDateTime();
         Long demandId = filter.spontaneous() ? null : filter.demandId();
 
-        Page<Candidate> page = (stage != null && !stage.isBlank())
+        // A status is the narrower filter and wins; a stage alone is a set of statuses. The
+        // stage query has no ORDER BY of its own (it overrode the list's column sort), so an
+        // unsorted request gets the usual newest-first.
+        boolean byStage = status == null && stage != null && !stage.isBlank();
+        Pageable stagePage = byStage && pageable.getSort().isUnsorted()
+                ? PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), Sort.by(Sort.Direction.DESC, "createdAt"))
+                : pageable;
+        Page<Candidate> page = byStage
                 ? candidateRepo.searchByStatusesAndSearch(stageToStatuses(stage), resolvedPaysId, search,
-                        filter.departmentId(), demandId, filter.spontaneous(), createdFrom, createdTo, pageable)
+                        filter.departmentId(), demandId, filter.spontaneous(), createdFrom, createdTo, stagePage)
                 : candidateRepo.searchPaged(status, resolvedPaysId, search,
                         filter.departmentId(), demandId, filter.spontaneous(), createdFrom, createdTo, pageable);
 
@@ -527,6 +539,10 @@ public class CandidateService {
         }
     }
 
+    private static final List<CandidateStatus> CANDIDATE_WORKFLOW_STATUSES = List.of(
+            CandidateStatus.PENDING, CandidateStatus.ACCEPTED, CandidateStatus.OFFER_SENT,
+            CandidateStatus.REJECTED, CandidateStatus.ARCHIVED);
+
     private static List<CandidateStatus> stageToStatuses(String stage) {
         return switch (stage.toUpperCase()) {
             case "CANDIDATURE"          -> List.of(CandidateStatus.PENDING);
@@ -535,13 +551,54 @@ public class CandidateService {
             case "OFFRE_ENVOYEE"        -> List.of(CandidateStatus.EMAIL_RECEIVED);
             case "RECRUTE"              -> List.of(CandidateStatus.HIRED);
             case "REJETE"               -> List.of(CandidateStatus.REJECTED, CandidateStatus.ARCHIVED);
-            default                     -> List.of(CandidateStatus.values());
+            // The candidates home page (/rh/candidates): only files still in the candidate /
+            // negotiation workflow. Once the offer is agreed the candidate is hired in all but
+            // paperwork and lives in onboarding (IT provisioning included) — never here again.
+            case "CANDIDATE_WORKFLOW"   -> CANDIDATE_WORKFLOW_STATUSES;
+            // « Pipeline RH » (/rh/recrutement): the whole lifecycle — in recruitment, in
+            // onboarding, hired, closed. Every status, newest first like the other stages.
+            case "LIFECYCLE"            -> List.of(CandidateStatus.values());
+            default                    -> List.of(CandidateStatus.values());
         };
     }
 
     @Transactional(readOnly = true)
     public CandidateResponse getCandidate(Long id) {
         return toFullResponse(findOrThrow(id));
+    }
+
+    /**
+     * GET /candidates/{id} with the V132 rule: full record for HR_ONBOARDING / IT_PROVISIONING,
+     * a reduced one for an interviewer who holds neither — what they need to prepare and judge
+     * an interview, without the budget, the identity documents or the IT dossier.
+     */
+    @Transactional(readOnly = true)
+    public CandidateResponse getCandidateForViewer(Long id) {
+        interviewAccess.requireCandidateRead(id);
+        CandidateResponse response = toFullResponse(findOrThrow(id));
+        if (!interviewAccess.hasFullRecordAccess()) {
+            response.setSalaireNetRh(null);
+            response.setSalaireNetCandidat(null);
+            response.setNationalId(null);
+            response.setPassportNumber(null);
+            response.setItProvisioning(null);
+            response.setCvPath(null);
+            response.setInterviewerView(true);
+        }
+        return response;
+    }
+
+    @Transactional(readOnly = true)
+    public com.daf360.rh.dto.candidate.CandidateAccessDto accessOf(Long id) {
+        findOrThrow(id);
+        return new com.daf360.rh.dto.candidate.CandidateAccessDto(
+                interviewAccess.hasFullRecordAccess(), interviewAccess.isInterviewerOf(id));
+    }
+
+    @Transactional(readOnly = true)
+    public Resource downloadCvForViewer(Long id) {
+        interviewAccess.requireCvRead(id);
+        return downloadCv(id);
     }
 
     // ── CV upload / download ──────────────────────────────────────────────────

@@ -28,6 +28,13 @@ public interface RecruitmentDemandRepository extends JpaRepository<RecruitmentDe
     List<RecruitmentDemand> findByPaysIdAndStatutOrderByJobTitleAsc(
             Long paysId, RecruitmentDemandStatus statut);
 
+    /**
+     * « Bibliothèque des postes » — the entity's past demands in the given statuses, newest
+     * first, capped: the library is a list of templates, not an archive to page through.
+     */
+    List<RecruitmentDemand> findTop300ByPaysIdAndStatutInOrderBySubmittedAtDesc(
+            Long paysId, java.util.Collection<RecruitmentDemandStatus> statuts);
+
     @Query("""
         SELECT COUNT(rd) FROM RecruitmentDemand rd
         WHERE rd.paysId = :paysId AND rd.statut = 'EN_ATTENTE'

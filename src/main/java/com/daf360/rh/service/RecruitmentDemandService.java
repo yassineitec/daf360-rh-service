@@ -212,6 +212,55 @@ public class RecruitmentDemandService {
                 .toList();
     }
 
+    /** Demands that became real positions — the ones worth reusing as a template. */
+    private static final List<RecruitmentDemandStatus> LIBRARY_STATUSES =
+            List.of(RecruitmentDemandStatus.APPROUVEE, RecruitmentDemandStatus.CLOTUREE);
+
+    /**
+     * « Bibliothèque des postes » — the entity's past positions, one entry per post.
+     *
+     * A post is department + job title + exact title (case and spaces ignored): the same
+     * vacancy raised five times is one entry « demandé 5 fois », carrying the values of its
+     * most recent demand, which is what a manager wants to start again from. Only approved and
+     * closed demands: a pending, rejected or cancelled one never became a position.
+     *
+     * Read-only and gated like creating a demand (RH_CREATE_RECRUITMENT_DEMAND): it exists to
+     * prefill a new one. The pays must be in the caller's scope, as on create.
+     */
+    @Transactional(readOnly = true)
+    public List<JobLibraryEntry> library(Long paysId) {
+        checkPaysInScope(paysId);
+        List<RecruitmentDemand> rows =
+                demandRepo.findTop300ByPaysIdAndStatutInOrderBySubmittedAtDesc(paysId, LIBRARY_STATUSES);
+
+        // Insertion order = newest first, so the first demand seen for a post is its latest.
+        Map<String, List<RecruitmentDemand>> byPost = new java.util.LinkedHashMap<>();
+        for (RecruitmentDemand d : rows) {
+            byPost.computeIfAbsent(postKey(d), k -> new java.util.ArrayList<>()).add(d);
+        }
+        return byPost.values().stream()
+                .map(group -> {
+                    RecruitmentDemand latest = group.get(0);
+                    return new JobLibraryEntry(
+                            toResponse(latest),
+                            group.size(),
+                            latest.getSubmittedAt(),
+                            resolveDepartmentLabelEn(latest.getDepartmentId(), latest.getDepartment()));
+                })
+                .toList();
+    }
+
+    private static String postKey(RecruitmentDemand d) {
+        String dept = d.getDepartmentId() != null
+                ? "#" + d.getDepartmentId()
+                : norm(d.getDepartment());
+        return dept + "|" + norm(d.getJobTitle()) + "|" + norm(d.getJobExactTitle());
+    }
+
+    private static String norm(String s) {
+        return s == null ? "" : s.trim().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     private RecruitmentDemand findOrThrow(Long id) {
@@ -441,6 +490,7 @@ public class RecruitmentDemandService {
         r.setRecruitmentReasonLabel(RecruitmentReasonHelper.getLabel(d.getRecruitmentReason()));
         r.setUrgencyLevelId(d.getUrgencyLevelId());
         r.setUrgencyLevelLabel(resolveListLabel(d.getUrgencyLevelId()));
+        r.setUrgencyLevelCode(resolveListCode(d.getUrgencyLevelId()));
         r.setCspCategoryId(d.getCspCategoryId());
         r.setCspCategoryLabel(resolveListLabel(d.getCspCategoryId()));
         r.setExperienceLevelId(d.getExperienceLevelId());

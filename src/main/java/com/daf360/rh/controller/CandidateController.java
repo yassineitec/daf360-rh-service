@@ -2,6 +2,7 @@ package com.daf360.rh.controller;
 
 import com.daf360.rh.domain.enums.CandidateStatus;
 import com.daf360.rh.dto.candidate.*;
+import com.daf360.rh.dto.email.CandidateEmailDtos;
 import com.daf360.rh.dto.offer.CreateOfferRequest;
 import com.daf360.rh.dto.offer.OfferResponse;
 import com.daf360.rh.dto.offer.RejectOfferRequest;
@@ -67,10 +68,24 @@ public class CandidateController {
         return candidateService.getDashboardStats();
     }
 
+    /**
+     * HR_ONBOARDING / IT_PROVISIONING as before, or — since V132 — a member of one of this
+     * candidate's interview panels, who is served a reduced record (no salary, no identity
+     * documents, no IT). Checked in the service: it depends on the row, not the caller alone.
+     */
     @GetMapping("/{id}")
-    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING') or hasPermission(null, 'IT_PROVISIONING')")
     public CandidateResponse get(@PathVariable Long id) {
-        return candidateService.getCandidate(id);
+        return candidateService.getCandidateForViewer(id);
+    }
+
+    /**
+     * What the caller may do on this candidate — the frontend route guard asks before opening
+     * the page, so an interviewer with no RH code is let in and anyone else is sent to
+     * /forbidden instead of landing on a page of 403s.
+     */
+    @GetMapping("/{id}/access")
+    public CandidateAccessDto access(@PathVariable Long id) {
+        return candidateService.accessOf(id);
     }
 
     @PutMapping("/{id}")
@@ -106,9 +121,9 @@ public class CandidateController {
 
     /** Download the candidate's CV file. */
     @GetMapping("/{id}/cv")
-    @PreAuthorize("hasPermission(null, 'VIEW_CANDIDATES') or hasPermission(null, 'HR_ONBOARDING')")
     public ResponseEntity<Resource> downloadCv(@PathVariable Long id) {
-        Resource resource = candidateService.downloadCv(id);
+        // VIEW_CANDIDATES / HR_ONBOARDING, or a panel member (V132) — checked in the service.
+        Resource resource = candidateService.downloadCvForViewer(id);
         String filename  = resource.getFilename() != null ? resource.getFilename() : "cv";
         // Strip UUID prefix (uuid_originalname.pdf → originalname.pdf)
         String displayName = filename.contains("_") ? filename.substring(filename.indexOf('_') + 1) : filename;
@@ -132,12 +147,23 @@ public class CandidateController {
     // ── Offer / negotiation stage ───────────────────────────────────────────
     /** The candidate's CURRENT offer round (404 if none was ever drafted). */
     @GetMapping("/{id}/offer")
+    @PreAuthorize(OFFER_READERS)
     public OfferResponse getOffer(@PathVariable Long id) {
         return offerService.getByCandidate(id);
     }
 
+    /**
+     * The two offer reads had no guard at all. Harmless while only candidate staff could reach
+     * a candidate, but V132 lets an interviewer with no RH code open the record — and an offer
+     * round is salary. Whoever could open the candidate page before keeps reading it.
+     */
+    private static final String OFFER_READERS =
+            "hasAnyAuthority('VIEW_CANDIDATES','HR_ONBOARDING','EDIT_CANDIDATE','CREATE_CANDIDATE',"
+            + "'IT_PROVISIONING','RH_HIRE_CANDIDATE','APPROVE_HIRING_COST')";
+
     /** Every round, newest first — the negotiation history (V98). */
     @GetMapping("/{id}/offer/rounds")
+    @PreAuthorize(OFFER_READERS)
     public List<OfferResponse> getOfferRounds(@PathVariable Long id) {
         return offerService.getRounds(id);
     }
@@ -170,11 +196,25 @@ public class CandidateController {
         return offerService.draftOffer(id, request, actorId(auth));
     }
 
-    /** Extend the approved DRAFT round to the candidate → candidate OFFER_SENT. */
+    /** The offer email as it would leave now — the entity's template, rendered (V134). */
+    @GetMapping("/{id}/offer/email-preview")
+    @PreAuthorize("hasPermission(null, 'RH_HIRE_CANDIDATE')")
+    public CandidateEmailDtos.EmailPreviewDto previewOfferEmail(@PathVariable Long id) {
+        return offerService.previewOfferEmail(id);
+    }
+
+    /**
+     * Extend the approved DRAFT round to the candidate → candidate OFFER_SENT, offer emailed.
+     * The body carries RH's edited subject / body; absent (older clients) ⇒ the template.
+     */
     @PostMapping("/{id}/offer/send")
     @PreAuthorize("hasPermission(null, 'RH_HIRE_CANDIDATE')")
-    public OfferResponse sendOffer(@PathVariable Long id, Authentication auth) {
-        return offerService.sendOffer(id, actorId(auth));
+    public OfferResponse sendOffer(@PathVariable Long id,
+                                   @Valid @RequestBody(required = false) CandidateEmailDtos.SendOfferRequest request,
+                                   Authentication auth) {
+        return offerService.sendOffer(id, actorId(auth),
+                request != null ? request.emailSubject() : null,
+                request != null ? request.emailBody() : null);
     }
 
     /** Candidate accepts the offer → begins IT provisioning. */
