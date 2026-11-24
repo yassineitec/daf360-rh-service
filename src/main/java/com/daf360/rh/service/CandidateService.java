@@ -38,7 +38,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 
-import com.daf360.rh.dto.candidate.CandidateHistoryItem;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -667,74 +666,7 @@ public class CandidateService {
         }
     }
 
-    // ── History ───────────────────────────────────────────────────────────────
-
-    @Transactional(readOnly = true)
-    public List<CandidateHistoryItem> getHistory(Long candidateId) {
-        findOrThrow(candidateId);
-        String sql = "SELECT al.id, al.timestamp, al.action, al.new_value, " +
-                     "al.user_id as actor_id, u.fullName as actor_name " +
-                     "FROM audit_log al " +
-                     "LEFT JOIN [dbo].[Users] u ON u.id = TRY_CAST(al.user_id AS BIGINT) " +
-                     "WHERE al.entity_type = 'CANDIDATE' " +
-                     "AND al.entity_id = ? " +
-                     "ORDER BY al.timestamp DESC";
-        return jdbc.query(sql, (rs, rowNum) -> {
-            String action  = rs.getString("action");
-            String newVal  = rs.getString("new_value");
-            String actorId = rs.getString("actor_id");
-            java.sql.Timestamp ts = rs.getTimestamp("timestamp");
-            return CandidateHistoryItem.builder()
-                .id(rs.getLong("id"))
-                .timestamp(ts != null ? ts.toInstant().toString() : null)
-                .action(action)
-                .actionLabel(mapHistoryActionLabel(action))
-                .performedByUserId(actorId != null ? safeParseL(actorId) : null)
-                .performedByName(rs.getString("actor_name"))
-                .comment(extractHistoryComment(newVal))
-                .resultingStatus(extractHistoryStatus(newVal))
-                .build();
-        }, candidateId.toString());
-    }
-
-    private String mapHistoryActionLabel(String action) {
-        if (action == null) return "—";
-        return switch (action) {
-            case "CREATE_CANDIDATE", "CREATE" -> "Candidature créée";
-            case "UPDATE_CANDIDATE", "UPDATE" -> "Profil modifié";
-            case "ACCEPT_CANDIDATE", "ACCEPT" -> "Statut : Accepté(e)";
-            case "REJECT_CANDIDATE", "REJECT" -> "Statut : Refusé(e)";
-            case "UPDATE_IT_PROVISIONING"      -> "Provisioning IT mis à jour";
-            case "SUBMIT_MS365_EMAIL"          -> "Compte Microsoft 365 créé";
-            case "COMPLETE_IT_PROVISIONING"    -> "Provisioning IT terminé";
-            case "COMPLETE_ONBOARDING_PROFILE" -> "Dossier RH complété";
-            case "UPLOAD_CV"                   -> "CV téléversé";
-            default                            -> action;
-        };
-    }
-
-    private String extractHistoryComment(String v) {
-        if (v == null || v.isBlank()) return null;
-        try {
-            com.fasterxml.jackson.databind.JsonNode n =
-                new com.fasterxml.jackson.databind.ObjectMapper().readTree(v);
-            if (n.has("comment")) return n.get("comment").asText();
-        } catch (Exception ignored) {}
-        if (v.contains("comment=")) {
-            int s = v.indexOf("comment=") + 8, e = v.indexOf(";", s);
-            return e == -1 ? v.substring(s) : v.substring(s, e);
-        }
-        return v.length() > 80 ? null : v;
-    }
-
-    private String extractHistoryStatus(String v) {
-        if (v == null) return null;
-        return v.startsWith("status=") ? v.replace("status=", "") : null;
-    }
-
-    private Long safeParseL(String s) {
-        try { return Long.parseLong(s.trim()); } catch (Exception e) { return null; }
-    }
+    // History moved to CandidateHistoryService (« Historique » tab).
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 

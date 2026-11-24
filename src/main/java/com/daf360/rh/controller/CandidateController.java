@@ -35,6 +35,7 @@ public class CandidateController {
 
     private final CandidateService candidateService;
     private final OfferService offerService;
+    private final com.daf360.rh.service.CandidateHistoryService candidateHistoryService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -233,11 +234,27 @@ public class CandidateController {
         return offerService.rejectOffer(id, request, actorId(auth));
     }
 
+    /**
+     * « Historique » tab of /rh/candidates — every action on every candidature of the
+     * caller's entities, newest first, with its actor. [from, to] are calendar days (both
+     * included); without them, the last 12 months. Status and search are filtered by the screen.
+     */
+    @GetMapping("/history")
+    @PreAuthorize("hasAnyAuthority('VIEW_CANDIDATES','HR_ONBOARDING','EDIT_CANDIDATE','CREATE_CANDIDATE','ADMIN_ROLES')")
+    public List<CandidateHistoryItem> getGlobalHistory(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return candidateHistoryService.globalHistory(from, to);
+    }
+
+    /**
+     * One candidate's actions, newest first — the candidate page's step rail and the decision
+     * drawer of /rh/candidates/list.
+     */
     @GetMapping("/{id}/history")
     @PreAuthorize("hasAnyAuthority('VIEW_CANDIDATES','HR_ONBOARDING','IT_PROVISIONING','HR_UPDATE_PROFILE','ADMIN_ROLES')")
-    public ResponseEntity<List<CandidateHistoryItem>> getHistory(
-            @PathVariable Long id, Authentication auth) {
-        return ResponseEntity.ok(candidateService.getHistory(id));
+    public ResponseEntity<List<CandidateHistoryItem>> getHistory(@PathVariable Long id) {
+        return ResponseEntity.ok(candidateHistoryService.history(id));
     }
 
     /** JWT sub = String.valueOf(userId) — see portal JwtTokenService. */
