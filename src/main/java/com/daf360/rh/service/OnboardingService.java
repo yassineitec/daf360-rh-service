@@ -281,6 +281,11 @@ public class OnboardingService {
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidateRepo.save(candidate);
 
+        // The draft row keeps only its LAST save; the log keeps every one, with its author —
+        // what the onboarding « Historique » tab shows.
+        auditService.log(hrOfficerId != null ? hrOfficerId.toString() : "SYSTEM",
+                "SAVE_ONBOARDING_DRAFT", "CANDIDATE", candidateId, null, null);
+
         OffsetDateTime savedAt = OffsetDateTime.now();
         return Map.of("candidateId", candidateId, "savedAt", savedAt);
     }

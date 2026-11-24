@@ -64,6 +64,15 @@ public class CandidateHistoryService {
     private static final Set<String> OFFER_ACTIONS = Set.of(
             "DRAFT_OFFER", "SEND_OFFER", "FINANCE_COUNTER_OFFER", "OFFER_AGREED", "ACCEPT_OFFER", "REJECT_OFFER");
 
+    /** Candidate-level log codes that belong to the onboarding phase. */
+    private static final Set<String> ONBOARDING_ACTIONS = Set.of("SAVE_ONBOARDING_DRAFT");
+
+    /**
+     * What the onboarding « Historique » shows: the onboarding category (IT file, RH file
+     * drafts, employee profile) plus the actions that open and close the phase.
+     */
+    private static final Set<String> ONBOARDING_BOUNDARIES = Set.of("ACCEPT_OFFER", "OFFER_AGREED", "HIRE_CANDIDATE");
+
     /** Detail keys that carry a salary — hidden from readers without full-record access. */
     private static final Set<String> SALARY_KEYS = Set.of("proposedSalary", "counterSalary");
 
@@ -89,6 +98,7 @@ public class CandidateHistoryService {
             Map.entry("SUBMIT_MS365_EMAIL",          "Compte Microsoft 365 créé"),
             Map.entry("COMPLETE_IT_PROVISIONING",    "Provisioning IT terminé"),
             Map.entry("COMPLETE_ONBOARDING_PROFILE", "Dossier RH complété"),
+            Map.entry("SAVE_ONBOARDING_DRAFT",       "Dossier RH enregistré (brouillon)"),
             Map.entry("INTERVIEW_PLANNED",           "Entretien planifié"),
             Map.entry("INTERVIEW_CANCELLED",         "Entretien annulé"),
             Map.entry("INTERVIEW_PV",                "PV d'entretien déposé"),
@@ -112,7 +122,7 @@ public class CandidateHistoryService {
     public List<CandidateHistoryItem> history(Long candidateId) {
         if (!candidateRepo.existsById(candidateId)) throw new AppException(ErrorCode.CANDIDATE_NOT_FOUND);
         return build(new Range("SELECT CAST(" + candidateId + " AS BIGINT) AS id", null, null),
-                false, Integer.MAX_VALUE);
+                false, Integer.MAX_VALUE, d -> true);
     }
 
     /**
@@ -127,7 +137,37 @@ public class CandidateHistoryService {
         if (end.isBefore(start)) { LocalDate t = start; start = end; end = t; }
         Range range = new Range(scopedCandidateIds(),
                 start.minusDays(1).atStartOfDay(), end.plusDays(2).atStartOfDay());
-        return build(range, true, GLOBAL_MAX_ROWS);
+        return build(range, true, GLOBAL_MAX_ROWS, d -> true);
+    }
+
+    /**
+     * « Historique » tab of /rh/onboarding — the onboarding phase of every candidate of the
+     * caller's entities: the offer agreed (the phase opens), the IT file's steps, every save
+     * of the RH file, the employee profile created, the hire. Same sources and rules as
+     * {@link #globalHistory}, in the shared history shape.
+     */
+    public List<com.daf360.rh.history.HistoryEntryDto> onboardingHistory(LocalDate from, LocalDate to) {
+        var w = com.daf360.rh.history.HistorySupport.window(from, to);
+        Range range = new Range(scopedCandidateIds(), w.from(), w.to());
+        return build(range, true, GLOBAL_MAX_ROWS,
+                d -> "ONBOARDING".equals(d.category) || ONBOARDING_BOUNDARIES.contains(d.action))
+                .stream()
+                .map(h -> com.daf360.rh.history.HistoryEntryDto.builder()
+                        .id(h.getId())
+                        .timestamp(h.getTimestamp())
+                        .category(h.getCategory())
+                        .action(h.getAction())
+                        .actorId(h.getPerformedByUserId())
+                        .actorName(h.getPerformedByName())
+                        .status(h.getStatus())
+                        .comment(h.getComment())
+                        .details(h.getDetails())
+                        .subjectId(h.getCandidateId())
+                        .subjectName(h.getCandidateName())
+                        .subjectSubtitle(h.getCandidatePosition())
+                        .subjectGender(h.getCandidateGender())
+                        .build())
+                .toList();
     }
 
     /** The candidates the caller may see — same entity scope as the board (PipelineService). */
@@ -140,7 +180,8 @@ public class CandidateHistoryService {
                 .map(String::valueOf).collect(Collectors.joining(",")) + ")";
     }
 
-    private List<CandidateHistoryItem> build(Range range, boolean withCandidate, int max) {
+    private List<CandidateHistoryItem> build(Range range, boolean withCandidate, int max,
+                                             java.util.function.Predicate<Draft> keep) {
         List<Draft> drafts = new ArrayList<>();
         drafts.addAll(fromActionLog(range));
         drafts.addAll(fromInterviews(range));
@@ -149,6 +190,7 @@ public class CandidateHistoryService {
 
         List<Draft> kept = drafts.stream()
                 .filter(d -> range.contains(d.at))
+                .filter(keep)
                 .sorted(Comparator.comparing((Draft d) -> d.at).reversed()
                         .thenComparing((Draft d) -> d.id, Comparator.<String>reverseOrder()))
                 .limit(max)
@@ -245,6 +287,9 @@ public class CandidateHistoryService {
                 d.category = "ONBOARDING";
                 d.status = "PROFILE_CREATED";
                 facts.clear();
+            } else if (ONBOARDING_ACTIONS.contains(action)) {
+                d.category = "ONBOARDING";
+                d.status = "DRAFT_SAVED";
             } else {
                 d.category = OFFER_ACTIONS.contains(action) ? "OFFER" : "CANDIDATE";
                 // An offer round being prepared (by RH or the DAF) changes no candidate status:

@@ -92,6 +92,7 @@ public class CdiConversionService {
     private final JdbcTemplate                   jdbc;
     private final EmployeeDocumentService        documents;
     private final EmployeeDocumentRepository     documentRepo;
+    private final com.daf360.rh.history.HistorySupport historySupport;
 
     /** Requester ≠ decider and validator ≠ arbiter. Off only for a single-account test base. */
     @Value("${app.cdi-conversion.four-eyes:true}")
@@ -261,6 +262,73 @@ public class CdiConversionService {
                 .filter(d -> !todo || d.canDecide() || d.canConvert())
                 .toList();
     }
+
+    /**
+     * « Historique » tab — every step of every request the caller may read (same rule as
+     * {@link #list}: the pays scope, and a pure requester only their own), newest first.
+     * Read from the steps table, which holds the actor, the comment and the salary / date
+     * each action stated. [from, to] are calendar days (none = the last 12 months).
+     */
+    @Transactional(readOnly = true)
+    public List<com.daf360.rh.history.HistoryEntryDto> history(LocalDate from, LocalDate to, Long actor) {
+        requireAny(REQUEST, VALIDATE, ARBITRATE, HR, VIEW_CONTRACTS);
+        var w = com.daf360.rh.history.HistorySupport.window(from, to);
+        boolean seesAll = has(VALIDATE) || has(ARBITRATE) || has(HR) || has(VIEW_CONTRACTS);
+        String own = seesAll ? "" : " AND r.requested_by = " + (actor != null ? actor : -1L);
+        String sql = """
+                SELECT s.id, s.action, s.actor_user_id, s.comment, s.net_salary, s.start_date,
+                       CAST(SWITCHOFFSET(s.created_at, '+00:00') AS DATETIME2) AS ts,
+                       r.id AS request_id, r.employee_profile_id
+                FROM [dbo].[cdi_conversion_request_steps] s
+                JOIN [dbo].[cdi_conversion_requests] r ON r.id = s.request_id
+                WHERE s.created_at >= ? AND s.created_at < ?
+                """ + com.daf360.rh.history.HistorySupport.paysFilter(tenantService.getPaysScope(), "r.pays_id")
+                + own + " ORDER BY s.created_at DESC, s.id DESC";
+
+        record Row(long id, String action, Long actor, String comment, BigDecimal salary, LocalDate start,
+                   java.time.LocalDateTime at, long requestId, Long profileId) {}
+        List<Row> rows = jdbc.query(sql, (rs, n) -> {
+            java.sql.Timestamp t = rs.getTimestamp("ts");
+            java.sql.Date d = rs.getDate("start_date");
+            long p = rs.getLong("employee_profile_id");
+            Long profile = rs.wasNull() ? null : p;
+            return new Row(rs.getLong("id"), rs.getString("action"), rs.getLong("actor_user_id"),
+                    rs.getString("comment"), rs.getBigDecimal("net_salary"), d != null ? d.toLocalDate() : null,
+                    t != null ? t.toLocalDateTime() : null, rs.getLong("request_id"), profile);
+        }, w.from(), w.to()).stream().filter(r -> w.contains(r.at()))
+                .limit(com.daf360.rh.history.HistorySupport.MAX_ROWS).toList();
+
+        Map<Long, String> actors = historySupport.userNames(rows.stream().map(Row::actor).toList());
+        var employees = historySupport.employees(rows.stream().map(Row::profileId).filter(Objects::nonNull).toList());
+
+        return rows.stream().map(r -> {
+            Map<String, String> details = new LinkedHashMap<>();
+            if (r.salary() != null) details.put("netSalary", r.salary().stripTrailingZeros().toPlainString());
+            if (r.start() != null)  details.put("startDate", r.start().toString());
+            var e = r.profileId() != null ? employees.get(r.profileId()) : null;
+            return com.daf360.rh.history.HistoryEntryDto.builder()
+                    .id("step-" + r.id())
+                    .timestamp(r.at().toInstant(java.time.ZoneOffset.UTC).toString())
+                    .category("REQUEST")
+                    .action(r.action())
+                    .actorId(r.actor())
+                    .actorName(actors.get(r.actor()))
+                    .status(STEP_STATUS.get(r.action()))
+                    .comment(r.comment() == null || r.comment().isBlank() ? null : r.comment().trim())
+                    .details(details.isEmpty() ? null : details)
+                    .subjectId(r.requestId())
+                    .subjectName(e != null ? e.name() : null)
+                    .subjectProfileId(r.profileId())
+                    .subjectPhotoUrl(e != null ? e.photoUrl() : null)
+                    .subjectGender(e != null ? e.gender() : null)
+                    .build();
+        }).toList();
+    }
+
+    /** The status a step leaves the request in — the history's « Statut » column. */
+    private static final Map<String, String> STEP_STATUS = Map.of(
+            "SUBMIT", "SUBMITTED", "ESCALATE", "ESCALATED", "APPROVE", "APPROVED",
+            "REJECT", "REJECTED", "CANCEL", "CANCELLED", "CONVERT", "CONVERTED");
 
     @Transactional(readOnly = true)
     public CdiConversionDto get(Long id, Long actor) {

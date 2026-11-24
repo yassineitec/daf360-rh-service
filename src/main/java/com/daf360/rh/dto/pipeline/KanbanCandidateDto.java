@@ -67,5 +67,11 @@ public record KanbanCandidateDto(
         /** Who proposed the current offer round: RH | DAF | CANDIDATE; null before the first. */
         String offerProposedBy,
         /** Number of the current offer round; null before the first. */
-        Integer offerRound
+        Integer offerRound,
+        /**
+         * The IT file's status (PENDING | IN_PROGRESS | EMAIL_CREATED | COMPLETED); null when
+         * there is none. With the candidate status it says whether onboarding is over: the board's
+         * « Embauché » column keeps a hire only while the RH file or the IT file is still open.
+         */
+        String itStatus
 ) {}

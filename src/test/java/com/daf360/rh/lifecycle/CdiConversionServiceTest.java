@@ -74,7 +74,8 @@ class CdiConversionServiceTest {
     @BeforeEach
     void setup() throws Exception {
         service = new CdiConversionService(requestRepo, stepRepo, contractRepo, contractTypeRefs,
-                notifications, tenantService, auditService, jdbc, documents, documentRepo);
+                notifications, tenantService, auditService, jdbc, documents, documentRepo,
+                new com.daf360.rh.history.HistorySupport(jdbc));
         DocumentUploadResponseDto uploaded = new DocumentUploadResponseDto();
         uploaded.setId(EVALUATION_DOC);
         when(documents.upload(any(), any(), any(), any(), any(), any())).thenReturn(uploaded);

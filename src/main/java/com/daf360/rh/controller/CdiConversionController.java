@@ -80,6 +80,20 @@ public class CdiConversionController {
         return service.list(todo, actorId(auth));
     }
 
+    /**
+     * « Historique » tab — every step of every request the caller may read, newest first.
+     * [from, to] are calendar days, both included (none = the last 12 months).
+     */
+    @GetMapping("/api/hr/cdi-conversions/history")
+    public List<com.daf360.rh.history.HistoryEntryDto> history(
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to,
+            Authentication auth) {
+        return service.history(from, to, actorId(auth));
+    }
+
     @GetMapping("/api/hr/cdi-conversions/{id}")
     public CdiConversionDto get(@PathVariable Long id, Authentication auth) {
         return service.get(id, actorId(auth));

@@ -38,6 +38,7 @@ import java.util.Map;
 public class OffboardingController {
 
     private final OffboardingWorkflowService offboardingService;
+    private final com.daf360.rh.history.OffboardingHistoryService offboardingHistoryService;
 
     // ── Workflow instances ────────────────────────────────────────────────────
 
@@ -71,6 +72,21 @@ public class OffboardingController {
             @RequestParam(required = false) Long paysId,
             @RequestParam(required = false) String status) {
         return offboardingService.listWorkflowInstances(paysId, status);
+    }
+
+    /**
+     * « Historique » tab — every action on every departure file of the caller's entities,
+     * newest first. {@code reason} scopes it to one departure type (the /type/:reason pages);
+     * [from, to] are calendar days, both included (none = the last 12 months).
+     */
+    @GetMapping("/api/hr/offboarding/history")
+    public List<com.daf360.rh.history.HistoryEntryDto> history(
+            @RequestParam(required = false) String reason,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to) {
+        return offboardingHistoryService.history(reason, from, to);
     }
 
     @GetMapping("/api/hr/offboarding/{instanceId}")

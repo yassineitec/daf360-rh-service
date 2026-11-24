@@ -513,7 +513,8 @@ public class PipelineService {
                 (int) toLong(r.get("interviews_filed")),
                 (int) toLong(r.get("interviews_validated")),
                 str(r, "offer_proposed_by"),
-                toIntOrNull(r.get("offer_round"))
+                toIntOrNull(r.get("offer_round")),
+                str(r, "prov_status")
         );
     }
 
