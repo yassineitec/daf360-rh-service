@@ -98,13 +98,29 @@ public class CandidateService {
     private final PaysTimezoneService             paysTimezoneService;
     /** V132: who may read the record (interviewers without RH codes included). */
     private final InterviewAccess                 interviewAccess;
+    /** V137: posts filled per demand — guards and recounts on attach / move / hire. */
+    private final DemandFillService               demandFillService;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
+    /**
+     * Statuses of a candidature whose process is still running (V137). Only these block a new
+     * candidature with the same e-mail: a person whose earlier candidature was archived,
+     * rejected — or who was hired and has since left — may apply again.
+     */
+    private static final Set<CandidateStatus> IN_PROGRESS = Set.of(
+            CandidateStatus.PENDING, CandidateStatus.ACCEPTED, CandidateStatus.OFFER_SENT,
+            CandidateStatus.IT_IN_PROGRESS, CandidateStatus.EMAIL_RECEIVED, CandidateStatus.HR_IN_PROGRESS);
+
     public CandidateResponse createCandidate(CreateCandidateRequest request, Long actorUserId) {
-        if (candidateRepo.existsByEmailPersonal(request.getEmailPersonal())) {
-            throw new AppException(ErrorCode.CANDIDATE_EMAIL_DUPLICATE);
+        if (request.getEmailPersonal() != null
+                && candidateRepo.existsByEmailPersonalIgnoreCaseAndStatusIn(request.getEmailPersonal().trim(), IN_PROGRESS)) {
+            throw new AppException(ErrorCode.CANDIDATE_EMAIL_DUPLICATE,
+                    "Une candidature est déjà en cours avec cet email. Une nouvelle candidature n'est possible "
+                    + "qu'une fois la précédente terminée (rejetée ou archivée).");
         }
+        // V137: a full demand takes no new candidature, even before the reconcile closes it.
+        demandFillService.requireOpenPost(request.getRecruitmentDemandId());
 
         Candidate candidate = mapper.toEntity(request);
         // Prénom with leading capitals, NOM in capitals — the same rule as the profile page.
@@ -125,9 +141,56 @@ public class CandidateService {
         candidate = candidateRepo.save(candidate);
 
         auditService.log(actorUserId.toString(), "CREATE", "CANDIDATE", candidate.getId(),
-                null, "status=PENDING");
+                null, "status=PENDING"
+                        + (request.getCopiedFromCandidateId() != null ? "; copiedFrom=" + request.getCopiedFromCandidateId() : ""));
+
+        if (request.getCopiedFromCandidateId() != null) {
+            candidate = copyCvFrom(request.getCopiedFromCandidateId(), candidate);
+        }
+
+        demandFillService.recomputeFor(candidate.getRecruitmentDemandId(), actorUserId);
 
         return toFullResponse(candidate);
+    }
+
+    /**
+     * A candidature copied from an archived one gets its own copy of the CV file — never a shared
+     * path: replacing the CV of one must not delete the other's (uploadCv deletes the old file).
+     * The source must be ARCHIVED and in the caller's scope; a missing file is skipped, not fatal.
+     */
+    private Candidate copyCvFrom(Long sourceId, Candidate target) {
+        Candidate source = findOrThrow(sourceId);
+        if (source.getStatus() != CandidateStatus.ARCHIVED) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Seule une candidature archivée peut être reprise.");
+        }
+        if (source.getPaysId() != null && target.getPaysId() != null
+                && !source.getPaysId().equals(target.getPaysId())) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "La candidature archivée appartient à une autre entité.");
+        }
+        if (source.getCvPath() == null) return target;
+        try {
+            Path from = Paths.get(source.getCvPath());
+            if (!Files.exists(from)) {
+                log.warn("Archived candidate {} CV file missing ({}), not copied", sourceId, from);
+                return target;
+            }
+            Path dir = Paths.get(appProperties.getStoragePath(), "candidates", target.getId().toString());
+            Files.createDirectories(dir);
+            String name = source.getCvOriginalName() != null ? source.getCvOriginalName() : from.getFileName().toString();
+            Path to = dir.resolve(UUID.randomUUID() + "_" + name);
+            Files.copy(from, to);
+            target.setCvPath(to.toString());
+            target.setCvOriginalName(source.getCvOriginalName());
+            target.setCvUploadedAt(OffsetDateTime.now());
+            target.setUpdatedAt(OffsetDateTime.now());
+            return candidateRepo.save(target);
+        } catch (IOException ex) {
+            // The candidature exists; RH can still upload the CV by hand.
+            log.warn("CV copy from candidate {} to {} failed: {}", sourceId, target.getId(), ex.getMessage());
+            return target;
+        }
     }
 
     public CandidateResponse updateCandidate(Long id, UpdateCandidateRequest request, Long actorUserId) {
@@ -135,11 +198,14 @@ public class CandidateService {
 
         if (request.getEmailPersonal() != null
                 && !request.getEmailPersonal().equalsIgnoreCase(candidate.getEmailPersonal())
-                && candidateRepo.existsByEmailPersonal(request.getEmailPersonal())) {
-            throw new AppException(ErrorCode.CANDIDATE_EMAIL_DUPLICATE);
+                && candidateRepo.existsByEmailPersonalIgnoreCaseAndStatusInAndIdNot(
+                        request.getEmailPersonal().trim(), IN_PROGRESS, candidate.getId())) {
+            throw new AppException(ErrorCode.CANDIDATE_EMAIL_DUPLICATE,
+                    "Une autre candidature est en cours avec cet email.");
         }
 
         String before = "status=" + candidate.getStatus();
+        Long demandBefore = candidate.getRecruitmentDemandId();
         mapper.updateEntity(candidate, request);
         if (request.getGender() != null) {
             candidate.setGender(com.daf360.rh.common.GenderNormalizer.normalize(request.getGender()));
@@ -151,10 +217,24 @@ public class CandidateService {
         // Absent → left as it was; present (including null) → applied. That is what lets a
         // spontaneous application be attached to a vacancy later, or detached.
         if (request.isRecruitmentDemandProvided()) {
-            applyRecruitmentDemand(candidate, request.getRecruitmentDemandId());
+            // V137: moving a candidature onto a demand takes one of its posts — refused when none
+            // is left. Staying on the same demand is not a move.
+            Long target = request.getRecruitmentDemandId();
+            if (target != null && !target.equals(demandBefore)) {
+                demandFillService.requireOpenPost(target);
+            }
+            applyRecruitmentDemand(candidate, target);
         }
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidate = candidateRepo.save(candidate);
+
+        // Both demands recount: the one it left may have a post free again, the one it joined
+        // may now be full.
+        Long demandAfter = candidate.getRecruitmentDemandId();
+        if (!java.util.Objects.equals(demandBefore, demandAfter)) {
+            demandFillService.recomputeFor(demandBefore, actorUserId);
+            demandFillService.recomputeFor(demandAfter, actorUserId);
+        }
 
         auditService.log(actorUserId.toString(), "UPDATE", "CANDIDATE", candidate.getId(),
                 before, "email=" + candidate.getEmailPersonal()
@@ -297,6 +377,9 @@ public class CandidateService {
         candidate.setStatus(CandidateStatus.HIRED);
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidateRepo.save(candidate);
+
+        // A hire straight from ACCEPTED takes a post here, not at an offer hand-off (V137).
+        demandFillService.recomputeFor(candidate.getRecruitmentDemandId(), actorUserId);
 
         /*
          * Open the IT equipment ledger for the new employee (V76).

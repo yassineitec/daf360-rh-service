@@ -41,6 +41,10 @@ public class RecruitmentDemandService {
     private final JdbcTemplate  jdbc;
     private final ObjectMapper  objectMapper;
     private final com.daf360.rh.security.TenantService tenantService;
+    /** V137: posts filled, close / reopen, headcount changes. */
+    private final DemandFillService fillService;
+    /** The « Historique » of a demand, assembled from what is already recorded. */
+    private final DemandHistoryService historyService;
 
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
 
@@ -206,10 +210,181 @@ public class RecruitmentDemandService {
     public List<ApprovedDemandOption> getApprovedOptions(Long paysId) {
         Long effectivePaysId = tenantService.getEffectivePaysId();
         Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : paysId;
-        return demandRepo.findByPaysIdAndStatutOrderByJobTitleAsc(resolvedPaysId, RecruitmentDemandStatus.APPROUVEE)
-                .stream()
-                .map(d -> new ApprovedDemandOption(d.getId(), d.getJobTitle(), d.getDepartment()))
+        List<RecruitmentDemand> approved =
+                demandRepo.findByPaysIdAndStatutOrderByJobTitleAsc(resolvedPaysId, RecruitmentDemandStatus.APPROUVEE);
+        if (approved.isEmpty()) return List.of();
+
+        // Same post = same key as the job library. Every demand of the entity, any status, so a
+        // post raised, filled and closed long ago still counts as « already requested ».
+        Map<String, List<Long>> idsByPost = new java.util.HashMap<>();
+        for (RecruitmentDemand d : demandRepo.findAllByPaysId(resolvedPaysId)) {
+            idsByPost.computeIfAbsent(postKey(d), k -> new java.util.ArrayList<>()).add(d.getId());
+        }
+        Map<Long, Integer> archivedByDemand = archivedCountByDemand(resolvedPaysId);
+
+        return approved.stream()
+                .map(d -> {
+                    List<Long> others = otherDemandsOfPost(idsByPost, d);
+                    int archived = others.stream().mapToInt(id -> archivedByDemand.getOrDefault(id, 0)).sum();
+                    return new ApprovedDemandOption(d.getId(), d.getJobTitle(), d.getDepartment(),
+                            d.getHeadcount(), d.getPositionsFilled(), others.size(), archived);
+                })
                 .toList();
+    }
+
+    /**
+     * The ARCHIVED candidatures of the OTHER demands raised for the same post as this one —
+     * what the creation wizard offers to copy from. Newest archive first.
+     */
+    @Transactional(readOnly = true)
+    public List<com.daf360.rh.dto.pipeline.ArchivedCandidateDto> relatedArchivedCandidates(Long demandId) {
+        RecruitmentDemand demand = findOrThrow(demandId);
+        checkPaysInScope(demand.getPaysId());
+
+        Map<String, List<Long>> idsByPost = new java.util.HashMap<>();
+        for (RecruitmentDemand d : demandRepo.findAllByPaysId(demand.getPaysId())) {
+            idsByPost.computeIfAbsent(postKey(d), k -> new java.util.ArrayList<>()).add(d.getId());
+        }
+        List<Long> others = otherDemandsOfPost(idsByPost, demand);
+        if (others.isEmpty()) return List.of();
+
+        String in = String.join(",", Collections.nCopies(others.size(), "?"));
+        String sql = """
+            SELECT TOP 100
+                   c.id, c.first_name, c.last_name, c.gender, c.applied_position, c.email_personal,
+                   c.recruitment_demand_id AS demand_id,
+                   COALESCE(NULLIF(LTRIM(RTRIM(rd.job_exact_title)), ''), rd.job_title) AS demand_title,
+                   c.archive_reason, c.archive_note, c.archived_from_status, c.rejection_reason,
+                   CONVERT(datetime2, COALESCE(c.archived_at, c.updated_at, c.created_at)) AS archived_at,
+                   u.fullName AS archived_by_name
+              FROM [dbo].[candidates] c
+              LEFT JOIN [dbo].[recruitment_demands] rd ON rd.id = c.recruitment_demand_id
+              LEFT JOIN [dbo].[Users] u ON u.id = c.archived_by
+             WHERE c.status = 'ARCHIVED' AND c.recruitment_demand_id IN (""" + in + """
+            )
+             ORDER BY COALESCE(c.archived_at, c.updated_at, c.created_at) DESC
+            """;
+        return jdbc.queryForList(sql, others.toArray()).stream().map(r -> {
+            String first = r.get("first_name") != null ? r.get("first_name").toString() : "";
+            String last  = r.get("last_name")  != null ? r.get("last_name").toString()  : "";
+            Object at = r.get("archived_at");
+            return new com.daf360.rh.dto.pipeline.ArchivedCandidateDto(
+                    ((Number) r.get("id")).longValue(),
+                    (first + " " + last).trim(),
+                    str(r.get("gender")),
+                    str(r.get("applied_position")),
+                    r.get("demand_id") != null ? ((Number) r.get("demand_id")).longValue() : null,
+                    str(r.get("demand_title")),
+                    str(r.get("archive_reason")),
+                    str(r.get("archive_note")),
+                    str(r.get("archived_from_status")),
+                    at instanceof java.sql.Timestamp ts ? ts.toLocalDateTime().toString() : str(at),
+                    str(r.get("archived_by_name")),
+                    str(r.get("rejection_reason")),
+                    str(r.get("email_personal")));
+        }).toList();
+    }
+
+    /**
+     * The demand's history, newest first: its own life (created, reviewed, resized, closed,
+     * reopened), its candidatures (joined, copied from an archived one, offer agreed, archived,
+     * refused) and the other demands for the same post. Scoped like the demand itself.
+     */
+    @Transactional(readOnly = true)
+    public List<DemandHistoryEvent> history(Long demandId) {
+        RecruitmentDemand demand = findOrThrow(demandId);
+        checkPaysInScope(demand.getPaysId());
+        String key = postKey(demand);
+        List<RecruitmentDemand> samePost = demandRepo.findAllByPaysId(demand.getPaysId()).stream()
+                .filter(d -> key.equals(postKey(d)))
+                .toList();
+        return historyService.history(demand, samePost);
+    }
+
+    /**
+     * Every candidature of one demand, newest first — the demand page's « Candidats » section and
+     * KPI row. Scoped like the demand itself.
+     */
+    @Transactional(readOnly = true)
+    public List<DemandCandidateDto> candidatesOf(Long demandId) {
+        RecruitmentDemand demand = findOrThrow(demandId);
+        checkPaysInScope(demand.getPaysId());
+        boolean filled = DemandFillService.isFilled(demand);
+        String sql = """
+            SELECT c.id, c.first_name, c.last_name, c.gender, c.email_personal, c.status,
+                   CONVERT(datetime2, c.created_at) AS created_at,
+                   CONVERT(date, DATEADD(day, ?, c.created_at)) AS due_date,
+                   c.archive_reason, c.archived_from_status, c.rejection_reason,
+                   CONVERT(datetime2, c.archived_at) AS archived_at
+              FROM [dbo].[candidates] c
+             WHERE c.recruitment_demand_id = ?
+             ORDER BY c.created_at DESC
+            """;
+        return jdbc.queryForList(sql, DemandFillService.ARCHIVE_AFTER_DAYS, demandId).stream().map(r -> {
+            String first  = r.get("first_name") != null ? r.get("first_name").toString() : "";
+            String last   = r.get("last_name")  != null ? r.get("last_name").toString()  : "";
+            String status = str(r.get("status"));
+            boolean counting = filled && status != null
+                    && DemandFillService.STILL_RECRUITING.stream().anyMatch(s -> s.name().equals(status));
+            return new DemandCandidateDto(
+                    ((Number) r.get("id")).longValue(),
+                    (first + " " + last).trim(),
+                    str(r.get("gender")),
+                    str(r.get("email_personal")),
+                    status,
+                    isoLocal(r.get("created_at")),
+                    str(r.get("archive_reason")),
+                    str(r.get("archived_from_status")),
+                    isoLocal(r.get("archived_at")),
+                    counting && r.get("due_date") != null ? r.get("due_date").toString().substring(0, 10) : null,
+                    str(r.get("rejection_reason")));
+        }).toList();
+    }
+
+    private static String isoLocal(Object v) {
+        if (v instanceof java.sql.Timestamp ts) return ts.toLocalDateTime().toString();
+        if (v instanceof java.time.LocalDateTime ldt) return ldt.toString();
+        return v != null ? v.toString() : null;
+    }
+
+    private static List<Long> otherDemandsOfPost(Map<String, List<Long>> idsByPost, RecruitmentDemand d) {
+        return idsByPost.getOrDefault(postKey(d), List.of()).stream()
+                .filter(id -> !id.equals(d.getId()))
+                .toList();
+    }
+
+    /** demand id → number of ARCHIVED candidatures, for one entity. */
+    private Map<Long, Integer> archivedCountByDemand(Long paysId) {
+        Map<Long, Integer> out = new java.util.HashMap<>();
+        jdbc.query("""
+                SELECT c.recruitment_demand_id AS demand_id, COUNT(*) AS n
+                  FROM [dbo].[candidates] c
+                  JOIN [dbo].[recruitment_demands] rd ON rd.id = c.recruitment_demand_id
+                 WHERE c.status = 'ARCHIVED' AND rd.pays_id = ?
+                 GROUP BY c.recruitment_demand_id
+                """, rs -> { out.put(rs.getLong("demand_id"), rs.getInt("n")); }, paysId);
+        return out;
+    }
+
+    private static String str(Object v) {
+        return v != null ? v.toString() : null;
+    }
+
+    // ── Posts filled (V137) ──────────────────────────────────────────────────
+
+    /** RH closes the demand by hand; its candidatures still in recruitment are archived. */
+    public RecruitmentDemandResponse close(Long id, String note, Long actorUserId) {
+        return toResponse(fillService.closeManually(id, note, actorUserId));
+    }
+
+    /** Reopens a closed demand that still has a post to fill. */
+    public RecruitmentDemandResponse reopen(Long id, Long actorUserId) {
+        return toResponse(fillService.reopenManually(id, actorUserId));
+    }
+
+    /** Changes the number of posts — never below the posts already filled. */
+    public RecruitmentDemandResponse changeHeadcount(Long id, int headcount, Long actorUserId) {
+        return toResponse(fillService.changeHeadcount(id, headcount, actorUserId));
     }
 
     /** Demands that became real positions — the ones worth reusing as a template. */
@@ -241,11 +416,20 @@ public class RecruitmentDemandService {
         return byPost.values().stream()
                 .map(group -> {
                     RecruitmentDemand latest = group.get(0);
+                    int filled = group.stream().mapToInt(RecruitmentDemand::getPositionsFilled).sum();
+                    // A demand of this post still recruiting: the manager is warned before filing
+                    // a duplicate of it (newest first, so the first open one is the latest).
+                    RecruitmentDemand open = group.stream()
+                            .filter(d -> d.getStatut() == RecruitmentDemandStatus.APPROUVEE && d.remainingPositions() > 0)
+                            .findFirst().orElse(null);
                     return new JobLibraryEntry(
                             toResponse(latest),
                             group.size(),
                             latest.getSubmittedAt(),
-                            resolveDepartmentLabelEn(latest.getDepartmentId(), latest.getDepartment()));
+                            resolveDepartmentLabelEn(latest.getDepartmentId(), latest.getDepartment()),
+                            filled,
+                            open != null ? open.getId() : null,
+                            open != null ? open.remainingPositions() : 0);
                 })
                 .toList();
     }
@@ -510,6 +694,12 @@ public class RecruitmentDemandService {
         r.setReviewedAt(d.getReviewedAt());
         r.setReviewComment(d.getReviewComment());
         r.setCandidateCount(d.getCandidateCount());
+        r.setPositionsFilled(d.getPositionsFilled());
+        r.setHiredCount(d.getHiredCount());
+        r.setRemainingPositions(d.remainingPositions());
+        r.setClosedAt(d.getClosedAt());
+        r.setClosedReason(d.getClosedReason());
+        r.setClosedByName(d.getClosedBy() != null ? userName(d.getClosedBy()) : null);
         r.setCreatedAt(d.getCreatedAt());
         r.setUpdatedAt(d.getUpdatedAt());
         return r;
@@ -528,6 +718,9 @@ public class RecruitmentDemandService {
         s.setRecruitmentReasonLabel(RecruitmentReasonHelper.getLabel(d.getRecruitmentReason()));
         s.setHeadcount(d.getHeadcount());
         s.setCandidateCount(d.getCandidateCount());
+        s.setPositionsFilled(d.getPositionsFilled());
+        s.setHiredCount(d.getHiredCount());
+        s.setClosedReason(d.getClosedReason());
         s.setSubmittedAt(d.getSubmittedAt());
         s.setCreatedByUserId(d.getCreatedByUserId());
         return s;

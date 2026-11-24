@@ -9,6 +9,7 @@ import com.daf360.rh.notification.NotificationRoutingService;
 import com.daf360.rh.notification.RoutingContext;
 import com.daf360.rh.repository.CandidateRepository;
 import com.daf360.rh.repository.ItProvisioningRepository;
+import com.daf360.rh.service.DemandFillService;
 import com.daf360.rh.service.HiringHandoffService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,12 +31,24 @@ class HiringHandoffServiceTest {
     @Mock ItProvisioningRepository   itProvRepo;
     @Mock CandidateRepository        candidateRepo;
     @Mock NotificationRoutingService notificationRoutingService;
+    @Mock DemandFillService          demandFillService;
 
     @InjectMocks HiringHandoffService service;
 
     private Candidate offerSent() {
         return Candidate.builder().id(10L).firstName("Alice").lastName("Martin")
-                .paysId(1L).status(CandidateStatus.OFFER_SENT).build();
+                .paysId(1L).recruitmentDemandId(7L).status(CandidateStatus.OFFER_SENT).build();
+    }
+
+    /** V137: the agreed offer takes a post — the demand is recounted (and closed when full). */
+    @Test
+    void recountsTheDemandOnceThePostIsTaken() {
+        Candidate c = offerSent();
+        when(itProvRepo.findByCandidateId(10L)).thenReturn(Optional.empty());
+
+        service.startOnboardingAndIt(c);
+
+        verify(demandFillService).recomputeFor(7L, null);
     }
 
     @Test

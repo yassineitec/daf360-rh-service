@@ -25,6 +25,9 @@ public interface RecruitmentDemandRepository extends JpaRepository<RecruitmentDe
     Page<RecruitmentDemand> findByCreatedByUserIdAndStatut(
             Long userId, RecruitmentDemandStatus statut, Pageable pageable);
 
+    /** Every demand of an entity, any status — same-post lookups (candidate creation wizard). */
+    List<RecruitmentDemand> findAllByPaysId(Long paysId);
+
     List<RecruitmentDemand> findByPaysIdAndStatutOrderByJobTitleAsc(
             Long paysId, RecruitmentDemandStatus statut);
 

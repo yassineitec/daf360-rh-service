@@ -75,6 +75,19 @@ public class RecruitmentDemandResponse {
     private String reviewComment;
 
     private int candidateCount;
+
+    // ── Posts filled (V137) ──
+    /** Candidates whose offer is agreed (onboarding, IT, hired) — counted against headcount. */
+    private int positionsFilled;
+    /** Of those, already hired. */
+    private int hiredCount;
+    /** headcount − positionsFilled, never negative. */
+    private int remainingPositions;
+    private OffsetDateTime closedAt;
+    /** AUTO_FILLED (every post filled) | MANUAL (closed by someone) | null. */
+    private String closedReason;
+    private String closedByName;
+
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

@@ -64,6 +64,37 @@ public class RecruitmentDemandController {
         return service.getApprovedOptions(paysId);
     }
 
+    /**
+     * GET /{id}/related-archived-candidates — archived candidatures of the other demands raised
+     * for the same post: the candidate creation wizard offers to start from one of them.
+     * Gated like candidate creation, since that is the only screen that reads it.
+     */
+    @GetMapping("/{id}/related-archived-candidates")
+    @PreAuthorize("hasPermission(null, 'CREATE_CANDIDATE') or hasPermission(null, 'EDIT_CANDIDATE')")
+    public List<com.daf360.rh.dto.pipeline.ArchivedCandidateDto> relatedArchivedCandidates(@PathVariable Long id) {
+        return service.relatedArchivedCandidates(id);
+    }
+
+    /**
+     * GET /{id}/candidates — the candidatures of the demand, for its detail page. Gated like
+     * the demand page itself (a manager who raised it may follow who applies), and light:
+     * no salary, nothing from the candidate's file.
+     */
+    @GetMapping("/{id}/candidates")
+    @PreAuthorize("hasPermission(null, 'RH_VIEW_RECRUITMENT_DEMAND') or hasPermission(null, 'RH_CREATE_RECRUITMENT_DEMAND') "
+            + "or hasPermission(null, 'RH_APPROVE_RECRUITMENT_DEMAND')")
+    public List<DemandCandidateDto> candidates(@PathVariable Long id) {
+        return service.candidatesOf(id);
+    }
+
+    /** GET /{id}/history — the demand's « Historique » (drawer of its detail page). Gated like candidates above. */
+    @GetMapping("/{id}/history")
+    @PreAuthorize("hasPermission(null, 'RH_VIEW_RECRUITMENT_DEMAND') or hasPermission(null, 'RH_CREATE_RECRUITMENT_DEMAND') "
+            + "or hasPermission(null, 'RH_APPROVE_RECRUITMENT_DEMAND')")
+    public List<DemandHistoryEvent> history(@PathVariable Long id) {
+        return service.history(id);
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("hasPermission(null, 'RH_VIEW_RECRUITMENT_DEMAND')")
     public RecruitmentDemandResponse getById(@PathVariable Long id) {
@@ -82,6 +113,50 @@ public class RecruitmentDemandController {
     @PreAuthorize("hasPermission(null, 'RH_CREATE_RECRUITMENT_DEMAND')")
     public RecruitmentDemandResponse cancel(@PathVariable Long id, Authentication auth) {
         return service.cancel(id, actorId(auth));
+    }
+
+    // ── Posts filled (V137) ──────────────────────────────────────────────────
+
+    /** Body of close: an optional note, shown as the archive reason of its open candidatures. */
+    public record CloseDemandRequest(String note) {}
+
+    /** Body of headcount: the new number of posts. */
+    public record HeadcountRequest(Integer headcount) {}
+
+    /**
+     * Closes an approved demand by hand (position cancelled, budget frozen…). The candidatures
+     * still in recruitment are archived. The recruitment team runs the vacancy, so they may
+     * close it as well as the approvers.
+     */
+    @PostMapping("/{id}/close")
+    @PreAuthorize("hasPermission(null, 'RH_APPROVE_RECRUITMENT_DEMAND') or hasPermission(null, 'CREATE_CANDIDATE')")
+    public RecruitmentDemandResponse close(@PathVariable Long id,
+                                           @RequestBody(required = false) CloseDemandRequest body,
+                                           Authentication auth) {
+        return service.close(id, body != null ? body.note() : null, actorId(auth));
+    }
+
+    /** Reopens a closed demand — an approver's call, since it restarts the recruitment. */
+    @PostMapping("/{id}/reopen")
+    @PreAuthorize("hasPermission(null, 'RH_APPROVE_RECRUITMENT_DEMAND')")
+    public RecruitmentDemandResponse reopen(@PathVariable Long id, Authentication auth) {
+        return service.reopen(id, actorId(auth));
+    }
+
+    /**
+     * Changes the number of posts. An approver's call: raising it is approving more hires than
+     * were validated.
+     */
+    @PutMapping("/{id}/headcount")
+    @PreAuthorize("hasPermission(null, 'RH_APPROVE_RECRUITMENT_DEMAND')")
+    public RecruitmentDemandResponse changeHeadcount(@PathVariable Long id,
+                                                     @RequestBody HeadcountRequest body,
+                                                     Authentication auth) {
+        if (body == null || body.headcount() == null) {
+            throw new com.daf360.rh.exception.AppException(
+                    com.daf360.rh.exception.ErrorCode.BUSINESS_RULE_VIOLATION, "Le nombre de postes est obligatoire.");
+        }
+        return service.changeHeadcount(id, body.headcount(), actorId(auth));
     }
 
     private Long actorId(Authentication auth) {

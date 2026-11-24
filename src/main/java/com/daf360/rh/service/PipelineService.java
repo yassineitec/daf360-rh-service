@@ -40,6 +40,8 @@ import java.util.stream.Collectors;
 public class PipelineService {
 
     private final JdbcTemplate jdbc;
+    private final DemandFillService demandFillService;
+    private final com.daf360.rh.security.TenantService tenantService;
 
     // ── Stage constants ────────────────────────────────────────────────────────
 
@@ -97,7 +99,13 @@ public class PipelineService {
             g.notice_period_days  AS grade_notice_period_days,
             -- Salary currency of the candidate's country: its DEVISE payroll parameter,
             -- else derived from the country ISO code (see currencyOf).
-            dv.valeur AS pays_devise, p.iso_code AS pays_iso
+            dv.valeur AS pays_devise, p.iso_code AS pays_iso,
+            -- Every post of the demand is filled: a candidature still in recruitment can no longer
+            -- be hired and is archived on its creation date + N days (DemandFillService).
+            CASE WHEN rd.statut = 'CLOTUREE' AND rd.closed_reason = 'AUTO_FILLED'
+                      AND c.status IN ('PENDING','ACCEPTED','OFFER_SENT')
+                 THEN CONVERT(date, DATEADD(day, """ + DemandFillService.ARCHIVE_AFTER_DAYS + """
+            , c.created_at)) END AS archive_due_date
             """;
 
     /** FROM + joins: employee profile, linked demand, IT provisioning and next planned interview. */
@@ -159,6 +167,25 @@ public class PipelineService {
     /** Statuses shown in the Kanban (all except ARCHIVED). */
     private static final String KANBAN_IN = "'PENDING','ACCEPTED','OFFER_SENT','HR_IN_PROGRESS','IT_IN_PROGRESS','EMAIL_RECEIVED','HIRED','REJECTED'";
 
+    // ── Entity scope ───────────────────────────────────────────────────────────
+
+    /**
+     * {@code " AND <column> IN (1,2)"} for the caller's entities, or "" when they see every
+     * entity (admin, mode ALL) or their scope is unresolved — the same rule as every other RH
+     * list (TenantService.getPaysScope). Every read of this service used to return all
+     * entities' candidates: a Tunisian recruiter saw the Egyptian pipeline.
+     *
+     * <p>The ids are Longs from the token, so they are inlined rather than bound — the text
+     * blocks below stay readable and nothing user-typed reaches the SQL.
+     */
+    private String scopeFilter(String column) {
+        var scope = tenantService.getPaysScope();
+        if (scope.unfiltered()) return "";
+        if (scope.paysIds().isEmpty()) return " AND 1 = 0";
+        return " AND " + column + " IN (" + scope.paysIds().stream()
+                .map(String::valueOf).collect(Collectors.joining(",")) + ")";
+    }
+
     // ── Stats ──────────────────────────────────────────────────────────────────
 
     public PipelineStatsDto getStats() {
@@ -183,7 +210,7 @@ public class PipelineService {
                          THEN 1 ELSE 0 END)                                      AS urgent
             FROM [dbo].[candidates]
             WHERE status <> 'ARCHIVED'
-            """;
+            """ + scopeFilter("pays_id");
 
         Map<String, Object> row = jdbc.queryForMap(sql);
         long   total        = toLong(row.get("total"));
@@ -218,6 +245,8 @@ public class PipelineService {
             LEFT JOIN [dbo].[candidates] c ON c.id = TRY_CAST(al.entity_id AS BIGINT)
             LEFT JOIN [dbo].[Users]      u ON u.id = TRY_CAST(al.user_id   AS BIGINT)
             WHERE al.entity_type = 'CANDIDATE'
+            """ + scopeFilter("c.pays_id") + """
+
             ORDER BY al.timestamp DESC
             """;
 
@@ -287,6 +316,8 @@ public class PipelineService {
             FROM [dbo].[candidates]
             WHERE status = 'HIRED'
               AND updated_at >= DATEADD(month, -6, GETDATE())
+            """ + scopeFilter("pays_id") + """
+
             GROUP BY FORMAT(updated_at, 'yyyy-MM')
             """;
 
@@ -300,6 +331,8 @@ public class PipelineService {
             FROM [dbo].[recruitment_demands]
             WHERE target_start_date >= DATEADD(month, -6, GETDATE())
               AND target_start_date <= DATEADD(month, 1, GETDATE())
+            """ + scopeFilter("pays_id") + """
+
             GROUP BY FORMAT(target_start_date, 'yyyy-MM')
             """;
 
@@ -328,7 +361,7 @@ public class PipelineService {
 
     public List<KanbanColumnDto> getKanban() {
         String sql = "SELECT " + KANBAN_COLUMNS + KANBAN_FROM +
-                " WHERE c.status IN (" + KANBAN_IN + ") ORDER BY c.created_at DESC";
+                " WHERE c.status IN (" + KANBAN_IN + ")" + scopeFilter("c.pays_id") + " ORDER BY c.created_at DESC";
 
         List<Map<String, Object>> rows = jdbc.queryForList(sql);
 
@@ -348,13 +381,59 @@ public class PipelineService {
                 .toList();
     }
 
+    // ── Archived (V137) ────────────────────────────────────────────────────────
+
+    /**
+     * Every ARCHIVED candidature, newest first, with the reason — the board's « Archivés »
+     * column. Scoped to the caller's entity like the candidate list (an admin sees all).
+     * Capped: an archive grows forever and the board is not the place to page through it.
+     */
+    public List<com.daf360.rh.dto.pipeline.ArchivedCandidateDto> getArchived() {
+        String sql = """
+            SELECT TOP 300
+                   c.id, c.first_name, c.last_name, c.gender, c.applied_position, c.email_personal,
+                   c.recruitment_demand_id AS demand_id,
+                   COALESCE(NULLIF(LTRIM(RTRIM(rd.job_exact_title)), ''), rd.job_title) AS demand_title,
+                   c.archive_reason, c.archive_note, c.archived_from_status, c.rejection_reason,
+                   CONVERT(datetime2, COALESCE(c.archived_at, c.updated_at, c.created_at)) AS archived_at,
+                   u.fullName AS archived_by_name
+              FROM [dbo].[candidates] c
+              LEFT JOIN [dbo].[recruitment_demands] rd ON rd.id = c.recruitment_demand_id
+              LEFT JOIN [dbo].[Users] u ON u.id = c.archived_by
+             WHERE c.status = 'ARCHIVED'
+            """ + scopeFilter("c.pays_id") + """
+
+              ORDER BY COALESCE(c.archived_at, c.updated_at, c.created_at) DESC
+            """;
+        List<Map<String, Object>> rows = jdbc.queryForList(sql);
+        return rows.stream().map(r -> {
+            String first = str(r, "first_name");
+            String last  = str(r, "last_name");
+            return new com.daf360.rh.dto.pipeline.ArchivedCandidateDto(
+                    toLong(r.get("id")),
+                    ((first != null ? first : "") + " " + (last != null ? last : "")).trim(),
+                    str(r, "gender"),
+                    str(r, "applied_position"),
+                    r.get("demand_id") != null ? toLong(r.get("demand_id")) : null,
+                    str(r, "demand_title"),
+                    str(r, "archive_reason"),
+                    str(r, "archive_note"),
+                    str(r, "archived_from_status"),
+                    toIsoLocal(r.get("archived_at")),
+                    str(r, "archived_by_name"),
+                    str(r, "rejection_reason"),
+                    str(r, "email_personal"));
+        }).toList();
+    }
+
     // ── Paginated list ─────────────────────────────────────────────────────────
 
     public Page<KanbanCandidateDto> getCandidatesPaged(String stage, String search, Pageable pageable) {
         String inClause = resolveInClause(stage);
         boolean hasSearch = search != null && !search.isBlank();
 
-        StringBuilder where = new StringBuilder("WHERE c.status IN (").append(inClause).append(")");
+        StringBuilder where = new StringBuilder("WHERE c.status IN (").append(inClause).append(")")
+                .append(scopeFilter("c.pays_id"));
         List<Object> args = new ArrayList<>();
 
         if (hasSearch) {
@@ -390,6 +469,11 @@ public class PipelineService {
 
     @Transactional
     public KanbanCandidateDto moveToStage(Long id, String stage) {
+        return moveToStage(id, stage, null);
+    }
+
+    @Transactional
+    public KanbanCandidateDto moveToStage(Long id, String stage, Long actorUserId) {
         String input = stage.trim().toUpperCase();
 
         // Accept raw CandidateStatus values (PENDING, ACCEPTED, IT_IN_PROGRESS…)
@@ -411,8 +495,10 @@ public class PipelineService {
         // Validate the transition against the real workflow — no arbitrary jumps.
         String current;
         try {
+            // Scoped like the board: a candidate of another entity is « not found » here.
             current = jdbc.queryForObject(
-                    "SELECT status FROM [dbo].[candidates] WHERE id = ?", String.class, id);
+                    "SELECT status FROM [dbo].[candidates] c WHERE c.id = ?" + scopeFilter("c.pays_id"),
+                    String.class, id);
         } catch (org.springframework.dao.EmptyResultDataAccessException e) {
             throw new AppException(ErrorCode.CANDIDATE_NOT_FOUND, "Candidat introuvable : " + id);
         }
@@ -422,12 +508,37 @@ public class PipelineService {
                     "Transition interdite : " + current + " → " + newStatus);
         }
 
-        int updated = jdbc.update(
-                "UPDATE [dbo].[candidates] SET status = ?, updated_at = SYSDATETIMEOFFSET() WHERE id = ?",
-                newStatus, id);
+        Long demandId = jdbc.queryForObject(
+                "SELECT recruitment_demand_id FROM [dbo].[candidates] WHERE id = ?", Long.class, id);
+
+        // V137: entering a filled post (offer agreed) needs a free one on the demand.
+        if (!newStatus.equals(current)
+                && DemandFillService.FILLING.contains(newStatus) && !DemandFillService.FILLING.contains(current)) {
+            demandFillService.requireOpenPost(demandId);
+        }
+
+        int updated;
+        if ("ARCHIVED".equals(newStatus) && !"ARCHIVED".equals(current)) {
+            // Archived from the board: say so, and keep the status it had — an archived HIRED
+            // recruit still occupies its post (DemandFillService counts archived_from_status).
+            updated = jdbc.update("""
+                    UPDATE [dbo].[candidates]
+                       SET status = 'ARCHIVED', archived_from_status = status,
+                           archived_at = SYSDATETIMEOFFSET(), archived_by = ?,
+                           archive_reason = 'MANUAL', updated_at = SYSDATETIMEOFFSET()
+                     WHERE id = ?""", actorUserId, id);
+        } else {
+            updated = jdbc.update(
+                    "UPDATE [dbo].[candidates] SET status = ?, updated_at = SYSDATETIMEOFFSET() WHERE id = ?",
+                    newStatus, id);
+        }
 
         if (updated == 0) {
             throw new AppException(ErrorCode.CANDIDATE_NOT_FOUND, "Candidat introuvable : " + id);
+        }
+
+        if (!newStatus.equals(current)) {
+            demandFillService.recomputeFor(demandId, actorUserId);
         }
 
         Map<String, Object> row = jdbc.queryForMap(
@@ -514,7 +625,8 @@ public class PipelineService {
                 (int) toLong(r.get("interviews_validated")),
                 str(r, "offer_proposed_by"),
                 toIntOrNull(r.get("offer_round")),
-                str(r, "prov_status")
+                str(r, "prov_status"),
+                r.get("archive_due_date") != null ? r.get("archive_due_date").toString().substring(0, 10) : null
         );
     }
 

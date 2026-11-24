@@ -125,9 +125,44 @@ public class RecruitmentDemand {
     @Column(name = "review_comment", length = 500, columnDefinition = "nvarchar(500)")
     private String reviewComment;
 
+    /** Every candidature linked to the demand, whatever its status — kept by DemandFillService. */
     @Column(name = "candidate_count", nullable = false)
     @Builder.Default
     private int candidateCount = 0;
+
+    /**
+     * Posts taken (V137): candidates whose offer is agreed — onboarding / IT / hired. Counted
+     * against {@link #headcount}; maintained by DemandFillService, never set by hand.
+     */
+    @Column(name = "positions_filled", nullable = false)
+    @Builder.Default
+    private int positionsFilled = 0;
+
+    /** Of {@link #positionsFilled}, the recruits already HIRED (V137). */
+    @Column(name = "hired_count", nullable = false)
+    @Builder.Default
+    private int hiredCount = 0;
+
+    @Column(name = "closed_at", columnDefinition = "datetimeoffset(6)")
+    private OffsetDateTime closedAt;
+
+    @Column(name = "closed_by")
+    private Long closedBy;
+
+    /**
+     * AUTO_FILLED — closed by DemandFillService because every post is filled; reopens by
+     * itself when a recruit drops out. MANUAL — closed by someone; never reopened automatically.
+     */
+    @Column(name = "closed_reason", length = 20)
+    private String closedReason;
+
+    public static final String CLOSED_AUTO_FILLED = "AUTO_FILLED";
+    public static final String CLOSED_MANUAL      = "MANUAL";
+
+    /** Posts still to fill — never negative (a race can overfill by one). */
+    public int remainingPositions() {
+        return Math.max(0, headcount - positionsFilled);
+    }
 
     @Column(name = "created_at", nullable = false, updatable = false,
             columnDefinition = "datetimeoffset(6)")

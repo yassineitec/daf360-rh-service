@@ -73,5 +73,11 @@ public record KanbanCandidateDto(
          * there is none. With the candidate status it says whether onboarding is over: the board's
          * « Embauché » column keeps a hire only while the RH file or the IT file is still open.
          */
-        String itStatus
+        String itStatus,
+        /**
+         * Every post of the candidature's demand is filled (V137): it can no longer be hired and
+         * will be archived on this day (yyyy-MM-dd) — its creation date + 30 days. Null while a
+         * post is still open, or once it left recruitment.
+         */
+        String archiveDueDate
 ) {}

@@ -65,9 +65,30 @@ public class PipelineController {
     @PreAuthorize("hasAnyAuthority('EDIT_CANDIDATE','HR_ONBOARDING')")
     public ResponseEntity<KanbanCandidateDto> moveToStage(
             @PathVariable Long id,
-            @RequestBody String stage) {
+            @RequestBody String stage,
+            org.springframework.security.core.Authentication auth) {
 
-        return ResponseEntity.ok(pipelineService.moveToStage(id, stage));
+        return ResponseEntity.ok(pipelineService.moveToStage(id, stage, actorId(auth)));
+    }
+
+    /**
+     * GET /api/hr/pipeline/archived
+     * Every ARCHIVED candidature with why it was archived (V137) — the « Archivés » column of
+     * the Pipeline RH board. Same read gate as the board's « Candidat » column.
+     */
+    @GetMapping("/archived")
+    @PreAuthorize("hasAnyAuthority('VIEW_CANDIDATES','EDIT_CANDIDATE','CREATE_CANDIDATE','HR_ONBOARDING')")
+    public ResponseEntity<List<com.daf360.rh.dto.pipeline.ArchivedCandidateDto>> getArchived() {
+        return ResponseEntity.ok(pipelineService.getArchived());
+    }
+
+    private static Long actorId(org.springframework.security.core.Authentication auth) {
+        if (auth == null || auth.getPrincipal() == null) return null;
+        try {
+            return Long.valueOf(auth.getPrincipal().toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /**

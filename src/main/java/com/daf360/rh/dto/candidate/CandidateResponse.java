@@ -58,6 +58,12 @@ public class CandidateResponse {
     private BigDecimal salaireNetCandidat;
     private BigDecimal salaireNetRh;
 
+    // ── Archiving (V137) — mapped by name from the entity ──
+    private OffsetDateTime archivedAt;
+    /** POSITION_FILLED | DEMAND_CLOSED | MANUAL, null before V137. */
+    private String archiveReason;
+    private String archiveNote;
+    private String archivedFromStatus;
 
     /** V132 — true when the caller reads this record as an interviewer only (reduced record). */
     private boolean interviewerView;

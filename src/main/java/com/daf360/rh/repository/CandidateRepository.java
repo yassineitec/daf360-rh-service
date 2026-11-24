@@ -18,9 +18,23 @@ import org.springframework.data.domain.Pageable;
 @Repository
 public interface CandidateRepository extends JpaRepository<Candidate, Long> {
 
-    Optional<Candidate> findByEmailPersonal(String emailPersonal);
+    // No findByEmailPersonal returning Optional any more: since V137 one e-mail may carry
+    // several candidatures (an earlier one archived or rejected), and an Optional finder would
+    // throw on the second row.
 
     boolean existsByEmailPersonal(String emailPersonal);
+
+    /**
+     * An e-mail is refused for a new candidature only while one of its candidatures is still in
+     * progress (V137) — an archived, rejected or hired one does not block a new application.
+     */
+    boolean existsByEmailPersonalIgnoreCaseAndStatusIn(String emailPersonal, Collection<CandidateStatus> statuses);
+
+    boolean existsByEmailPersonalIgnoreCaseAndStatusInAndIdNot(String emailPersonal,
+                                                               Collection<CandidateStatus> statuses, Long id);
+
+    /** The candidatures of one demand in the given statuses — the ones archived when it fills. */
+    List<Candidate> findByRecruitmentDemandIdAndStatusIn(Long recruitmentDemandId, Collection<CandidateStatus> statuses);
 
     List<Candidate> findByStatusIn(Collection<CandidateStatus> statuses);
 

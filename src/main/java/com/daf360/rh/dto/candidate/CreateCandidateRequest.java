@@ -67,4 +67,12 @@ public class CreateCandidateRequest {
 
     @PositiveOrZero
     private BigDecimal salaireNetRh;
+
+    /**
+     * The ARCHIVED candidature this new one is copied from (creation wizard, « candidats
+     * archivés » of an earlier demand for the same post). The form already carries the copied
+     * fields; the server only copies what a form cannot send — the CV file. The archived record
+     * itself is left untouched.
+     */
+    private Long copiedFromCandidateId;
 }
