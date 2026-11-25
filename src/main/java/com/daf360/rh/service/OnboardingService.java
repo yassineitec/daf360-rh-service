@@ -121,9 +121,15 @@ public class OnboardingService {
 
     @Transactional(readOnly = true)
     public List<OnboardingListItem> getPendingList() {
-        Long paysId = tenantService.getEffectivePaysId();
-        List<Candidate> candidates = paysId != null
-                ? candidateRepo.findByStatusInAndPaysId(PENDING_STATUSES, paysId)
+        return getPendingList(null);
+    }
+
+    /** {@code requestedPaysIds} : drapeaux de la navbar, croisés avec le périmètre du rôle. */
+    @Transactional(readOnly = true)
+    public List<OnboardingListItem> getPendingList(List<Long> requestedPaysIds) {
+        List<Long> paysIds = tenantService.resolvePaysList(requestedPaysIds);
+        List<Candidate> candidates = paysIds != null
+                ? candidateRepo.findByStatusInAndPaysIdIn(PENDING_STATUSES, paysIds)
                 : candidateRepo.findByStatusIn(PENDING_STATUSES);
 
         // One read of the (small) pays table, so the list's "Entité" filter can show the
@@ -153,14 +159,30 @@ public class OnboardingService {
     // getKpi
     // =========================================================================
 
-    @Transactional(readOnly = true)
     public OnboardingKpiDto getKpi() {
-        long pendingCount = candidateRepo.countByStatusIn(PENDING_STATUSES);
+        return getKpi(null);
+    }
+
+    /**
+     * {@code requestedPaysIds} : drapeaux de la navbar, croisés avec le périmètre du rôle.
+     * Avant (2026-11-23) aucun de ces compteurs n'était filtré par pays : chaque RH voyait
+     * les chiffres de toutes les entités.
+     */
+    @Transactional(readOnly = true)
+    public OnboardingKpiDto getKpi(List<Long> requestedPaysIds) {
+        com.daf360.rh.security.PaysFilter pays =
+                com.daf360.rh.security.PaysFilter.of(tenantService.resolvePaysList(requestedPaysIds));
+        Object[] args = pays.params().toArray();
+
+        long pendingCount = pays.unfiltered()
+                ? candidateRepo.countByStatusIn(PENDING_STATUSES)
+                : candidateRepo.findByStatusInAndPaysIdIn(PENDING_STATUSES, pays.ids()).size();
 
         Long createdTodayRaw = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM [dbo].[employee_profiles] " +
-                "WHERE CAST(created_at AS DATE) = CAST(GETDATE() AS DATE) AND deleted = 0",
-                Long.class);
+                "WHERE CAST(created_at AS DATE) = CAST(GETDATE() AS DATE) AND deleted = 0" +
+                pays.and("pays_id"),
+                Long.class, args);
         long profilesCreatedToday = createdTodayRaw != null ? createdTodayRaw : 0L;
 
         Long incompleteRaw = jdbc.queryForObject(
@@ -169,8 +191,9 @@ public class OnboardingService {
                 "  AND lifecycle_status NOT IN ('TERMINATED', 'ARCHIVED') " +
                 "  AND (hire_date IS NULL OR contract_type IS NULL OR contract_type = '' " +
                 "       OR cnss_number IS NULL OR cnss_number = '' " +
-                "       OR rib IS NULL OR rib = '')",
-                Long.class);
+                "       OR rib IS NULL OR rib = '')" +
+                pays.and("pays_id"),
+                Long.class, args);
         long incompleteProfiles = incompleteRaw != null ? incompleteRaw : 0L;
 
         Double avgCreationMinutes = jdbc.queryForObject(
@@ -180,8 +203,9 @@ public class OnboardingService {
                 "WHERE ep.onboarding_completed = 1 " +
                 "  AND ep.onboarding_completed_at >= DATEADD(day, -30, SYSDATETIMEOFFSET()) " +
                 "  AND ip.ms365_email_created_at IS NOT NULL " +
-                "  AND ep.deleted = 0",
-                Double.class);
+                "  AND ep.deleted = 0" +
+                pays.and("ep.pays_id"),
+                Double.class, args);
 
         return OnboardingKpiDto.builder()
                 .pendingCount(pendingCount)

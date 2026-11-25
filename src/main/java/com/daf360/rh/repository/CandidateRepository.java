@@ -30,6 +30,9 @@ public interface CandidateRepository extends JpaRepository<Candidate, Long> {
 
     long countByStatusInAndPaysId(Collection<CandidateStatus> statuses, Long paysId);
 
+    /** Plusieurs pays (drapeaux de la navbar) — voir OnboardingService.getPendingList. */
+    List<Candidate> findByStatusInAndPaysIdIn(Collection<CandidateStatus> statuses, Collection<Long> paysIds);
+
     @Query("""
         SELECT c FROM Candidate c
         WHERE (:status IS NULL OR c.status = :status)
@@ -54,7 +57,7 @@ public interface CandidateRepository extends JpaRepository<Candidate, Long> {
     @Query(value = """
         SELECT c FROM Candidate c
         WHERE (:status IS NULL OR c.status = :status)
-          AND (:paysId IS NULL OR c.paysId = :paysId)
+          AND (:allPays = true OR c.paysId IN :paysIds)
           AND (:search IS NULL
                OR LOWER(c.firstName) LIKE LOWER(CONCAT('%', :search, '%'))
                OR LOWER(c.lastName)  LIKE LOWER(CONCAT('%', :search, '%'))
@@ -69,7 +72,7 @@ public interface CandidateRepository extends JpaRepository<Candidate, Long> {
         countQuery = """
         SELECT COUNT(c) FROM Candidate c
         WHERE (:status IS NULL OR c.status = :status)
-          AND (:paysId IS NULL OR c.paysId = :paysId)
+          AND (:allPays = true OR c.paysId IN :paysIds)
           AND (:search IS NULL
                OR LOWER(c.firstName) LIKE LOWER(CONCAT('%', :search, '%'))
                OR LOWER(c.lastName)  LIKE LOWER(CONCAT('%', :search, '%'))
@@ -83,7 +86,8 @@ public interface CandidateRepository extends JpaRepository<Candidate, Long> {
         """)
     Page<Candidate> searchPaged(
             @Param("status")          CandidateStatus status,
-            @Param("paysId")          Long paysId,
+            @Param("allPays")         boolean allPays,
+            @Param("paysIds")         Collection<Long> paysIds,
             @Param("search")          String search,
             @Param("departmentId")    Long departmentId,
             @Param("demandId")        Long demandId,
@@ -96,7 +100,7 @@ public interface CandidateRepository extends JpaRepository<Candidate, Long> {
     @Query(value = """
         SELECT c FROM Candidate c
         WHERE c.status IN :statuses
-          AND (:paysId IS NULL OR c.paysId = :paysId)
+          AND (:allPays = true OR c.paysId IN :paysIds)
           AND (:search IS NULL
                OR LOWER(c.firstName)       LIKE LOWER(CONCAT('%', :search, '%'))
                OR LOWER(c.lastName)        LIKE LOWER(CONCAT('%', :search, '%'))
@@ -111,7 +115,7 @@ public interface CandidateRepository extends JpaRepository<Candidate, Long> {
         countQuery = """
         SELECT COUNT(c) FROM Candidate c
         WHERE c.status IN :statuses
-          AND (:paysId IS NULL OR c.paysId = :paysId)
+          AND (:allPays = true OR c.paysId IN :paysIds)
           AND (:search IS NULL
                OR LOWER(c.firstName)       LIKE LOWER(CONCAT('%', :search, '%'))
                OR LOWER(c.lastName)        LIKE LOWER(CONCAT('%', :search, '%'))
@@ -125,7 +129,8 @@ public interface CandidateRepository extends JpaRepository<Candidate, Long> {
         """)
     Page<Candidate> searchByStatusesAndSearch(
             @Param("statuses")        Collection<CandidateStatus> statuses,
-            @Param("paysId")          Long paysId,
+            @Param("allPays")         boolean allPays,
+            @Param("paysIds")         Collection<Long> paysIds,
             @Param("search")          String search,
             @Param("departmentId")    Long departmentId,
             @Param("demandId")        Long demandId,

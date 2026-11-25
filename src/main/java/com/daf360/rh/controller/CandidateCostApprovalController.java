@@ -23,6 +23,7 @@ public class CandidateCostApprovalController {
     private final CandidateCostApprovalService service;
     /** Decisions on an offer round move the round too (V133) — the offer service owns that. */
     private final OfferService offerService;
+    private final com.daf360.rh.security.TenantService tenantService;
 
     /** HR officer submits a cost simulation for CD review. */
     @PostMapping
@@ -36,15 +37,18 @@ public class CandidateCostApprovalController {
     /** CD inbox — pending approvals for a specific country. */
     @GetMapping("/pending")
     @PreAuthorize("hasAuthority('APPROVE_HIRING_COST')")
-    public List<CandidateCostApprovalDto> pending(@RequestParam Long paysId) {
-        return service.getPendingByPays(paysId);
+    public List<CandidateCostApprovalDto> pending(@RequestParam(required = false) List<Long> paysId) {
+        // Drapeaux de la barre (`paysId=179,64`, ids RH), bornés au périmètre du rôle — le
+        // pays demandé n'était pas contrôlé jusqu'ici.
+        return service.getPendingByPaysIn(tenantService.resolvePaysList(paysId));
     }
 
     /** Candidates that have at least one simulation, with count + latest status. */
     @GetMapping("/candidates-with-history")
     @PreAuthorize("hasAnyAuthority('RH_HIRE_CANDIDATE','APPROVE_HIRING_COST')")
-    public List<CandidateSimulationSummaryDto> candidatesWithHistory(@RequestParam Long paysId) {
-        return service.getCandidatesWithHistory(paysId);
+    public List<CandidateSimulationSummaryDto> candidatesWithHistory(@RequestParam(required = false) List<Long> paysId) {
+        // Drapeaux de la barre (`paysId=179,53`), bornés au périmètre du rôle.
+        return service.getCandidatesWithHistoryIn(tenantService.resolvePaysList(paysId));
     }
 
     /** All approval records for a candidate (used on the candidate detail page). */

@@ -28,8 +28,9 @@ public class PipelineController {
      * Global pipeline statistics: active candidates, average time-in-pipeline, urgent positions.
      */
     @GetMapping("/stats")
-    public ResponseEntity<PipelineStatsDto> getStats() {
-        return ResponseEntity.ok(pipelineService.getStats());
+    public ResponseEntity<PipelineStatsDto> getStats(
+            @RequestParam(required = false) List<Long> paysId) {
+        return ResponseEntity.ok(pipelineService.getStats(paysId));
     }
 
     /**
@@ -38,8 +39,9 @@ public class PipelineController {
      * Stages: SCREENING, ENTRETIEN, OFFRE, RECRUTE, REJETE
      */
     @GetMapping("/kanban")
-    public ResponseEntity<List<KanbanColumnDto>> getKanban() {
-        return ResponseEntity.ok(pipelineService.getKanban());
+    public ResponseEntity<List<KanbanColumnDto>> getKanban(
+            @RequestParam(required = false) List<Long> paysId) {
+        return ResponseEntity.ok(pipelineService.getKanban(paysId));
     }
 
     /**
@@ -51,9 +53,10 @@ public class PipelineController {
     public ResponseEntity<Page<KanbanCandidateDto>> getCandidates(
             @RequestParam(required = false) String stage,
             @RequestParam(required = false) String search,
+            @RequestParam(required = false) List<Long> paysId,
             @PageableDefault(size = 15) Pageable pageable) {
 
-        return ResponseEntity.ok(pipelineService.getCandidatesPaged(stage, search, pageable));
+        return ResponseEntity.ok(pipelineService.getCandidatesPaged(stage, search, paysId, pageable));
     }
 
     /**
@@ -75,8 +78,9 @@ public class PipelineController {
      * 20 most recent stage-change events sourced from the audit_log table.
      */
     @GetMapping("/activity")
-    public ResponseEntity<List<PipelineActivityDto>> getActivity() {
-        return ResponseEntity.ok(pipelineService.getRecentActivity());
+    public ResponseEntity<List<PipelineActivityDto>> getActivity(
+            @RequestParam(required = false) List<Long> paysId) {
+        return ResponseEntity.ok(pipelineService.getRecentActivity(paysId));
     }
 
     /**
@@ -85,7 +89,8 @@ public class PipelineController {
      * actuals (HIRED candidates) for the last 6 months.
      */
     @GetMapping("/objectives")
-    public ResponseEntity<List<PipelineObjectiveDto>> getObjectives() {
-        return ResponseEntity.ok(pipelineService.getObjectives());
+    public ResponseEntity<List<PipelineObjectiveDto>> getObjectives(
+            @RequestParam(required = false) List<Long> paysId) {
+        return ResponseEntity.ok(pipelineService.getObjectives(paysId));
     }
 }

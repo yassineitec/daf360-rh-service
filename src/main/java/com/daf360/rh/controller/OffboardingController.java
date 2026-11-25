@@ -68,7 +68,7 @@ public class OffboardingController {
 
     @GetMapping("/api/hr/offboarding")
     public List<OffboardingWorkflowInstanceDto> listWorkflowInstances(
-            @RequestParam(required = false) Long paysId,
+            @RequestParam(required = false) List<Long> paysId,   // un ou plusieurs (drapeaux de la navbar)
             @RequestParam(required = false) String status) {
         return offboardingService.listWorkflowInstances(paysId, status);
     }

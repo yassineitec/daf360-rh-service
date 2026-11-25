@@ -9,6 +9,11 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+/**
+ * {@code paysId} : un ou plusieurs pays (drapeaux cochés dans la navbar), en liste
+ * ({@code paysId=179,64} ou {@code paysId=179&paysId=64}). Absent = « Tous les pays » du
+ * périmètre du rôle. Voir {@code TenantService#resolvePaysList}.
+ */
 @RestController
 @RequestMapping("/api/hr/dashboard")
 @RequiredArgsConstructor
@@ -19,14 +24,14 @@ public class DashboardController {
     @GetMapping("/stats")
     ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<DashboardStatsDto> getStats(
-            @RequestParam(required = false) Long paysId) {
+            @RequestParam(required = false) List<Long> paysId) {
         return ResponseEntity.ok(dashboardService.getStats(paysId));
     }
 
     @GetMapping("/workforce")
     ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<WorkforceStatsDto> getWorkforce(
-            @RequestParam(required = false) Long paysId,
+            @RequestParam(required = false) List<Long> paysId,
             @RequestParam(required = false) Long departmentId) {
         return ResponseEntity.ok(dashboardService.getWorkforceStats(paysId, departmentId));
     }
@@ -34,7 +39,7 @@ public class DashboardController {
     @GetMapping("/completion")
     ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<ProfileCompletionDto> getCompletion(
-            @RequestParam(required = false) Long paysId) {
+            @RequestParam(required = false) List<Long> paysId) {
         return ResponseEntity.ok(dashboardService.getCompletion(paysId));
     }
 
@@ -42,14 +47,14 @@ public class DashboardController {
     ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<PreviewResponse<ProbationAlertDto>> getProbation(
             @RequestParam(defaultValue = "30") int joursMax,
-            @RequestParam(required = false) Long paysId) {
+            @RequestParam(required = false) List<Long> paysId) {
         return ResponseEntity.ok(dashboardService.getProbationAlerts(joursMax, paysId));
     }
 
     @GetMapping("/anniversaires")
     ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<AnniversaireDto>> getAnniversaires(
-            @RequestParam(required = false) Long paysId) {
+            @RequestParam(required = false) List<Long> paysId) {
         return ResponseEntity.ok(dashboardService.getAnniversaires(0, paysId));
     }
 
@@ -57,14 +62,14 @@ public class DashboardController {
     ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<NouvelEmployeDto>> getNouveaux(
             @RequestParam(defaultValue = "10") int limit,
-            @RequestParam(required = false) Long paysId) {
+            @RequestParam(required = false) List<Long> paysId) {
         return ResponseEntity.ok(dashboardService.getNouveauxEmployes(limit, paysId));
     }
 
     @GetMapping("/missing-documents")
     ////@PreAuthorize("isAuthenticated()")
     public ResponseEntity<PreviewResponse<MissingDocumentDto>> getMissingDocuments(
-            @RequestParam(required = false) Long paysId,
+            @RequestParam(required = false) List<Long> paysId,
             // false = aperçu de la carte d'accueil (5 collaborateurs) ; true = liste complète
             // de la pop-up « Voir tout ».
             @RequestParam(defaultValue = "false") boolean all,

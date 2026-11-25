@@ -128,15 +128,18 @@ public class LeaveModificationController {
                                        @RequestParam(defaultValue = "10") int size,
                                        @RequestParam(required = false) String sort,
                                        @RequestParam(required = false) String dir,
-                                       @RequestParam(defaultValue = "fr") String lang) {
-        return envelope(service.hrQueue(PageRequest.of(page, size, sortOf(sort, dir)), lang));
+                                       @RequestParam(defaultValue = "fr") String lang,
+                                       // Drapeaux de la navbar : paysId=179,64 (absent = tout le périmètre).
+                                       @RequestParam(required = false) java.util.List<Long> paysId) {
+        return envelope(service.hrQueue(paysId, PageRequest.of(page, size, sortOf(sort, dir)), lang));
     }
 
     /** Badge counts for both queues in one call. */
     @GetMapping("/counts")
     @PreAuthorize("isAuthenticated()")
-    public Map<String, Long> counts(Authentication auth) {
-        return service.counts(actorId(auth));
+    public Map<String, Long> counts(@RequestParam(required = false) java.util.List<Long> paysId,
+                                    Authentication auth) {
+        return service.counts(actorId(auth), paysId);
     }
 
     /** Every proposal filed against one congé, for its detail view. */

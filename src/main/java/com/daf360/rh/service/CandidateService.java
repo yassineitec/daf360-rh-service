@@ -332,15 +332,17 @@ public class CandidateService {
 
     @Transactional(readOnly = true)
     public Page<CandidateListItem> listCandidates(CandidateStatus status, String stage,
-                                                   Long paysId, String search,
+                                                   List<Long> paysIds, String search,
                                                    CandidateListFilter filter, Pageable pageable) {
-        // Enforce tenant isolation: non-admin users can only see their own entity's candidates.
-        Long effectivePaysId = tenantService.getEffectivePaysId();
-        Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : paysId;
+        // Les pays cochés dans la navbar, croisés avec le périmètre du rôle (OWN / LIST / ALL).
+        // Avant : getEffectivePaysId() écrasait tout sur le pays de l'utilisateur, sauf rôle ALL.
+        com.daf360.rh.security.PaysFilter pays =
+                com.daf360.rh.security.PaysFilter.of(tenantService.resolvePaysList(paysIds));
 
-        // Calendar days as the entity sees them; UTC when the entity has no zone (or the
-        // admin views every entity). `createdTo` is inclusive, so the bound is the next day.
-        ZoneId zone = resolvedPaysId != null ? paysTimezoneService.zoneFor(resolvedPaysId) : null;
+        // Calendar days as the entity sees them; UTC when several entities (or every one) are
+        // on screen, or the entity has no zone. `createdTo` is inclusive, so the bound is the next day.
+        ZoneId zone = !pays.unfiltered() && pays.ids().size() == 1
+                ? paysTimezoneService.zoneFor(pays.ids().get(0)) : null;
         if (zone == null) zone = ZoneOffset.UTC;
         OffsetDateTime createdFrom = filter.createdFrom() == null ? null
                 : filter.createdFrom().atStartOfDay(zone).toOffsetDateTime();
@@ -356,9 +358,10 @@ public class CandidateService {
                 ? PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), Sort.by(Sort.Direction.DESC, "createdAt"))
                 : pageable;
         Page<Candidate> page = byStage
-                ? candidateRepo.searchByStatusesAndSearch(stageToStatuses(stage), resolvedPaysId, search,
+                ? candidateRepo.searchByStatusesAndSearch(stageToStatuses(stage),
+                        pays.unfiltered(), pays.idsOrPlaceholder(), search,
                         filter.departmentId(), demandId, filter.spontaneous(), createdFrom, createdTo, stagePage)
-                : candidateRepo.searchPaged(status, resolvedPaysId, search,
+                : candidateRepo.searchPaged(status, pays.unfiltered(), pays.idsOrPlaceholder(), search,
                         filter.departmentId(), demandId, filter.spontaneous(), createdFrom, createdTo, pageable);
 
         Map<Long, String> contractLabels = resolveEmploymentTypeLabels(page.getContent());
@@ -441,10 +444,12 @@ public class CandidateService {
      * are tenant-scoped when the caller resolves to a specific pays.
      */
     @Transactional(readOnly = true)
-    public CandidateDashboardStats getDashboardStats() {
-        Long paysId = tenantService.getEffectivePaysId();
-        String scope    = paysId != null ? " AND pays_id = ?" : "";
-        Object[] args   = paysId != null ? new Object[]{ paysId } : new Object[]{};
+    public CandidateDashboardStats getDashboardStats(List<Long> requestedPaysIds) {
+        // Les pays cochés dans la navbar, dans le périmètre du rôle (plus seulement le sien).
+        com.daf360.rh.security.PaysFilter pays =
+                com.daf360.rh.security.PaysFilter.of(tenantService.resolvePaysList(requestedPaysIds));
+        String scope    = pays.unfiltered() ? "" : pays.and("pays_id");
+        Object[] args   = pays.params().toArray();
 
         long total  = firstLong("SELECT COUNT(*) FROM [dbo].[candidates] WHERE 1=1" + scope, args);
 
@@ -472,9 +477,8 @@ public class CandidateService {
                 "  AND accepted_at <  DATEADD(DAY,-90,SYSDATETIMEOFFSET())" + scope, args);
         Double avgDelta = (avgCurr != null && avgPrev != null) ? avgCurr - avgPrev : null;
 
-        long urgent = paysId != null
-                ? recruitmentDemandRepo.countPendingByPays(paysId)
-                : firstLong("SELECT COUNT(*) FROM [dbo].[recruitment_demands] WHERE statut = 'EN_ATTENTE'", new Object[]{});
+        long urgent = firstLong(
+                "SELECT COUNT(*) FROM [dbo].[recruitment_demands] WHERE statut = 'EN_ATTENTE'" + scope, args);
 
         // ── Funnel-health KPIs ──────────────────────────────────────────────────
         long active = firstLong(
@@ -487,7 +491,7 @@ public class CandidateService {
         // checked via sys.tables so a missing table can't poison the transaction.
         Double offerAcceptanceRate = null;
         if (firstLong("SELECT COUNT(*) FROM sys.tables WHERE name = 'job_offers'", new Object[]{}) > 0) {
-            String offerScope = paysId != null ? " AND c.pays_id = ?" : "";
+            String offerScope = pays.unfiltered() ? "" : pays.and("c.pays_id");
             // One row PER CANDIDATE, not per offer row.
             //
             // Since V98 job_offers holds a row per negotiation round, and the old query

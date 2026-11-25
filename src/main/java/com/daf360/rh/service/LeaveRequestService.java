@@ -1145,22 +1145,30 @@ public class LeaveRequestService {
      * this since V74 and the leave module had never been brought in line.
      */
     @Transactional(readOnly = true)
-    public Page<LeaveRequest> global(Long paysId, DemandeEtat etat, String type, LocalDate from,
+    public Page<LeaveRequest> global(List<Long> paysIds, DemandeEtat etat, String type, LocalDate from,
                                      LocalDate to, Long collaborateurId, String search,
                                      Pageable pageable) {
-        PaysScopeContext.Scope scope = tenantService.getPaysScope();
+        // Les drapeaux de la navbar (plusieurs pays possibles), déjà croisés avec le périmètre
+        // du rôle par resolvePaysList — ils remplacent donc le plafond ET l'ancien filtre
+        // `paysId` à un seul pays, laissé à null.
+        com.daf360.rh.security.PaysFilter pays = paysFilter(paysIds);
         String term = normalise(search);
         return repository.findGlobal(
-                scope.unfiltered() ? 1 : 0, scope.idsOrPlaceholder(),
-                paysId, etat, type, from, to, collaborateurId,
+                pays.unfiltered() ? 1 : 0, pays.idsOrPlaceholder(),
+                null, etat, type, from, to, collaborateurId,
                 term, searchIds(term), pageable);
     }
 
     @Transactional(readOnly = true)
-    public Map<String, Long> globalCounts(Long paysId) {
-        PaysScopeContext.Scope scope = tenantService.getPaysScope();
+    public Map<String, Long> globalCounts(List<Long> paysIds) {
+        com.daf360.rh.security.PaysFilter pays = paysFilter(paysIds);
         return zeroFilled(repository.countByStateGlobal(
-                scope.unfiltered() ? 1 : 0, scope.idsOrPlaceholder(), paysId));
+                pays.unfiltered() ? 1 : 0, pays.idsOrPlaceholder(), null));
+    }
+
+    /** Les pays cochés dans la navbar, croisés avec le périmètre du rôle (OWN / LIST / ALL). */
+    private com.daf360.rh.security.PaysFilter paysFilter(List<Long> requested) {
+        return com.daf360.rh.security.PaysFilter.of(tenantService.resolvePaysList(requested));
     }
 
     /**
@@ -1171,17 +1179,23 @@ public class LeaveRequestService {
      * shows the whole company's, which is an audit view and deliberately a deliberate act.
      */
     @Transactional(readOnly = true)
-    public Page<LeaveRequest> settled(Long actorId, boolean mineOnly, DemandeEtat etat, String type,
-                                      Long collaborateurId, LocalDate from, LocalDate to,
+    public Page<LeaveRequest> settled(Long actorId, boolean mineOnly, List<Long> paysIds, DemandeEtat etat,
+                                      String type, Long collaborateurId, LocalDate from, LocalDate to,
                                       String search, Pageable pageable) {
+        // Par pays aussi (2026-11-23) : la vue « toutes les régularisations » montrait celles
+        // de toutes les entités, quel que soit le périmètre du rôle.
+        com.daf360.rh.security.PaysFilter pays = paysFilter(paysIds);
         String term = normalise(search);
-        return repository.findSettled(mineOnly ? actorId : null, etat, type, collaborateurId,
-                from, to, term, searchIds(term), pageable);
+        return repository.findSettled(mineOnly ? actorId : null,
+                pays.unfiltered() ? 1 : 0, pays.idsOrPlaceholder(),
+                etat, type, collaborateurId, from, to, term, searchIds(term), pageable);
     }
 
     @Transactional(readOnly = true)
-    public Map<String, Long> settledCounts(Long actorId, boolean mineOnly) {
-        return zeroFilled(repository.countByStateSettled(mineOnly ? actorId : null));
+    public Map<String, Long> settledCounts(Long actorId, boolean mineOnly, List<Long> paysIds) {
+        com.daf360.rh.security.PaysFilter pays = paysFilter(paysIds);
+        return zeroFilled(repository.countByStateSettled(mineOnly ? actorId : null,
+                pays.unfiltered() ? 1 : 0, pays.idsOrPlaceholder()));
     }
 
     /**

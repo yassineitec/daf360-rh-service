@@ -333,7 +333,8 @@ public class ConfigurableListService {
      * reads, rather than locking an incomplete session out of a screen it could use before.
      */
     private void assertCanWritePays(Long paysId) {
-        if (paysId == null || tenantService.isAdmin()) return;
+        // Un pays du périmètre du rôle (OWN / LIST / ALL) — plus « tout admin ».
+        if (paysId == null || tenantService.allows(paysId)) return;
         Long own = TenantContext.get();
         if (own != null && !own.equals(paysId)) {
             throw new AppException(ErrorCode.FORBIDDEN,

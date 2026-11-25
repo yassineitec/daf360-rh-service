@@ -168,7 +168,19 @@ public class MissionService {
     /** The billeterie queue: everything a manager submitted and RH has not answered yet. */
     @Transactional(readOnly = true)
     public List<MissionDto> listPendingHr() {
-        return toDtos(pendingFor(MissionStatus.PENDING_HR));
+        return listPendingHr(null);
+    }
+
+    /**
+     * La file billetterie, pour les drapeaux cochés dans la navbar croisés avec le périmètre
+     * du rôle ; rien de coché = tout ce périmètre. Avant (2026-11-23) : le seul pays de
+     * l'utilisateur pour tout rôle non-ALL.
+     */
+    public List<MissionDto> listPendingHr(List<Long> requestedPaysIds) {
+        List<Long> paysIds = tenantService.resolvePaysList(requestedPaysIds);
+        return toDtos(paysIds == null
+                ? missionRepo.findByStatusOrderByStartDateAsc(MissionStatus.PENDING_HR)
+                : missionRepo.findByStatusAndPaysIdInOrderByStartDateAsc(MissionStatus.PENDING_HR, paysIds));
     }
 
     /**
@@ -309,6 +321,17 @@ public class MissionService {
         return toDtos(pendingFor(MissionStatus.PENDING_FINANCE));
     }
 
+    /**
+     * La file finance, pour les drapeaux cochés croisés avec le périmètre du rôle ; rien de
+     * coché = tout ce périmètre. Avant (2026-11-24) : toutes les missions, tous pays confondus.
+     */
+    public List<MissionDto> listPendingFinance(List<Long> requestedPaysIds) {
+        List<Long> paysIds = tenantService.resolvePaysList(requestedPaysIds);
+        return toDtos(paysIds == null
+                ? missionRepo.findByStatusOrderByStartDateAsc(MissionStatus.PENDING_FINANCE)
+                : missionRepo.findByStatusAndPaysIdInOrderByStartDateAsc(MissionStatus.PENDING_FINANCE, paysIds));
+    }
+
     public MissionDto approveByFinance(Long missionId, String notes, Long callerId) {
         Mission mission = requirePendingFinance(missionId);
         mission.setStatus(MissionStatus.APPROVED);
@@ -416,12 +439,28 @@ public class MissionService {
 
     @Transactional(readOnly = true)
     public List<MissionChangeRequestDto> listPendingChangeRequests() {
+        return listPendingChangeRequests(null);
+    }
+
+    /**
+     * Les demandes de changement en attente, limitées au pays de leur MISSION : drapeaux de
+     * la navbar croisés avec le périmètre du rôle. Avant (2026-11-23) aucune limite : chaque
+     * RH voyait les demandes de toutes les entités.
+     */
+    public List<MissionChangeRequestDto> listPendingChangeRequests(List<Long> requestedPaysIds) {
+        List<Long> paysIds = tenantService.resolvePaysList(requestedPaysIds);
         List<MissionChangeRequest> requests =
                 changeRepo.findByStatusOrderByCreatedAtAsc(MissionChangeRequestStatus.PENDING);
         Map<Long, Mission> missions = missionRepo.findAllById(
                 requests.stream().map(MissionChangeRequest::getMissionId).distinct().toList())
                 .stream().collect(Collectors.toMap(Mission::getId, m -> m));
-        return requests.stream().map(r -> toChangeDto(r, missions.get(r.getMissionId()))).toList();
+        return requests.stream()
+                .filter(r -> {
+                    if (paysIds == null) return true;
+                    Mission m = missions.get(r.getMissionId());
+                    return m != null && m.getPaysId() != null && paysIds.contains(m.getPaysId());
+                })
+                .map(r -> toChangeDto(r, missions.get(r.getMissionId()))).toList();
     }
 
     /**

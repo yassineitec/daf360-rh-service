@@ -40,6 +40,16 @@ import java.util.stream.Collectors;
 public class PipelineService {
 
     private final JdbcTemplate jdbc;
+    private final com.daf360.rh.security.TenantService tenantService;
+
+    /**
+     * Les pays cochés dans la navbar, croisés avec le périmètre du rôle. Avant (2026-11-23)
+     * aucune lecture de ce service n'était filtrée par pays : chaque RH voyait les candidats
+     * de toutes les entités.
+     */
+    private com.daf360.rh.security.PaysFilter pays(List<Long> requested) {
+        return com.daf360.rh.security.PaysFilter.of(tenantService.resolvePaysList(requested));
+    }
 
     // ── Stage constants ────────────────────────────────────────────────────────
 
@@ -161,7 +171,8 @@ public class PipelineService {
 
     // ── Stats ──────────────────────────────────────────────────────────────────
 
-    public PipelineStatsDto getStats() {
+    public PipelineStatsDto getStats(List<Long> requestedPaysIds) {
+        var pays = pays(requestedPaysIds);
         String sql = """
             SELECT
                 SUM(CASE WHEN status IN ('PENDING','ACCEPTED','OFFER_SENT','HR_IN_PROGRESS',
@@ -183,9 +194,9 @@ public class PipelineService {
                          THEN 1 ELSE 0 END)                                      AS urgent
             FROM [dbo].[candidates]
             WHERE status <> 'ARCHIVED'
-            """;
+            """ + pays.and("pays_id");
 
-        Map<String, Object> row = jdbc.queryForMap(sql);
+        Map<String, Object> row = jdbc.queryForMap(sql, pays.params().toArray());
         long   total        = toLong(row.get("total"));
         long   enEntretien  = toLong(row.get("en_entretien"));
         double scoreMoyen   = toDouble(row.get("score_moyen"));
@@ -204,7 +215,10 @@ public class PipelineService {
 
     // ── Recent activity ────────────────────────────────────────────────────────
 
-    public List<PipelineActivityDto> getRecentActivity() {
+    public List<PipelineActivityDto> getRecentActivity(List<Long> requestedPaysIds) {
+        var pays = pays(requestedPaysIds);
+        // Filtré par pays : le pays est celui du CANDIDAT. Un évènement dont le candidat a
+        // disparu (c.pays_id NULL) ne sort donc plus que sans filtre.
         String sql = """
             SELECT TOP 20
                 al.id,
@@ -218,10 +232,11 @@ public class PipelineService {
             LEFT JOIN [dbo].[candidates] c ON c.id = TRY_CAST(al.entity_id AS BIGINT)
             LEFT JOIN [dbo].[Users]      u ON u.id = TRY_CAST(al.user_id   AS BIGINT)
             WHERE al.entity_type = 'CANDIDATE'
+            """ + pays.and("c.pays_id") + """
             ORDER BY al.timestamp DESC
             """;
 
-        return jdbc.queryForList(sql).stream()
+        return jdbc.queryForList(sql, pays.params().toArray()).stream()
                 .map(r -> {
                     String action = str(r, "action");
                     String firstName = str(r, "first_name");
@@ -280,18 +295,20 @@ public class PipelineService {
 
     // ── Objectives ─────────────────────────────────────────────────────────────
 
-    public List<PipelineObjectiveDto> getObjectives() {
+    public List<PipelineObjectiveDto> getObjectives(List<Long> requestedPaysIds) {
+        var pays = pays(requestedPaysIds);
         // Actuals: HIRED candidates grouped by month of updated_at (last 6 months)
         String actualsSql = """
             SELECT FORMAT(updated_at, 'yyyy-MM') AS ym, COUNT(*) AS cnt
             FROM [dbo].[candidates]
             WHERE status = 'HIRED'
               AND updated_at >= DATEADD(month, -6, GETDATE())
+            """ + pays.and("pays_id") + """
             GROUP BY FORMAT(updated_at, 'yyyy-MM')
             """;
 
         Map<String, Integer> actuals = new HashMap<>();
-        jdbc.queryForList(actualsSql).forEach(r ->
+        jdbc.queryForList(actualsSql, pays.params().toArray()).forEach(r ->
                 actuals.put(str(r, "ym"), (int) toLong(r.get("cnt"))));
 
         // Targets: sum headcount from recruitment_demands by target_start_date month
@@ -300,11 +317,12 @@ public class PipelineService {
             FROM [dbo].[recruitment_demands]
             WHERE target_start_date >= DATEADD(month, -6, GETDATE())
               AND target_start_date <= DATEADD(month, 1, GETDATE())
+            """ + pays.and("pays_id") + """
             GROUP BY FORMAT(target_start_date, 'yyyy-MM')
             """;
 
         Map<String, Integer> targets = new HashMap<>();
-        jdbc.queryForList(targetsSql).forEach(r ->
+        jdbc.queryForList(targetsSql, pays.params().toArray()).forEach(r ->
                 targets.put(str(r, "ym"), (int) toLong(r.get("total"))));
 
         // Build last 6 months (oldest → newest)
@@ -326,11 +344,13 @@ public class PipelineService {
 
     // ── Kanban ─────────────────────────────────────────────────────────────────
 
-    public List<KanbanColumnDto> getKanban() {
+    public List<KanbanColumnDto> getKanban(List<Long> requestedPaysIds) {
+        var pays = pays(requestedPaysIds);
         String sql = "SELECT " + KANBAN_COLUMNS + KANBAN_FROM +
-                " WHERE c.status IN (" + KANBAN_IN + ") ORDER BY c.created_at DESC";
+                " WHERE c.status IN (" + KANBAN_IN + ")" + pays.and("c.pays_id") +
+                "ORDER BY c.created_at DESC";
 
-        List<Map<String, Object>> rows = jdbc.queryForList(sql);
+        List<Map<String, Object>> rows = jdbc.queryForList(sql, pays.params().toArray());
 
         Map<String, List<KanbanCandidateDto>> byStage = rows.stream()
                 .collect(Collectors.groupingBy(
@@ -350,12 +370,15 @@ public class PipelineService {
 
     // ── Paginated list ─────────────────────────────────────────────────────────
 
-    public Page<KanbanCandidateDto> getCandidatesPaged(String stage, String search, Pageable pageable) {
+    public Page<KanbanCandidateDto> getCandidatesPaged(String stage, String search, List<Long> requestedPaysIds,
+                                                       Pageable pageable) {
         String inClause = resolveInClause(stage);
         boolean hasSearch = search != null && !search.isBlank();
+        var pays = pays(requestedPaysIds);
 
-        StringBuilder where = new StringBuilder("WHERE c.status IN (").append(inClause).append(")");
-        List<Object> args = new ArrayList<>();
+        StringBuilder where = new StringBuilder("WHERE c.status IN (").append(inClause).append(")")
+                .append(pays.and("c.pays_id"));
+        List<Object> args = new ArrayList<>(pays.params());
 
         if (hasSearch) {
             String like = "%" + search.trim() + "%";

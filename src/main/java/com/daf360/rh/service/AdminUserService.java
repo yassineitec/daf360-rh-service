@@ -4,6 +4,7 @@ import com.daf360.rh.common.PersonNameFormatter;
 import com.daf360.rh.common.UserScope;
 import com.daf360.rh.exception.AppException;
 import com.daf360.rh.exception.ErrorCode;
+import com.daf360.rh.security.TenantService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -76,6 +77,7 @@ public class AdminUserService {
         "VALUES (?, ?, ?, ?, ?, ?, 1, ?, SYSDATETIMEOFFSET())";
 
     private final JdbcTemplate jdbc;
+    private final TenantService tenantService;
 
     // ── Read ──────────────────────────────────────────────────────────────────
 
@@ -85,7 +87,7 @@ public class AdminUserService {
      */
     @Transactional(readOnly = true)
     public List<AdminUserRow> list(String search, Boolean isEmployee,
-                                   Long paysId, Boolean onlyMissingProfile) {
+                                   List<Long> paysIds, Boolean onlyMissingProfile) {
         StringBuilder sql = new StringBuilder(LIST_SQL).append(" WHERE 1 = 1 ");
         List<Object> args = new ArrayList<>();
 
@@ -98,10 +100,7 @@ public class AdminUserService {
             sql.append("AND u.is_employee = ? ");
             args.add(isEmployee ? 1 : 0);
         }
-        if (paysId != null) {
-            sql.append("AND u.pays_id = ? ");
-            args.add(paysId);
-        }
+        appendPays(sql, args, paysIds);
         if (Boolean.TRUE.equals(onlyMissingProfile)) {
             sql.append("AND ep.id IS NULL ");
         }
@@ -115,7 +114,10 @@ public class AdminUserService {
 
     /** Counters for the header, so an admin sees the shape of the register at a glance. */
     @Transactional(readOnly = true)
-    public AdminUserStats stats() {
+    public AdminUserStats stats(List<Long> paysIds) {
+        StringBuilder where = new StringBuilder(" WHERE 1 = 1 ");
+        List<Object> args = new ArrayList<>();
+        appendPays(where, args, paysIds);
         return jdbc.queryForObject("""
             SELECT COUNT(*) AS total,
                    SUM(CASE WHEN u.is_employee = 1 THEN 1 ELSE 0 END) AS employees,
@@ -124,7 +126,7 @@ public class AdminUserService {
                    SUM(CASE WHEN u.last_login_at IS NULL THEN 1 ELSE 0 END)     AS never_logged_in
             FROM [dbo].[Users] u
             LEFT JOIN [dbo].[employee_profiles] ep ON ep.user_id = u.id AND ep.deleted = 0
-            """, (rs, rn) -> {
+            """ + where, (rs, rn) -> {
             AdminUserStats s = new AdminUserStats();
             s.setTotal(rs.getInt("total"));
             s.setEmployees(rs.getInt("employees"));
@@ -132,7 +134,22 @@ public class AdminUserService {
             s.setMissingProfile(rs.getInt("missing_profile"));
             s.setNeverLoggedIn(rs.getInt("never_logged_in"));
             return s;
-        });
+        }, args.toArray());
+    }
+
+    /**
+     * Les drapeaux de la barre (`paysId=179,64`), bornés au périmètre du rôle
+     * ({@link TenantService#resolvePaysList}) : null = aucun filtre (rôle « Tous les pays » sans
+     * drapeau). Un compte sans pays (compte technique) n'apparaît donc que sans filtre.
+     */
+    private void appendPays(StringBuilder sql, List<Object> args, List<Long> requested) {
+        List<Long> pays = tenantService.resolvePaysList(requested);
+        if (pays == null) return;
+        if (pays.isEmpty()) { sql.append("AND 1 = 0 "); return; }
+        sql.append("AND u.pays_id IN (")
+           .append(String.join(",", java.util.Collections.nCopies(pays.size(), "?")))
+           .append(") ");
+        args.addAll(pays);
     }
 
     // ── Write ─────────────────────────────────────────────────────────────────

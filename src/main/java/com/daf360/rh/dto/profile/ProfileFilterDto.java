@@ -7,6 +7,12 @@ import java.time.LocalDate;
 @Data
 public class ProfileFilterDto {
     private Long      paysId;
+    /**
+     * Plusieurs pays (drapeaux cochés dans la navbar) — lu par /employees et
+     * /employees/stats, en plus de {@link #paysId}. Vide ou null = pas de restriction
+     * au-delà de la portée du jeton.
+     */
+    private java.util.List<Long> paysIds;
     private String    status;        // LifecycleStatus enum value
     private String    department;    // departments.label_fr
     private String    grade;         // grades.label_fr

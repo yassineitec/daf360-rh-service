@@ -60,6 +60,7 @@ public class EmployeeRequestService {
     private final NotificationRoutingService   notificationRoutingService;
     private final AuditService                 auditService;
     private final JdbcTemplate                 jdbc;
+    private final com.daf360.rh.security.TenantService tenantService;
 
     // ── Submit ────────────────────────────────────────────────────────────────
 
@@ -246,12 +247,23 @@ public class EmployeeRequestService {
                     filter.getProfileId(), withDefaultSort(pageable))
                     .map(r -> toDto(r, safeType(r.getRequestTypeId())));
         }
-        if (filter.getPaysId() != null && filter.getStatus() != null) {
-            return requestRepo.findByPaysIdAndStatus(
-                    filter.getPaysId(), filter.getStatus(), withDefaultSort(pageable))
-                    .map(r -> toDto(r, safeType(r.getRequestTypeId())));
+        // Vue RH (inbox, historique) : par PAYS. Avant (2026-11-23) le pays demandé était pris
+        // tel quel, et un paysId SANS statut tombait sur findAll — toutes les demandes de
+        // toutes les entités. Désormais : les drapeaux de la navbar croisés avec le périmètre
+        // du rôle ; rien de demandé = tout ce périmètre ; null = rôle « Tous les pays ».
+        List<Long> paysIds = tenantService.resolvePaysList(filter.getPaysIds());
+        Pageable sorted = withDefaultSort(pageable);
+        Page<EmployeeRequest> page;
+        if (paysIds == null) {
+            page = filter.getStatus() != null
+                    ? requestRepo.findByStatus(filter.getStatus(), sorted)
+                    : requestRepo.findAll(sorted);
+        } else {
+            page = filter.getStatus() != null
+                    ? requestRepo.findByPaysIdInAndStatus(paysIds, filter.getStatus(), sorted)
+                    : requestRepo.findByPaysIdIn(paysIds, sorted);
         }
-        return requestRepo.findAll(pageable).map(r -> toDto(r, safeType(r.getRequestTypeId())));
+        return page.map(r -> toDto(r, safeType(r.getRequestTypeId())));
     }
 
     /**

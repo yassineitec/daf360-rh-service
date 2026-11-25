@@ -184,7 +184,7 @@ public class EmployeeProfileController {
     @GetMapping("/employees")
     // //@PreAuthorize("hasAnyAuthority('HR_UPDATE_PROFILE','HR_CREATE_PROFILE','HR_ADMIN_ROLES','ADMIN_ROLES')")
     public ResponseEntity<Page<EmployeeListItemDto>> listAllEmployees(
-            @RequestParam(required = false) Long   pays,
+            @RequestParam(required = false) List<Long> pays,  // un ou plusieurs pays_id (drapeaux de la navbar) : pays=179,64
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String department,
@@ -206,7 +206,7 @@ public class EmployeeProfileController {
         ProfileFilterDto filter = new ProfileFilterDto();
         filter.setSearch(search);
         filter.setStatus(status);
-        filter.setPaysId(pays);
+        filter.setPaysIds(pays);
         filter.setDepartment(department);
         filter.setGrade(grade);
         filter.setContract(contract);
@@ -231,9 +231,9 @@ public class EmployeeProfileController {
      */
     @GetMapping("/employees/stats")
     public ResponseEntity<com.daf360.rh.dto.profile.EmployeeStatsDto> employeeStats(
-            @RequestParam(required = false) Long pays) {
+            @RequestParam(required = false) List<Long> pays) {
         ProfileFilterDto filter = new ProfileFilterDto();
-        filter.setPaysId(pays);
+        filter.setPaysIds(pays);
         return ResponseEntity.ok(profileService.employeeStats(filter));
     }
 

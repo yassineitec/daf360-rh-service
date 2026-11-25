@@ -163,8 +163,13 @@ public class ReferenceDataController {
 
     @GetMapping("/departments")
     @PreAuthorize("isAuthenticated()")
-    public List<RefDataItemDto> getDepartments(@RequestParam(required = false) Long paysId) {
-        return refService.getDepartments(readableP(paysId));
+    public List<RefDataItemDto> getDepartments(@RequestParam(required = false) List<Long> paysId) {
+        // Un pays (écrans RH) ou plusieurs (`paysId=179,53` : drapeaux de l'annuaire du shell),
+        // bornés au périmètre du rôle ; null = aucun filtre (rôle « Tous les pays »).
+        if (paysId == null || paysId.size() <= 1) {
+            return refService.getDepartments(readableP(paysId == null || paysId.isEmpty() ? null : paysId.get(0)));
+        }
+        return refService.getDepartments(tenantService.resolvePaysList(paysId));
     }
 
     @PostMapping("/departments")
@@ -265,6 +270,46 @@ public class ReferenceDataController {
     @PreAuthorize("isAuthenticated()")
     public List<TimezoneOptionDto> getTimezones() {
         return paysTimezoneService.timezoneCatalog();
+    }
+
+    /** Un pays du sélecteur de drapeaux de la navbar (shell). */
+    public record HeaderPaysDto(Long id, String labelFr, String labelEn, String isoCode) {}
+
+    /**
+     * Les pays du sélecteur de drapeaux de la navbar — le PÉRIMÈTRE DU RÔLE de l'appelant.
+     *
+     * <ul>
+     *   <li>Rôle « Pays de l'utilisateur » / « Liste de pays » : exactement les pays du rôle,
+     *       y compris ceux qui n'ont encore aucun collaborateur (une entité peut avoir des
+     *       affaires ou des clients en finance avant d'avoir des salariés RH).</li>
+     *   <li>Rôle « Tous les pays » (ou portée non résolue) : la table compte environ 240
+     *       pays ; on ne propose que ceux qui ont au moins un collaborateur actif, comme le
+     *       faisait le sélecteur jusqu'ici.</li>
+     * </ul>
+     * Le code ISO donne le drapeau ({@code fi fi-tn}) ; un pays supprimé n'est jamais proposé.
+     */
+    @GetMapping("/pays/header")
+    @PreAuthorize("isAuthenticated()")
+    public List<HeaderPaysDto> getHeaderPays() {
+        PaysScopeContext.Scope scope = tenantService.getPaysScope();
+        org.springframework.jdbc.core.RowMapper<HeaderPaysDto> row = (rs, i) -> new HeaderPaysDto(
+                rs.getLong("id"), rs.getString("french_label"),
+                rs.getString("english_label"), rs.getString("iso_code"));
+        if (scope.unfiltered()) {
+            return jdbc.query(
+                    "SELECT p.id, p.french_label, p.english_label, p.iso_code FROM [dbo].[pays] p " +
+                    "WHERE ISNULL(p.deleted, 0) = 0 AND p.french_label IS NOT NULL " +
+                    "  AND EXISTS (SELECT 1 FROM [dbo].[Users] u WHERE u.pays_id = p.id " +
+                    "              AND (u.isActive = 1 OR u.isActive IS NULL) " +
+                    "              AND " + com.daf360.rh.common.UserScope.realPeople("u") + ") " +
+                    "ORDER BY p.french_label", row);
+        }
+        List<Long> ids = List.copyOf(scope.paysIds());
+        return jdbc.query(
+                "SELECT p.id, p.french_label, p.english_label, p.iso_code FROM [dbo].[pays] p " +
+                "WHERE ISNULL(p.deleted, 0) = 0 AND p.french_label IS NOT NULL " +
+                "  AND p.id IN (" + String.join(",", java.util.Collections.nCopies(ids.size(), "?")) + ") " +
+                "ORDER BY p.french_label", row, ids.toArray());
     }
 
     /** All entities with their configured zone; a null timezone means automation is disabled. */

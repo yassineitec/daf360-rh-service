@@ -76,8 +76,11 @@ public class CdiConversionController {
 
     /** {@code todo=true}: the requests waiting for the caller; otherwise all visible ones. */
     @GetMapping("/api/hr/cdi-conversions")
-    public List<CdiConversionDto> list(@RequestParam(defaultValue = "false") boolean todo, Authentication auth) {
-        return service.list(todo, actorId(auth));
+    public List<CdiConversionDto> list(@RequestParam(defaultValue = "false") boolean todo,
+                                       // Drapeaux de la navbar : paysId=179,64 (absent = tout le périmètre).
+                                       @RequestParam(required = false) List<Long> paysId,
+                                       Authentication auth) {
+        return service.list(todo, actorId(auth), paysId);
     }
 
     @GetMapping("/api/hr/cdi-conversions/{id}")

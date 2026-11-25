@@ -177,8 +177,9 @@ public class AutorisationController {
                                       @RequestParam(defaultValue = "10") int size,
                                       @RequestParam(required = false) String sort,
                                       @RequestParam(required = false) String dir,
-                                      @RequestParam(defaultValue = "fr") String lang) {
-        return envelope(service.global(etat, from, to,
+                                      @RequestParam(defaultValue = "fr") String lang,
+                                      @RequestParam(required = false) List<Long> paysId) {   // drapeaux de la navbar : 179,64
+        return envelope(service.global(paysId, etat, from, to,
                 PageRequest.of(page, size, sortOf(sort, dir))), lang);
     }
 
@@ -190,8 +191,9 @@ public class AutorisationController {
                                                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                                @RequestParam(required = false) String sort,
                                                @RequestParam(required = false) String dir,
-                                               @RequestParam(defaultValue = "fr") String lang) {
-        List<AutorisationDto> rows = mapper.toDtos(service.global(etat, from, to,
+                                               @RequestParam(defaultValue = "fr") String lang,
+                                               @RequestParam(required = false) List<Long> paysId) {   // drapeaux de la navbar : 179,64
+        List<AutorisationDto> rows = mapper.toDtos(service.global(paysId, etat, from, to,
                 PageRequest.of(0, XlsxExport.MAX_ROWS, sortOf(sort, dir))).getContent(), lang);
         boolean fr = !"en".equalsIgnoreCase(lang);
         return XlsxExport.response("autorisations.xlsx", fr ? "Autorisations" : "Short absences",
@@ -210,8 +212,9 @@ public class AutorisationController {
     @GetMapping("/counts")
     @PreAuthorize("isAuthenticated()")
     public Map<String, Long> counts(@RequestParam(defaultValue = "mine") String scope,
+                                    @RequestParam(required = false) List<Long> paysId,
                                     Authentication auth) {
-        return service.counts(actorId(auth), scope);
+        return service.counts(actorId(auth), scope, paysId);
     }
 
     // ═══ Administration — the per-entity rules ═══════════════════════════════

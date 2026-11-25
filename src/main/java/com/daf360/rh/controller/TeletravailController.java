@@ -178,8 +178,9 @@ public class TeletravailController {
                                       @RequestParam(defaultValue = "10") int size,
                                       @RequestParam(required = false) String sort,
                                       @RequestParam(required = false) String dir,
-                                      @RequestParam(defaultValue = "fr") String lang) {
-        return envelope(service.global(etat, from, to, PageRequest.of(page, size, sortOf(sort, dir))), lang);
+                                      @RequestParam(defaultValue = "fr") String lang,
+                                      @RequestParam(required = false) List<Long> paysId) {   // drapeaux de la navbar : 179,64
+        return envelope(service.global(paysId, etat, from, to, PageRequest.of(page, size, sortOf(sort, dir))), lang);
     }
 
     /** The global list as an Excel file — same filters and scope, unpaged up to MAX_ROWS. */
@@ -190,8 +191,9 @@ public class TeletravailController {
                                                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                                @RequestParam(required = false) String sort,
                                                @RequestParam(required = false) String dir,
-                                               @RequestParam(defaultValue = "fr") String lang) {
-        List<TeletravailDto> rows = mapper.toDtos(service.global(etat, from, to,
+                                               @RequestParam(defaultValue = "fr") String lang,
+                                               @RequestParam(required = false) List<Long> paysId) {   // drapeaux de la navbar : 179,64
+        List<TeletravailDto> rows = mapper.toDtos(service.global(paysId, etat, from, to,
                 PageRequest.of(0, XlsxExport.MAX_ROWS, sortOf(sort, dir))).getContent(), lang);
         boolean fr = !"en".equalsIgnoreCase(lang);
         return XlsxExport.response("teletravail.xlsx", fr ? "Télétravail" : "Remote work",
@@ -208,8 +210,8 @@ public class TeletravailController {
 
     @GetMapping("/counts")
     @PreAuthorize("isAuthenticated()")
-    public Map<String, Long> counts(@RequestParam(defaultValue = "mine") String scope, Authentication auth) {
-        return service.counts(actorId(auth), scope);
+    public Map<String, Long> counts(@RequestParam(defaultValue = "mine") String scope, @RequestParam(required = false) List<Long> paysId, Authentication auth) {
+        return service.counts(actorId(auth), scope, paysId);
     }
 
     // ═══ Administration — the per-entity rules ═══════════════════════════════

@@ -307,9 +307,32 @@ public class LeaveModificationService {
     /** HR's queue, inside the caller's country perimeter (V74). */
     @Transactional(readOnly = true)
     public Page<LeaveModificationDto> hrQueue(Pageable pageable, String lang) {
-        PaysScopeContext.Scope scope = tenantService.getPaysScope();
-        return page(repository.findForHr(ModificationState.PENDING_HR,
-                scope.all() ? 1 : 0, scopeIds(scope), pageable), lang);
+        return hrQueue(null, pageable, lang);
+    }
+
+    /** {@code paysIds} : drapeaux de la navbar ; vide = tout le périmètre (comportement d'avant). */
+    @Transactional(readOnly = true)
+    public Page<LeaveModificationDto> hrQueue(List<Long> paysIds, Pageable pageable, String lang) {
+        int[] all = new int[1];
+        List<Long> ids = hrScope(paysIds, all);
+        return page(repository.findForHr(ModificationState.PENDING_HR, all[0], ids, pageable), lang);
+    }
+
+    /**
+     * Le périmètre de la file RH : celui du rôle quand aucun drapeau n'est coché (règle
+     * d'origine, `scope.all()` + {@link #scopeIds}) ; sinon les drapeaux croisés avec ce
+     * périmètre par {@code TenantService.resolvePaysList}. {@code all[0]} reçoit 1/0.
+     */
+    private List<Long> hrScope(List<Long> paysIds, int[] all) {
+        if (paysIds == null || paysIds.isEmpty()) {
+            PaysScopeContext.Scope scope = tenantService.getPaysScope();
+            all[0] = scope.all() ? 1 : 0;
+            return scopeIds(scope);
+        }
+        com.daf360.rh.security.PaysFilter pays =
+                com.daf360.rh.security.PaysFilter.of(tenantService.resolvePaysList(paysIds));
+        all[0] = pays.unfiltered() ? 1 : 0;
+        return pays.idsOrPlaceholder();
     }
 
     /**
@@ -321,9 +344,15 @@ public class LeaveModificationService {
      */
     @Transactional(readOnly = true)
     public Map<String, Long> counts(Long userId) {
-        PaysScopeContext.Scope scope = tenantService.getPaysScope();
-        int all = scope.all() ? 1 : 0;
-        List<Long> ids = scopeIds(scope);
+        return counts(userId, null);
+    }
+
+    /** {@code paysIds} : drapeaux de la navbar pour les trois chiffres RH (pas « manager »). */
+    @Transactional(readOnly = true)
+    public Map<String, Long> counts(Long userId, List<Long> paysIds) {
+        int[] allFlag = new int[1];
+        List<Long> ids = hrScope(paysIds, allFlag);
+        int all = allFlag[0];
 
         Map<String, Long> out = new HashMap<>();
         out.put("manager",  repository.countByResponsableIdAndEtat(

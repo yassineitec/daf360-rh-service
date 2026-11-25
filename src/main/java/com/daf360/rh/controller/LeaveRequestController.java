@@ -304,7 +304,7 @@ public class LeaveRequestController {
 
     @GetMapping("/global")
     @PreAuthorize("hasAuthority('GET_GLOBAL_LEAVES')")
-    public Map<String, Object> global(@RequestParam(required = false) Long paysId,
+    public Map<String, Object> global(@RequestParam(required = false) List<Long> paysId,   // drapeaux de la navbar : 179,64
                                       @RequestParam(required = false) DemandeEtat etat,
                                       @RequestParam(required = false) String type,
                                       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
@@ -328,7 +328,7 @@ public class LeaveRequestController {
      */
     @GetMapping("/global/export")
     @PreAuthorize("hasAuthority('GET_GLOBAL_LEAVES')")
-    public ResponseEntity<byte[]> exportGlobal(@RequestParam(required = false) Long paysId,
+    public ResponseEntity<byte[]> exportGlobal(@RequestParam(required = false) List<Long> paysId,
                                                @RequestParam(required = false) DemandeEtat etat,
                                                @RequestParam(required = false) String type,
                                                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
@@ -355,7 +355,7 @@ public class LeaveRequestController {
 
     @GetMapping("/global/counts")
     @PreAuthorize("hasAuthority('GET_GLOBAL_LEAVES')")
-    public Map<String, Long> globalCounts(@RequestParam(required = false) Long paysId) {
+    public Map<String, Long> globalCounts(@RequestParam(required = false) List<Long> paysId) {
         return service.globalCounts(paysId);
     }
 
@@ -385,6 +385,8 @@ public class LeaveRequestController {
     @GetMapping("/settle")
     @PreAuthorize("hasAuthority('SETTLE_LEAVES')")
     public Map<String, Object> settled(@RequestParam(defaultValue = "true") boolean mine,
+                                       // Drapeaux de la navbar : 179,64 (absent = tout le périmètre du rôle).
+                                       @RequestParam(required = false) List<Long> paysId,
                                        @RequestParam(required = false) DemandeEtat etat,
                                        @RequestParam(required = false) String type,
                                        @RequestParam(required = false) Long collaborateurId,
@@ -397,7 +399,7 @@ public class LeaveRequestController {
                                        @RequestParam(defaultValue = "20") int size,
                                        @RequestParam(defaultValue = "fr") String lang,
                                        Authentication auth) {
-        Page<LeaveRequest> rows = service.settled(actorId(auth), mine, etat, type, collaborateurId,
+        Page<LeaveRequest> rows = service.settled(actorId(auth), mine, paysId, etat, type, collaborateurId,
                 from, to, search, PageRequest.of(page, size, sortOf(sort, dir, "createdAt")));
         return pageResponse(rows, lang);
     }
@@ -405,8 +407,9 @@ public class LeaveRequestController {
     @GetMapping("/settle/counts")
     @PreAuthorize("hasAuthority('SETTLE_LEAVES')")
     public Map<String, Long> settledCounts(@RequestParam(defaultValue = "true") boolean mine,
+                                           @RequestParam(required = false) List<Long> paysId,
                                            Authentication auth) {
-        return service.settledCounts(actorId(auth), mine);
+        return service.settledCounts(actorId(auth), mine, paysId);
     }
 
     /**

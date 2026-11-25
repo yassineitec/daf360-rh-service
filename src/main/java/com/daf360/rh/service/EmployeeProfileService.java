@@ -625,6 +625,10 @@ public class EmployeeProfileService {
         // portée, jamais à sa place — demander un pays hors portée ne renvoie rien.
         com.daf360.rh.security.PaysScopeContext.Scope scope = tenantService.getPaysScope();
         Long   paysId          = filter.getPaysId();
+        // Les drapeaux cochés dans la navbar : restreignent eux aussi À L'INTÉRIEUR de la
+        // portée (clause ajoutée en plus de celle du jeton).
+        List<Long> paysIds = filter.getPaysIds() == null ? List.of()
+                : filter.getPaysIds().stream().filter(java.util.Objects::nonNull).distinct().toList();
         String status     = (filter.getStatus() != null && !filter.getStatus().isBlank())
                             ? filter.getStatus() : null;
         // Par défaut la liste ne montre que les personnes EN SERVICE. Les quatre autres
@@ -655,6 +659,7 @@ public class EmployeeProfileService {
             (searchLike != null ? "AND (u.fullName LIKE ? OR u.username LIKE ?) " : "") +
             (scope.unfiltered() ? "" : "AND u.pays_id IN (" + placeholders(scope.paysIds().size()) + ") ") +
             (paysId     != null ? "AND u.pays_id = ? " : "") +
+            (!paysIds.isEmpty() ? "AND u.pays_id IN (" + placeholders(paysIds.size()) + ") " : "") +
             (status     != null ? "AND ep.lifecycle_status = ? " : "") +
             (inServiceOnly ? "AND (ep.lifecycle_status IS NULL OR ep.lifecycle_status IN "
                              + "('ACTIVE','ON_LEAVE','ON_MISSION')) " : "") +
@@ -670,6 +675,7 @@ public class EmployeeProfileService {
         // un décalage ici filtrerait sur la mauvaise colonne sans lever d'erreur SQL.
         if (!scope.unfiltered()) { args.addAll(scope.paysIds()); }
         if (paysId     != null) { args.add(paysId); }
+        if (!paysIds.isEmpty()) { args.addAll(paysIds); }
         if (status     != null) { args.add(status); }
         if (department != null) { args.add(department); }
         if (grade      != null) { args.add(grade); }

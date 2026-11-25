@@ -248,11 +248,29 @@ public class CdiConversionService {
      */
     @Transactional(readOnly = true)
     public List<CdiConversionDto> list(boolean todo, Long actor) {
+        return list(todo, actor, null);
+    }
+
+    /**
+     * @param requestedPaysIds les drapeaux cochés dans la navbar ; vide ou null = tout le
+     *                         périmètre du rôle (comportement d'avant). Sinon croisés avec ce
+     *                         périmètre par {@code TenantService.resolvePaysList}.
+     */
+    @Transactional(readOnly = true)
+    public List<CdiConversionDto> list(boolean todo, Long actor, List<Long> requestedPaysIds) {
         requireAny(REQUEST, VALIDATE, ARBITRATE, HR, VIEW_CONTRACTS);
-        PaysScopeContext.Scope scope = tenantService.getPaysScope();
-        List<CdiConversionRequest> rows = scope.unfiltered()
-                ? requestRepo.findAllByOrderByCreatedAtDescIdDesc()
-                : requestRepo.findByPaysIdInOrderByCreatedAtDescIdDesc(scope.paysIds());
+        List<CdiConversionRequest> rows;
+        if (requestedPaysIds == null || requestedPaysIds.isEmpty()) {
+            PaysScopeContext.Scope scope = tenantService.getPaysScope();
+            rows = scope.unfiltered()
+                    ? requestRepo.findAllByOrderByCreatedAtDescIdDesc()
+                    : requestRepo.findByPaysIdInOrderByCreatedAtDescIdDesc(scope.paysIds());
+        } else {
+            List<Long> paysIds = tenantService.resolvePaysList(requestedPaysIds);
+            rows = paysIds == null
+                    ? requestRepo.findAllByOrderByCreatedAtDescIdDesc()
+                    : requestRepo.findByPaysIdInOrderByCreatedAtDescIdDesc(paysIds);
+        }
         boolean seesAll = has(VALIDATE) || has(ARBITRATE) || has(HR) || has(VIEW_CONTRACTS);
         Names names = new Names();
         return rows.stream()

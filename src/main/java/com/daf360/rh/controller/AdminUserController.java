@@ -28,7 +28,7 @@ public class AdminUserController {
     private final ModuleSyncService moduleSync;
 
     /**
-     * GET /api/hr/admin/users?search=&isEmployee=&paysId=&onlyMissingProfile=
+     * GET /api/hr/admin/users?search=&isEmployee=&paysId=179,64&onlyMissingProfile=
      *
      * Unfiltered on purpose: this is the one screen where a non-employee account must be
      * visible, since it is where it gets flagged.
@@ -38,7 +38,7 @@ public class AdminUserController {
     public ResponseEntity<List<AdminUserService.AdminUserRow>> list(
             @RequestParam(required = false) String search,
             @RequestParam(required = false) Boolean isEmployee,
-            @RequestParam(required = false) Long paysId,
+            @RequestParam(required = false) List<Long> paysId,
             @RequestParam(required = false) Boolean onlyMissingProfile) {
         return ResponseEntity.ok(service.list(search, isEmployee, paysId, onlyMissingProfile));
     }
@@ -46,8 +46,9 @@ public class AdminUserController {
     /** GET /api/hr/admin/users/stats — header counters. */
     @GetMapping("/stats")
     @PreAuthorize("hasPermission(null, 'GET_USERS')")
-    public ResponseEntity<AdminUserService.AdminUserStats> stats() {
-        return ResponseEntity.ok(service.stats());
+    public ResponseEntity<AdminUserService.AdminUserStats> stats(
+            @RequestParam(required = false) List<Long> paysId) {
+        return ResponseEntity.ok(service.stats(paysId));
     }
 
     /**

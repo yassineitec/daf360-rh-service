@@ -73,8 +73,10 @@ public class MissionController {
 
     @GetMapping("/pending-hr")
     @PreAuthorize("hasAuthority('RH_MANAGE_MISSION_BILLETERIE')")
-    public List<MissionDto> pendingHr() {
-        return service.listPendingHr();
+    public List<MissionDto> pendingHr(
+            // Drapeaux de la navbar : paysId=179,64 (absent = tout le périmètre du rôle).
+            @RequestParam(required = false) List<Long> paysId) {
+        return service.listPendingHr(paysId);
     }
 
     /** Creates the expense sheet on first call, updates it afterwards. */
@@ -115,8 +117,9 @@ public class MissionController {
 
     @GetMapping("/change-requests")
     @PreAuthorize("hasAuthority('RH_MANAGE_MISSION_BILLETERIE')")
-    public List<MissionChangeRequestDto> pendingChangeRequests() {
-        return service.listPendingChangeRequests();
+    public List<MissionChangeRequestDto> pendingChangeRequests(
+            @RequestParam(required = false) List<Long> paysId) {
+        return service.listPendingChangeRequests(paysId);
     }
 
     @PostMapping("/change-requests/{requestId}/resolve")
@@ -131,8 +134,9 @@ public class MissionController {
 
     @GetMapping("/pending-finance")
     @PreAuthorize("hasAuthority('FACT_APPROVE_MISSION_COST')")
-    public List<MissionDto> pendingFinance() {
-        return service.listPendingFinance();
+    public List<MissionDto> pendingFinance(@RequestParam(required = false) List<Long> paysId) {
+        // Drapeaux de la barre (`paysId=179,64`, ids RH), bornés au périmètre du rôle.
+        return service.listPendingFinance(paysId);
     }
 
     @PostMapping("/{id}/finance-approve")

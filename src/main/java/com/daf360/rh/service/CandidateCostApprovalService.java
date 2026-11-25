@@ -176,6 +176,21 @@ public class CandidateCostApprovalService {
         return toDto(approvalRepo.save(approval), candidate);
     }
 
+    /**
+     * File de PLUSIEURS pays (drapeaux de la barre, déjà bornés au périmètre du rôle) ;
+     * {@code null} = tous, une liste vide = aucune.
+     */
+    @Transactional(readOnly = true)
+    public List<CandidateCostApprovalDto> getPendingByPaysIn(List<Long> paysIds) {
+        if (paysIds != null && paysIds.isEmpty()) return List.of();
+        return (paysIds == null
+                ? approvalRepo.findByStatusOrderBySubmittedAtDesc("PENDING")
+                : approvalRepo.findByPaysIdInAndStatusOrderBySubmittedAtDesc(paysIds, "PENDING"))
+                .stream()
+                .map(a -> toDto(a, candidateRepo.findById(a.getCandidateId()).orElse(null)))
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public List<CandidateCostApprovalDto> getPendingByPays(Long paysId) {
         return approvalRepo.findByPaysIdAndStatusOrderBySubmittedAtDesc(paysId, "PENDING")
@@ -195,7 +210,21 @@ public class CandidateCostApprovalService {
 
     @Transactional(readOnly = true)
     public List<CandidateSimulationSummaryDto> getCandidatesWithHistory(Long paysId) {
-        List<Object[]> rows = approvalRepo.findCandidateSummaryByPays(paysId);
+        return summaries(approvalRepo.findCandidateSummaryByPays(paysId));
+    }
+
+    /**
+     * Candidats de PLUSIEURS pays (drapeaux de la barre, déjà bornés au périmètre du rôle) ;
+     * {@code null} = tous, une liste vide = aucun.
+     */
+    @Transactional(readOnly = true)
+    public List<CandidateSimulationSummaryDto> getCandidatesWithHistoryIn(List<Long> paysIds) {
+        if (paysIds != null && paysIds.isEmpty()) return List.of();
+        return summaries(approvalRepo.findCandidateSummaryByPaysIn(paysIds == null ? 1 : 0,
+                paysIds == null ? List.of(-1L) : paysIds));
+    }
+
+    private List<CandidateSimulationSummaryDto> summaries(List<Object[]> rows) {
         return rows.stream().map(row -> {
             Long candidateId        = (Long)            row[0];
             long simulationCount    = ((Number)         row[1]).longValue();

@@ -20,6 +20,14 @@ public interface RecruitmentDemandRepository extends JpaRepository<RecruitmentDe
     Page<RecruitmentDemand> findByPaysIdAndStatut(
             Long paysId, RecruitmentDemandStatus statut, Pageable pageable);
 
+    // Plusieurs pays (drapeaux de la navbar) — RecruitmentDemandService.listByPays.
+    Page<RecruitmentDemand> findByPaysIdIn(java.util.Collection<Long> paysIds, Pageable pageable);
+
+    Page<RecruitmentDemand> findByPaysIdInAndStatut(
+            java.util.Collection<Long> paysIds, RecruitmentDemandStatus statut, Pageable pageable);
+
+    Page<RecruitmentDemand> findByStatut(RecruitmentDemandStatus statut, Pageable pageable);
+
     Page<RecruitmentDemand> findByCreatedByUserId(Long userId, Pageable pageable);
 
     Page<RecruitmentDemand> findByCreatedByUserIdAndStatut(

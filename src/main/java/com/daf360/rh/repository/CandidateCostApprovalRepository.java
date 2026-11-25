@@ -10,6 +10,10 @@ import java.util.List;
 public interface CandidateCostApprovalRepository extends JpaRepository<CandidateCostApproval, Long> {
 
     List<CandidateCostApproval> findByPaysIdAndStatusOrderBySubmittedAtDesc(Long paysId, String status);
+    /** Plusieurs pays (drapeaux de la barre). */
+    List<CandidateCostApproval> findByPaysIdInAndStatusOrderBySubmittedAtDesc(java.util.Collection<Long> paysIds, String status);
+    /** Tous les pays (rôle « Tous les pays » sans drapeau). */
+    List<CandidateCostApproval> findByStatusOrderBySubmittedAtDesc(String status);
 
     List<CandidateCostApproval> findByCandidateIdOrderBySubmittedAtDesc(Long candidateId);
 
@@ -44,4 +48,18 @@ public interface CandidateCostApprovalRepository extends JpaRepository<Candidate
             ORDER BY MAX(a.submittedAt) DESC
             """)
     List<Object[]> findCandidateSummaryByPays(@Param("paysId") Long paysId);
+
+    /** Même résumé pour PLUSIEURS pays ; {@code allPays = 1} = aucun filtre de pays. */
+    @Query("""
+            SELECT a.candidateId,
+                   COUNT(a.id)      AS simulationCount,
+                   MAX(a.submittedAt) AS latestSubmittedAt,
+                   MAX(a.status)    AS latestStatus
+            FROM CandidateCostApproval a
+            WHERE (:allPays = 1 OR a.paysId IN :paysIds)
+            GROUP BY a.candidateId
+            ORDER BY MAX(a.submittedAt) DESC
+            """)
+    List<Object[]> findCandidateSummaryByPaysIn(@Param("allPays") int allPays,
+                                                @Param("paysIds") java.util.Collection<Long> paysIds);
 }

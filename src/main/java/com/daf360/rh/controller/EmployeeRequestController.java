@@ -48,14 +48,15 @@ public class EmployeeRequestController {
             @RequestParam(required = false) Long          profileId,
             @RequestParam(required = false) RequestStatus status,
             @RequestParam(required = false) Long          typeId,
-            @RequestParam(required = false) Long          paysId,
+            // Un ou plusieurs pays (drapeaux de la navbar) : paysId=179,64.
+            @RequestParam(required = false) List<Long>    paysId,
             @PageableDefault(size = 20) Pageable          pageable) {
 
         RequestFilterDto filter = new RequestFilterDto();
         filter.setProfileId(profileId);
         filter.setStatus(status);
         filter.setTypeId(typeId);
-        filter.setPaysId(paysId);
+        filter.setPaysIds(paysId);
         return ResponseEntity.ok(PageResponse.from(requestService.listRequests(filter, pageable)));
     }
 

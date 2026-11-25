@@ -16,6 +16,19 @@ public interface OffboardingWorkflowInstanceRepository
 
     List<OffboardingWorkflowInstance> findByPaysIdAndStatus(Long paysId, String status);
 
+    /** Plusieurs pays (drapeaux de la navbar). */
+    List<OffboardingWorkflowInstance> findByPaysIdInAndStatus(java.util.Collection<Long> paysIds, String status);
+
+    /** Comme {@link #findActiveByPays}, sur plusieurs pays. */
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT w FROM OffboardingWorkflowInstance w
+            WHERE w.paysId IN :paysIds
+              AND w.status <> 'ARCHIVED'
+            ORDER BY w.triggerDate ASC
+            """)
+    List<OffboardingWorkflowInstance> findActiveByPaysIn(
+            @org.springframework.data.repository.query.Param("paysIds") java.util.Collection<Long> paysIds);
+
     List<OffboardingWorkflowInstance> findByStatus(String status);
 
     List<OffboardingWorkflowInstance> findBySlaBreachFlagTrue();

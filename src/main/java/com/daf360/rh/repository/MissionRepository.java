@@ -22,6 +22,9 @@ public interface MissionRepository extends JpaRepository<Mission, Long> {
 
     List<Mission> findByStatusAndPaysIdOrderByStartDateAsc(MissionStatus status, Long paysId);
 
+    /** Plusieurs pays (drapeaux de la navbar) — file billetterie. */
+    List<Mission> findByStatusAndPaysIdInOrderByStartDateAsc(MissionStatus status, java.util.Collection<Long> paysIds);
+
     /**
      * The calendar feed: the caller's APPROVED missions that OVERLAP the window, not the
      * ones that start inside it — a two-week mission straddling a month boundary must

@@ -6,7 +6,8 @@ import lombok.Data;
 @Data
 public class RequestFilterDto {
     private Long          profileId;
-    private Long          paysId;
+    /** Un ou plusieurs pays (drapeaux de la navbar) ; vide = tout le périmètre du rôle. */
+    private java.util.List<Long> paysIds;
     private RequestStatus status;
     private Long          typeId;
 }

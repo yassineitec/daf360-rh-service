@@ -27,6 +27,14 @@ public interface EmployeeRequestRepository extends JpaRepository<EmployeeRequest
     Page<EmployeeRequest> findByPaysIdAndStatus(
             Long paysId, RequestStatus status, Pageable pageable);
 
+    // Vue RH sur plusieurs pays (drapeaux de la navbar) — EmployeeRequestService.listRequests.
+    Page<EmployeeRequest> findByPaysIdInAndStatus(
+            java.util.Collection<Long> paysIds, RequestStatus status, Pageable pageable);
+
+    Page<EmployeeRequest> findByPaysIdIn(java.util.Collection<Long> paysIds, Pageable pageable);
+
+    Page<EmployeeRequest> findByStatus(RequestStatus status, Pageable pageable);
+
     /** Duplicate check: one open request per type per employee. */
     boolean existsByEmployeeProfileIdAndRequestTypeIdAndStatusIn(
             Long profileId, Long typeId, List<RequestStatus> openStatuses);

@@ -38,7 +38,8 @@ public class DocumentTemplateController {
             @RequestParam(required = false) Long    paysId,
             @RequestParam(required = false) String  category,
             @RequestParam(defaultValue = "false")   boolean includeInactive) {
-        Long effectivePaysId = tenantService.isAdmin() ? paysId : TenantContext.get();
+        // Périmètre du rôle, plus la permission admin (voir TenantService.resolvePays).
+        Long effectivePaysId = tenantService.resolvePays(paysId);
         return svc.list(effectivePaysId, category, includeInactive);
     }
 

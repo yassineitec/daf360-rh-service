@@ -82,9 +82,15 @@ public class ItProvisioningService {
 
     @Transactional(readOnly = true)
     public List<ProvisioningListItem> getPendingList() {
-        Long paysId = tenantService.getEffectivePaysId();
-        List<ItProvisioning> provs = paysId != null
-                ? itProvRepo.findByStatusInAndCandidatePaysId(OPEN_STATUSES, paysId)
+        return getPendingList(null);
+    }
+
+    /** {@code requestedPaysIds} : drapeaux de la navbar, croisés avec le périmètre du rôle. */
+    @Transactional(readOnly = true)
+    public List<ProvisioningListItem> getPendingList(List<Long> requestedPaysIds) {
+        List<Long> paysIds = tenantService.resolvePaysList(requestedPaysIds);
+        List<ItProvisioning> provs = paysIds != null
+                ? itProvRepo.findByStatusInAndCandidatePaysIdIn(OPEN_STATUSES, paysIds)
                 : itProvRepo.findByStatusIn(OPEN_STATUSES);
         if (provs.isEmpty()) return List.of();
 
@@ -125,9 +131,18 @@ public class ItProvisioningService {
 
     @Transactional(readOnly = true)
     public List<ProvisioningListItem> getAllList() {
-        Long paysId = tenantService.getEffectivePaysId();
-        List<ItProvisioning> provs = paysId != null
-                ? itProvRepo.findByStatusInAndCandidatePaysId(ALL_STATUSES, paysId)
+        return getAllList(null);
+    }
+
+    /**
+     * {@code requestedPaysIds} : drapeaux de la navbar, croisés avec le périmètre du rôle
+     * (avant : le seul pays de l'utilisateur pour tout rôle non-ALL).
+     */
+    @Transactional(readOnly = true)
+    public List<ProvisioningListItem> getAllList(List<Long> requestedPaysIds) {
+        List<Long> paysIds = tenantService.resolvePaysList(requestedPaysIds);
+        List<ItProvisioning> provs = paysIds != null
+                ? itProvRepo.findByStatusInAndCandidatePaysIdIn(ALL_STATUSES, paysIds)
                 : itProvRepo.findByStatusIn(ALL_STATUSES);
         if (provs.isEmpty()) return List.of();
 

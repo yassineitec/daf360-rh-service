@@ -526,17 +526,48 @@ public class TeletravailService {
 
     @Transactional(readOnly = true)
     public Page<Teletravail> global(DemandeEtat etat, LocalDate from, LocalDate to, Pageable p) {
-        PaysScopeContext.Scope scope = tenantService.getPaysScope();
-        return repository.findGlobal(scope.all() ? 1 : 0, scopeIds(scope), etat, from, to, p);
+        return global(null, etat, from, to, p);
+    }
+
+    /** {@code paysIds} : drapeaux de la navbar ; vide = tout le périmètre (comportement d'avant). */
+    @Transactional(readOnly = true)
+    public Page<Teletravail> global(List<Long> paysIds, DemandeEtat etat, LocalDate from, LocalDate to, Pageable p) {
+        int[] all = new int[1];
+        List<Long> ids = globalScope(paysIds, all);
+        return repository.findGlobal(all[0], ids, etat, from, to, p);
+    }
+
+    /**
+     * Le périmètre de la vue globale : celui du rôle sans drapeau coché (règle d'origine,
+     * {@code scope.all()} + {@link #scopeIds}) ; sinon les drapeaux croisés avec ce périmètre
+     * par {@code TenantService.resolvePaysList}. {@code all[0]} reçoit 1/0.
+     */
+    private List<Long> globalScope(List<Long> paysIds, int[] all) {
+        if (paysIds == null || paysIds.isEmpty()) {
+            PaysScopeContext.Scope scope = tenantService.getPaysScope();
+            all[0] = scope.all() ? 1 : 0;
+            return scopeIds(scope);
+        }
+        com.daf360.rh.security.PaysFilter pays =
+                com.daf360.rh.security.PaysFilter.of(tenantService.resolvePaysList(paysIds));
+        all[0] = pays.unfiltered() ? 1 : 0;
+        return pays.idsOrPlaceholder();
     }
 
     @Transactional(readOnly = true)
     public Map<String, Long> counts(Long userId, String scopeKind) {
+        return counts(userId, scopeKind, null);
+    }
+
+    /** {@code paysIds} : drapeaux de la navbar, lus pour la vue « global » seulement. */
+    @Transactional(readOnly = true)
+    public Map<String, Long> counts(Long userId, String scopeKind, List<Long> paysIds) {
         List<Object[]> rows = switch (scopeKind) {
             case "manager" -> repository.countByStateForManager(userId);
             case "global"  -> {
-                PaysScopeContext.Scope s = tenantService.getPaysScope();
-                yield repository.countByStateGlobal(s.all() ? 1 : 0, scopeIds(s));
+                int[] all = new int[1];
+                List<Long> ids = globalScope(paysIds, all);
+                yield repository.countByStateGlobal(all[0], ids);
             }
             default -> repository.countByStateForUser(userId);
         };

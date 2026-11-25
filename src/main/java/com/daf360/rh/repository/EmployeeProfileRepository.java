@@ -223,4 +223,38 @@ public interface EmployeeProfileRepository
             @Param("limit")  LocalDate limit,
             @Param("status") LifecycleStatus status,
             @Param("paysId") Long paysId);
+
+    // ── Mêmes requêtes sur PLUSIEURS pays (drapeaux de la navbar, multi-pays) ───
+
+    long countByPaysIdInAndLifecycleStatus(
+            java.util.Collection<Long> paysIds, LifecycleStatus status);
+
+    long countByPaysIdInAndLifecycleStatusIn(
+            java.util.Collection<Long> paysIds, java.util.Collection<LifecycleStatus> statuses);
+
+    long countByPaysIdIn(java.util.Collection<Long> paysIds);
+
+    long countByPaysIdInAndOnboardingCompletedTrue(java.util.Collection<Long> paysIds);
+
+    @Query("""
+            SELECT e.gender, COUNT(e) FROM EmployeeProfile e
+            WHERE e.lifecycleStatus IN :statuses AND e.paysId IN :paysIds
+            GROUP BY e.gender
+            """)
+    List<Object[]> countByGenderAndLifecycleStatusInAndPaysIdIn(
+            @Param("statuses") java.util.Collection<LifecycleStatus> statuses,
+            @Param("paysIds")  java.util.Collection<Long> paysIds);
+
+    @Query("""
+            SELECT COUNT(e) FROM EmployeeProfile e
+            WHERE e.contractEndDate IS NOT NULL
+              AND e.contractEndDate BETWEEN :today AND :limit
+              AND e.lifecycleStatus = :status
+              AND e.paysId IN :paysIds
+            """)
+    long countContractsEndingSoonByPaysIdIn(
+            @Param("today")   LocalDate today,
+            @Param("limit")   LocalDate limit,
+            @Param("status")  LifecycleStatus status,
+            @Param("paysIds") java.util.Collection<Long> paysIds);
 }

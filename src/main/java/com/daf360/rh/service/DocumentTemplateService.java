@@ -124,7 +124,8 @@ public class DocumentTemplateService {
     }
 
     public DocumentTemplateDto create(SaveDocumentTemplateDto dto, Long actorId) {
-        Long effectivePaysId = tenantService.isAdmin() ? dto.getPaysId() : TenantContext.get();
+        // Périmètre du rôle, plus la permission admin (voir TenantService.resolvePays).
+        Long effectivePaysId = tenantService.resolvePays(dto.getPaysId());
         String effectiveLang = dto.getLang() != null ? dto.getLang().trim().toLowerCase() : "fr";
         if (repo.existsByPaysIdAndNameAndLang(effectivePaysId, dto.getName(), effectiveLang)) {
             throw new AppException(ErrorCode.ALREADY_EXISTS,
@@ -231,7 +232,7 @@ public class DocumentTemplateService {
 
     /** Admin raw-HTML preview — renders arbitrary HTML without saving. */
     public byte[] previewRaw(String htmlContent, Long paysId, Long employeeProfileId, String lang) {
-        Long effectivePaysId = tenantService.isAdmin() ? paysId : TenantContext.get();
+        Long effectivePaysId = tenantService.resolvePays(paysId);
         Map<String, String> ctx = resolveContext(employeeProfileId, effectivePaysId, lang);
         putAdvanceSamples(ctx, lang);
         String resolved = replaceVariables(htmlContent, ctx);
@@ -287,7 +288,8 @@ public class DocumentTemplateService {
     }
 
     private void assertPaysOwnership(DocumentTemplate tmpl) {
-        if (!tenantService.isAdmin() && !tmpl.getPaysId().equals(TenantContext.get())) {
+        // Une maquette d'un pays du périmètre du rôle (OWN / LIST / ALL) — plus « tout admin ».
+        if (!tenantService.allows(tmpl.getPaysId())) {
             throw new AppException(ErrorCode.FORBIDDEN,
                 "Accès refusé : cette maquette appartient à un autre pays.");
         }

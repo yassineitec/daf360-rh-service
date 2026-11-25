@@ -170,13 +170,20 @@ public class RecruitmentDemandService {
     }
 
     @Transactional(readOnly = true)
-    public Page<RecruitmentDemandSummary> listByPays(Long paysId, RecruitmentDemandStatus statut, Pageable pageable) {
-        Long effectivePaysId = tenantService.getEffectivePaysId();
-        Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : paysId;
+    public Page<RecruitmentDemandSummary> listByPays(List<Long> requestedPaysIds, RecruitmentDemandStatus statut,
+                                                     Pageable pageable) {
+        // Drapeaux de la navbar croisés avec le périmètre du rôle ; rien de demandé = tout ce
+        // périmètre ; null = rôle « Tous les pays » (aucun filtre).
+        List<Long> paysIds = tenantService.resolvePaysList(requestedPaysIds);
         Pageable sorted = withDefaultSort(pageable);
-        Page<RecruitmentDemand> page = (statut != null)
-                ? demandRepo.findByPaysIdAndStatut(resolvedPaysId, statut, sorted)
-                : demandRepo.findByPaysId(resolvedPaysId, sorted);
+        Page<RecruitmentDemand> page;
+        if (paysIds == null) {
+            page = (statut != null) ? demandRepo.findByStatut(statut, sorted) : demandRepo.findAll(sorted);
+        } else {
+            page = (statut != null)
+                    ? demandRepo.findByPaysIdInAndStatut(paysIds, statut, sorted)
+                    : demandRepo.findByPaysIdIn(paysIds, sorted);
+        }
         return page.map(this::toSummary);
     }
 

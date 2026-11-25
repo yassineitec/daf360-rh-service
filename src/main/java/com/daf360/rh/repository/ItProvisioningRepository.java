@@ -28,4 +28,14 @@ public interface ItProvisioningRepository extends JpaRepository<ItProvisioning, 
     List<ItProvisioning> findByStatusInAndCandidatePaysId(
             @Param("statuses") Collection<ItProvisioningStatus> statuses,
             @Param("paysId")   Long paysId);
+
+    /** Plusieurs pays (drapeaux de la navbar). */
+    @Query("""
+        SELECT p FROM ItProvisioning p
+        WHERE p.status IN :statuses
+          AND p.candidateId IN (SELECT c.id FROM Candidate c WHERE c.paysId IN :paysIds)
+        """)
+    List<ItProvisioning> findByStatusInAndCandidatePaysIdIn(
+            @Param("statuses") Collection<ItProvisioningStatus> statuses,
+            @Param("paysIds")  Collection<Long> paysIds);
 }

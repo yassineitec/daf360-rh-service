@@ -49,7 +49,8 @@ public class CandidateController {
     public Page<CandidateListItem> list(
             @RequestParam(required = false) CandidateStatus status,
             @RequestParam(required = false) String stage,
-            @RequestParam(required = false) Long paysId,
+            // Un ou plusieurs pays (drapeaux de la navbar) : paysId=179,64.
+            @RequestParam(required = false) java.util.List<Long> paysId,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) Long departmentId,
             @RequestParam(required = false) Long demandId,
@@ -64,8 +65,9 @@ public class CandidateController {
 
     /** KPI tiles for the /candidates dashboard (total + growth, avg delay, urgent positions). */
     @GetMapping("/stats/dashboard")
-    public CandidateDashboardStats dashboardStats() {
-        return candidateService.getDashboardStats();
+    public CandidateDashboardStats dashboardStats(
+            @RequestParam(required = false) java.util.List<Long> paysId) {
+        return candidateService.getDashboardStats(paysId);
     }
 
     /**

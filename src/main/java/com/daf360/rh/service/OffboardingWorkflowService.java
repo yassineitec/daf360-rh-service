@@ -2017,19 +2017,20 @@ public class OffboardingWorkflowService {
     // ── 8. List workflow instances ────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<OffboardingWorkflowInstanceDto> listWorkflowInstances(Long paysId,
+    public List<OffboardingWorkflowInstanceDto> listWorkflowInstances(List<Long> requestedPaysIds,
                                                                        String status) {
-        Long effectivePaysId = tenantService.getEffectivePaysId();
-        Long resolvedPaysId  = effectivePaysId != null ? effectivePaysId : paysId;
+        // Drapeaux de la navbar croisés avec le périmètre du rôle (OWN / LIST / ALL) ; avant,
+        // getEffectivePaysId() ramenait tout rôle non-ALL sur son seul pays.
+        List<Long> paysIds = tenantService.resolvePaysList(requestedPaysIds);
 
         List<OffboardingWorkflowInstance> instances;
         if (status != null && !status.isBlank()) {
-            instances = resolvedPaysId != null
-                ? instanceRepo.findByPaysIdAndStatus(resolvedPaysId, status)
+            instances = paysIds != null
+                ? instanceRepo.findByPaysIdInAndStatus(paysIds, status)
                 : instanceRepo.findByStatus(status);
         } else {
-            instances = resolvedPaysId != null
-                ? instanceRepo.findActiveByPays(resolvedPaysId)
+            instances = paysIds != null
+                ? instanceRepo.findActiveByPaysIn(paysIds)
                 : instanceRepo.findAllActive();
         }
         return instances.stream().map(this::toInstanceDto).collect(Collectors.toList());

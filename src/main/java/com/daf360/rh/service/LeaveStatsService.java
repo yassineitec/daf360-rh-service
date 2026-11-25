@@ -54,10 +54,11 @@ public class LeaveStatsService {
     public record Person(Long id, String name) {}
     public record FilterOptions(List<Person> collaborateurs, List<Integer> months, List<Integer> years) {}
 
-    public record Filters(Long paysId, String keyword, List<Long> collaborateurs, List<Integer> months,
+    /** {@code paysIds} : les drapeaux cochés dans la navbar (plusieurs pays possibles). */
+    public record Filters(List<Long> paysIds, String keyword, List<Long> collaborateurs, List<Integer> months,
                           List<Integer> years) {
-        public static Filters none(Long paysId) {
-            return new Filters(paysId, null, null, null, null);
+        public static Filters none(List<Long> paysIds) {
+            return new Filters(paysIds, null, null, null, null);
         }
     }
 
@@ -78,8 +79,8 @@ public class LeaveStatsService {
     }
 
     @Transactional(readOnly = true)
-    public FilterOptions filterOptions(Long paysId) {
-        List<StatRow> all = rows(Filters.none(paysId));
+    public FilterOptions filterOptions(List<Long> paysIds) {
+        List<StatRow> all = rows(Filters.none(paysIds));
         Map<Long, Person> people = new LinkedHashMap<>();
         all.stream()
                 .sorted(Comparator.comparing(r -> nullToEmpty(r.collaborateurName()), String.CASE_INSENSITIVE_ORDER))
@@ -111,7 +112,9 @@ public class LeaveStatsService {
             sql.append(" AND a.pays_id IN (").append(placeholders(ids.size())).append(')');
             params.addAll(ids);
         }
-        if (f.paysId() != null) { sql.append(" AND a.pays_id = ?"); params.add(f.paysId()); }
+        // Les drapeaux de la navbar, EN PLUS du plafond ci-dessus : un pays hors périmètre
+        // ne renvoie rien au lieu de le révéler.
+        appendIn(sql, params, "a.pays_id", f.paysIds());
         appendIn(sql, params, "a.collaborateur_id", f.collaborateurs());
         appendIn(sql, params, "MONTH(a.date_debut)", f.months());
         appendIn(sql, params, "YEAR(a.date_debut)", f.years());

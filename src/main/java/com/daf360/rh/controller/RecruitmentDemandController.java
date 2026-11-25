@@ -33,7 +33,9 @@ public class RecruitmentDemandController {
     @GetMapping
     @PreAuthorize("hasPermission(null, 'RH_VIEW_RECRUITMENT_DEMAND')")
     public Page<RecruitmentDemandSummary> listByPays(
-            @RequestParam Long paysId,
+            // Un ou plusieurs pays (drapeaux de la navbar) : paysId=179,64 ; absent = tout le
+            // périmètre du rôle. Était obligatoire et unique.
+            @RequestParam(required = false) java.util.List<Long> paysId,
             @RequestParam(required = false) RecruitmentDemandStatus statut,
             @PageableDefault(size = 20) Pageable pageable) {
         return service.listByPays(paysId, statut, pageable);

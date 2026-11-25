@@ -267,6 +267,7 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long
             WHERE l.createdBy IS NOT NULL
               AND l.createdBy <> l.collaborateurId
               AND (:actorId IS NULL OR l.createdBy = :actorId)
+              AND (:scopeAll = 1 OR l.paysId IN :scopeIds)
               AND (:etat IS NULL OR l.etatDemande = :etat)
               AND (:type IS NULL OR l.type = :type)
               AND (:collaborateurId IS NULL OR l.collaborateurId = :collaborateurId)
@@ -277,6 +278,8 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long
                    OR LOWER(l.reason) LIKE LOWER(CONCAT('%', :search, '%')))
             """)
     Page<LeaveRequest> findSettled(@Param("actorId") Long actorId,
+                                   @Param("scopeAll") int scopeAll,
+                                   @Param("scopeIds") List<Long> scopeIds,
                                    @Param("etat") DemandeEtat etat,
                                    @Param("type") String type,
                                    @Param("collaborateurId") Long collaborateurId,
@@ -292,9 +295,12 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, Long
             WHERE l.createdBy IS NOT NULL
               AND l.createdBy <> l.collaborateurId
               AND (:actorId IS NULL OR l.createdBy = :actorId)
+              AND (:scopeAll = 1 OR l.paysId IN :scopeIds)
             GROUP BY l.etatDemande
             """)
-    List<Object[]> countByStateSettled(@Param("actorId") Long actorId);
+    List<Object[]> countByStateSettled(@Param("actorId") Long actorId,
+                                       @Param("scopeAll") int scopeAll,
+                                       @Param("scopeIds") List<Long> scopeIds);
 
     // ── Calendar ─────────────────────────────────────────────────────────────
 

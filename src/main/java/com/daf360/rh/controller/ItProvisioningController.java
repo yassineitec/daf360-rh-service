@@ -19,14 +19,18 @@ public class ItProvisioningController {
 
     @GetMapping("/pending")
     @PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
-    public List<ProvisioningListItem> getPendingList() {
-        return provisioningService.getPendingList();
+    public List<ProvisioningListItem> getPendingList(
+            // Drapeaux de la navbar : paysId=179,64 (absent = tout le périmètre du rôle).
+            @RequestParam(required = false) List<Long> paysId) {
+        return provisioningService.getPendingList(paysId);
     }
 
     @GetMapping("/all")
     @PreAuthorize("hasPermission(null, 'IT_PROVISIONING')")
-    public List<ProvisioningListItem> getAllList() {
-        return provisioningService.getAllList();
+    public List<ProvisioningListItem> getAllList(
+            // Drapeaux de la navbar : paysId=179,64 (absent = tout le périmètre du rôle).
+            @RequestParam(required = false) List<Long> paysId) {
+        return provisioningService.getAllList(paysId);
     }
 
     @GetMapping("/{id}")

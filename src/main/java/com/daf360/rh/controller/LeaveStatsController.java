@@ -34,7 +34,7 @@ public class LeaveStatsController {
 
     @GetMapping
     @PreAuthorize("hasAuthority('GET_HR_STATS')")
-    public Map<String, Object> page(@RequestParam(required = false) Long paysId,
+    public Map<String, Object> page(@RequestParam(required = false) List<Long> paysId,   // drapeaux de la navbar : 179,64
                                     @RequestParam(required = false) String search,
                                     @RequestParam(required = false) List<Long> collaborateurs,
                                     @RequestParam(required = false) List<Integer> months,
@@ -55,14 +55,14 @@ public class LeaveStatsController {
 
     @GetMapping("/filter-options")
     @PreAuthorize("hasAuthority('GET_HR_STATS')")
-    public LeaveStatsService.FilterOptions filterOptions(@RequestParam(required = false) Long paysId) {
+    public LeaveStatsService.FilterOptions filterOptions(@RequestParam(required = false) List<Long> paysId) {
         return service.filterOptions(paysId);
     }
 
     /** One sheet, one row per employee and month, in the list's order (capped like every RH export). */
     @GetMapping("/export")
     @PreAuthorize("hasAuthority('GET_HR_STATS')")
-    public ResponseEntity<byte[]> export(@RequestParam(required = false) Long paysId,
+    public ResponseEntity<byte[]> export(@RequestParam(required = false) List<Long> paysId,
                                          @RequestParam(required = false) String search,
                                          @RequestParam(required = false) List<Long> collaborateurs,
                                          @RequestParam(required = false) List<Integer> months,

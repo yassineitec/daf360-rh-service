@@ -59,8 +59,8 @@ public class DashboardService {
      * country's required list, to JOIN on {@code ep.pays_id}. Null when nothing is required
      * anywhere in scope (the caller then has nothing to report).
      */
-    private String requirementsSql(Long scopedPaysId) {
-        return requirementsSql(scopedPaysId, false);
+    private String requirementsSql(List<Long> scopedPaysIds) {
+        return requirementsSql(scopedPaysIds, false);
     }
 
     /**
@@ -72,14 +72,15 @@ public class DashboardService {
             java.util.Set.of("CONTRACT_SIGNED", "RESIGNATION", "DISCHARGE", "OTHER");
 
     /**
-     * Same as {@link #requirementsSql(Long)}, with a 4th column {@code is_required} (1/0).
+     * Same as {@link #requirementsSql(List)}, with a 4th column {@code is_required} (1/0).
      *
+     * @param scopedPaysIds the countries in scope; {@code null} = every country with a profile
      * @param allTypes false = the country's required list only (card, default);
      *                 true  = every active type of the country, minus {@link #NOT_EXPECTED_IN_SERVICE}
      */
-    private String requirementsSql(Long scopedPaysId, boolean allTypes) {
-        List<Long> paysIds = scopedPaysId != null
-                ? List.of(scopedPaysId)
+    private String requirementsSql(List<Long> scopedPaysIds, boolean allTypes) {
+        List<Long> paysIds = scopedPaysIds != null
+                ? scopedPaysIds
                 : jdbcTemplate.queryForList(
                         "SELECT DISTINCT pays_id FROM [dbo].[employee_profiles] " +
                         "WHERE deleted = 0 AND pays_id IS NOT NULL", Long.class);
@@ -156,52 +157,63 @@ public class DashboardService {
     private final com.daf360.rh.service.document.DocumentTypeService documentTypeService;
 
     /**
-     * Le pays des cartes de /rh/accueil. Un admin multi-pays (mêmes permissions que
-     * {@link TenantService#isAdmin()}) choisit dans le sélecteur : un pays, ou
-     * {@code null} pour tous. Pour tout autre utilisateur le paramètre est ignoré — il
-     * reste sur son propre pays, comme avant, et ne peut pas lire celui d'un autre.
+     * Les pays des cartes de /rh/accueil (les drapeaux cochés dans la navbar). Les pays
+     * demandés sont retenus s'ils sont dans le PÉRIMÈTRE DU RÔLE (OWN / LIST / ALL) ; aucun
+     * pays demandé (« Tous les pays ») = tout le périmètre. {@code null} = aucun filtre (rôle
+     * ALL). Voir {@link TenantService#resolvePaysList}.
      */
-    private Long scopePaysId(Long requestedPaysId) {
-        return tenantService.isAdmin() ? requestedPaysId : tenantService.getEffectivePaysId();
+    private List<Long> scopePaysIds(List<Long> requestedPaysIds) {
+        return tenantService.resolvePaysList(requestedPaysIds);
+    }
+
+    /** {@code AND <column> IN (?, …) } pour les pays retenus ; rien quand {@code paysIds} est null. */
+    private static String paysIn(String column, List<Long> paysIds) {
+        if (paysIds == null) return "";
+        return "AND " + column + " IN ("
+                + String.join(",", java.util.Collections.nCopies(paysIds.size(), "?")) + ") ";
+    }
+
+    /** Ajoute les paramètres de {@link #paysIn}, dans le même ordre. */
+    private static void addPays(List<Object> params, List<Long> paysIds) {
+        if (paysIds != null) params.addAll(paysIds);
     }
 
     // ── ① /stats ─────────────────────────────────────────────────────────────
 
-    public DashboardStatsDto getStats(Long requestedPaysId) {
+    public DashboardStatsDto getStats(List<Long> requestedPaysIds) {
         LocalDate today      = LocalDate.now();
         LocalDate monthStart = today.withDayOfMonth(1);
-        Long paysId          = scopePaysId(requestedPaysId);
+        List<Long> paysIds   = scopePaysIds(requestedPaysIds);
 
-        long totalActifs = paysId != null
-                ? profileRepository.countByPaysIdAndLifecycleStatus(paysId, LifecycleStatus.ACTIVE)
+        long totalActifs = paysIds != null
+                ? profileRepository.countByPaysIdInAndLifecycleStatus(paysIds, LifecycleStatus.ACTIVE)
                 : profileRepository.countByLifecycleStatus(LifecycleStatus.ACTIVE);
-        long onLeave = paysId != null
-                ? profileRepository.countByPaysIdAndLifecycleStatus(paysId, LifecycleStatus.ON_LEAVE)
+        long onLeave = paysIds != null
+                ? profileRepository.countByPaysIdInAndLifecycleStatus(paysIds, LifecycleStatus.ON_LEAVE)
                 : profileRepository.countByLifecycleStatus(LifecycleStatus.ON_LEAVE);
 
-        Long newThisMonthRaw = paysId != null
-                ? jdbcTemplate.queryForObject(
-                        "SELECT COUNT(*) FROM [dbo].[employee_profiles] " +
-                        "WHERE hire_date >= ? AND deleted = 0 AND pays_id = ?",
-                        Long.class, Date.valueOf(monthStart), paysId)
-                : jdbcTemplate.queryForObject(
-                        "SELECT COUNT(*) FROM [dbo].[employee_profiles] " +
-                        "WHERE hire_date >= ? AND deleted = 0",
-                        Long.class, Date.valueOf(monthStart));
+        List<Object> monthParams = new ArrayList<>(List.of(Date.valueOf(monthStart)));
+        addPays(monthParams, paysIds);
+        Long newThisMonthRaw = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[employee_profiles] " +
+                "WHERE hire_date >= ? AND deleted = 0 " + paysIn("pays_id", paysIds),
+                Long.class, monthParams.toArray());
         long newThisMonth = newThisMonthRaw != null ? newThisMonthRaw : 0L;
 
+        List<Object> pendingParams = new ArrayList<>();
+        addPays(pendingParams, paysIds);
         Long pendingRaw = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM [dbo].[employee_requests] WHERE status = 'SUBMITTED'" +
-                (paysId != null ? " AND pays_id = ?" : ""),
-                Long.class, paysId != null ? new Object[]{ paysId } : new Object[0]);
+                "SELECT COUNT(*) FROM [dbo].[employee_requests] WHERE status = 'SUBMITTED' " +
+                paysIn("pays_id", paysIds),
+                Long.class, pendingParams.toArray());
         long pendingRequests = pendingRaw != null ? pendingRaw : 0L;
 
-        long contratsARenouveler = paysId != null
-                ? profileRepository.countContractsEndingSoonByPaysId(today, today.plusDays(60), LifecycleStatus.ACTIVE, paysId)
+        long contratsARenouveler = paysIds != null
+                ? profileRepository.countContractsEndingSoonByPaysIdIn(today, today.plusDays(60), LifecycleStatus.ACTIVE, paysIds)
                 : profileRepository.countContractsEndingSoon(today, today.plusDays(60), LifecycleStatus.ACTIVE);
 
-        // Gender percentages — reuse workforce logic
-        WorkforceStatsDto ws = getWorkforceStats(paysId);
+        // Gender percentages — reuse workforce logic (already scoped: resolving twice is a no-op)
+        WorkforceStatsDto ws = getWorkforceStats(paysIds);
 
         return new DashboardStatsDto(
                 totalActifs,
@@ -216,8 +228,8 @@ public class DashboardService {
 
     // ── ② /workforce ─────────────────────────────────────────────────────────
 
-    public WorkforceStatsDto getWorkforceStats(Long requestedPaysId) {
-        return getWorkforceStats(requestedPaysId, null);
+    public WorkforceStatsDto getWorkforceStats(List<Long> requestedPaysIds) {
+        return getWorkforceStats(requestedPaysIds, null);
     }
 
     /**
@@ -227,18 +239,18 @@ public class DashboardService {
      *                     Ses sous-départements directs ({@code parent_id}) sont inclus.
      *                     {@code null} = pas de filtre.
      */
-    public WorkforceStatsDto getWorkforceStats(Long requestedPaysId, Long departmentId) {
-        Long paysId = scopePaysId(requestedPaysId);
-        WorkforceFilter filter = workforceFilter(paysId, departmentId);
+    public WorkforceStatsDto getWorkforceStats(List<Long> requestedPaysIds, Long departmentId) {
+        List<Long> paysIds = scopePaysIds(requestedPaysIds);
+        WorkforceFilter filter = workforceFilter(paysIds, departmentId);
 
         long total;
         List<Object[]> genderRows;
         if (departmentId == null) {
-            total = paysId != null
-                    ? profileRepository.countByPaysIdAndLifecycleStatusIn(paysId, IN_SERVICE)
+            total = paysIds != null
+                    ? profileRepository.countByPaysIdInAndLifecycleStatusIn(paysIds, IN_SERVICE)
                     : profileRepository.countByLifecycleStatusIn(IN_SERVICE);
-            genderRows = total == 0 ? List.of() : paysId != null
-                    ? profileRepository.countByGenderAndLifecycleStatusInAndPaysId(IN_SERVICE, paysId)
+            genderRows = total == 0 ? List.of() : paysIds != null
+                    ? profileRepository.countByGenderAndLifecycleStatusInAndPaysIdIn(IN_SERVICE, paysIds)
                     : profileRepository.countByGenderAndLifecycleStatusIn(IN_SERVICE);
         } else {
             // Les requêtes dérivées du repository ne connaissent pas le département.
@@ -417,14 +429,12 @@ public class DashboardService {
     /** Clause WHERE des cartes d'effectif (alias {@code ep}) et ses paramètres. */
     private record WorkforceFilter(String where, Object[] params) {}
 
-    private static WorkforceFilter workforceFilter(Long paysId, Long departmentId) {
+    private static WorkforceFilter workforceFilter(List<Long> paysIds, Long departmentId) {
         StringBuilder where = new StringBuilder(
                 "WHERE ep.lifecycle_status IN " + IN_SERVICE_SQL + " AND ep.deleted = 0 ");
         List<Object> params = new ArrayList<>();
-        if (paysId != null) {
-            where.append("AND ep.pays_id = ? ");
-            params.add(paysId);
-        }
+        where.append(paysIn("ep.pays_id", paysIds));
+        addPays(params, paysIds);
         if (departmentId != null) {
             where.append("AND ep.department_id IN (SELECT dd.id FROM [dbo].[departments] dd " +
                          "WHERE dd.id = ? OR dd.parent_id = ?) ");
@@ -540,13 +550,13 @@ public class DashboardService {
 
     // ── ③ /completion ────────────────────────────────────────────────────────
 
-    public ProfileCompletionDto getCompletion(Long requestedPaysId) {
-        Long paysId = scopePaysId(requestedPaysId);
-        long done  = paysId != null
-                ? profileRepository.countByPaysIdAndOnboardingCompletedTrue(paysId)
+    public ProfileCompletionDto getCompletion(List<Long> requestedPaysIds) {
+        List<Long> paysIds = scopePaysIds(requestedPaysIds);
+        long done  = paysIds != null
+                ? profileRepository.countByPaysIdInAndOnboardingCompletedTrue(paysIds)
                 : profileRepository.countByOnboardingCompletedTrue();
-        long total = paysId != null
-                ? profileRepository.countByPaysId(paysId)
+        long total = paysIds != null
+                ? profileRepository.countByPaysIdIn(paysIds)
                 : profileRepository.count();
         long todo  = total - done;
         double rate = total == 0 ? 0.0 : Math.round((double) done / total * 1000.0) / 10.0;
@@ -555,10 +565,10 @@ public class DashboardService {
 
     // ── ④ /fin-periode-essai ─────────────────────────────────────────────────
 
-    public PreviewResponse<ProbationAlertDto> getProbationAlerts(int joursMax, Long requestedPaysId) {
+    public PreviewResponse<ProbationAlertDto> getProbationAlerts(int joursMax, List<Long> requestedPaysIds) {
         LocalDate today = LocalDate.now();
         LocalDate limit = today.plusDays(joursMax);
-        Long paysId = scopePaysId(requestedPaysId);
+        List<Long> paysIds = scopePaysIds(requestedPaysIds);
 
         String sql = "SELECT TOP 3 ep.id, u.fullName, ep.photo_url, ep.probation_end_date, " +
                      "       ep.contract_end_date, ep.gender, " +
@@ -571,13 +581,13 @@ public class DashboardService {
                      "  AND ep.probation_end_date >= ? " +
                      "  AND ep.probation_end_date <= ? " +
                      "  AND ep.deleted = 0 " +
-                     (paysId != null ? "  AND ep.pays_id = ? " : "") +
+                     paysIn("ep.pays_id", paysIds) +
                      "ORDER BY ep.probation_end_date ASC";
 
         List<Object> params = new ArrayList<>();
         params.add(Date.valueOf(today));
         params.add(Date.valueOf(limit));
-        if (paysId != null) params.add(paysId);
+        addPays(params, paysIds);
 
         List<ProbationAlertDto> items = jdbcTemplate.query(sql,
                 (rs, rowNum) -> {
@@ -601,7 +611,7 @@ public class DashboardService {
         String countSql = "SELECT COUNT(*) FROM [dbo].[employee_profiles] " +
                           "WHERE is_on_probation = 1 AND probation_end_date >= ? " +
                           "  AND probation_end_date <= ? AND deleted = 0 " +
-                          (paysId != null ? "  AND pays_id = ? " : "");
+                          paysIn("pays_id", paysIds);
 
         long total = items.isEmpty() ? 0L
                 : jdbcTemplate.queryForObject(countSql, Long.class, params.toArray());
@@ -611,9 +621,9 @@ public class DashboardService {
 
     // ── ⑤ /anniversaires ─────────────────────────────────────────────────────
 
-    public List<AnniversaireDto> getAnniversaires(int ignored, Long requestedPaysId) {
+    public List<AnniversaireDto> getAnniversaires(int ignored, List<Long> requestedPaysIds) {
         LocalDate today = LocalDate.now();
-        Long paysId = scopePaysId(requestedPaysId);
+        List<Long> paysIds = scopePaysIds(requestedPaysIds);
 
         String sql = "SELECT ep.id, u.fullName, ep.photo_url, ep.date_of_birth " +
                      "FROM [dbo].[employee_profiles] ep " +
@@ -622,11 +632,11 @@ public class DashboardService {
                      "  AND ep.lifecycle_status = 'ACTIVE' " +
                      "  AND ep.deleted = 0 " +
                      "  AND MONTH(ep.date_of_birth) = MONTH(GETDATE()) " +
-                     (paysId != null ? "  AND ep.pays_id = ? " : "") +
+                     paysIn("ep.pays_id", paysIds) +
                      "ORDER BY DAY(ep.date_of_birth) ASC";
 
         List<Object> params = new ArrayList<>();
-        if (paysId != null) params.add(paysId);
+        addPays(params, paysIds);
 
         return jdbcTemplate.query(sql,
                 (rs, rowNum) -> {
@@ -679,10 +689,10 @@ public class DashboardService {
         return onFile;
     }
 
-    public List<NouvelEmployeDto> getNouveauxEmployes(int limit, Long requestedPaysId) {
+    public List<NouvelEmployeDto> getNouveauxEmployes(int limit, List<Long> requestedPaysIds) {
         int safeLimit = Math.max(1, Math.min(limit, 100));
         LocalDate threeMonthsAgo = LocalDate.now().minusMonths(3);
-        Long paysId = scopePaysId(requestedPaysId);
+        List<Long> paysIds = scopePaysIds(requestedPaysIds);
 
         String sql = "SELECT ep.id, u.fullName, ep.hire_date, ep.gender, " +
                      com.daf360.rh.lists.ContractTypeRefs.sqlCode("ep", "ctv") + " AS contract_type, " +
@@ -703,13 +713,13 @@ public class DashboardService {
                      "WHERE ep.lifecycle_status = 'ACTIVE' " +
                      "  AND ep.deleted = 0 " +
                      "  AND ep.hire_date >= ? " +
-                     (paysId != null ? "  AND ep.pays_id = ? " : "") +
+                     paysIn("ep.pays_id", paysIds) +
                      "ORDER BY ep.hire_date DESC " +
                      "OFFSET 0 ROWS FETCH NEXT " + safeLimit + " ROWS ONLY";
 
         List<Object> params = new ArrayList<>();
         params.add(Date.valueOf(threeMonthsAgo));
-        if (paysId != null) params.add(paysId);
+        addPays(params, paysIds);
 
         // Two passes: the profile rows, then one documents query for the whole page — the
         // required list is per country now, so it can no longer be a fixed set of columns.
@@ -768,13 +778,13 @@ public class DashboardService {
     // ── /missing-documents ────────────────────────────────────────────────────
     // The required doc types of each profile's country (RH's choice, V121)
 
-    public PreviewResponse<MissingDocumentDto> getMissingDocuments(Long requestedPaysId) {
-        return getMissingDocuments(requestedPaysId, false);
+    public PreviewResponse<MissingDocumentDto> getMissingDocuments(List<Long> requestedPaysIds) {
+        return getMissingDocuments(requestedPaysIds, false);
     }
 
     /** {@code all} = every employee concerned (pop-up « Voir tout »), not the card's top 5. */
-    public PreviewResponse<MissingDocumentDto> getMissingDocuments(Long requestedPaysId, boolean all) {
-        return getMissingDocuments(requestedPaysId, all, false);
+    public PreviewResponse<MissingDocumentDto> getMissingDocuments(List<Long> requestedPaysIds, boolean all) {
+        return getMissingDocuments(requestedPaysIds, all, false);
     }
 
     /**
@@ -782,11 +792,11 @@ public class DashboardService {
      *                 true  = every document type of the country (pop-up filter « Tous les
      *                 documents ») — each item then says which of its missing types are required.
      */
-    public PreviewResponse<MissingDocumentDto> getMissingDocuments(Long requestedPaysId, boolean all,
+    public PreviewResponse<MissingDocumentDto> getMissingDocuments(List<Long> requestedPaysIds, boolean all,
                                                                    boolean allTypes) {
-        Long paysId = scopePaysId(requestedPaysId);
-        Object[] params = paysId != null ? new Object[]{ paysId } : new Object[0];
-        String requirements = requirementsSql(paysId, allTypes);
+        List<Long> paysIds = scopePaysIds(requestedPaysIds);
+        Object[] params = paysIds != null ? paysIds.toArray() : new Object[0];
+        String requirements = requirementsSql(paysIds, allTypes);
         if (requirements == null) return new PreviewResponse<>(List.of(), 0L);
         String fromWhere =
                 "FROM [dbo].[employee_profiles] ep " +
@@ -796,7 +806,7 @@ public class DashboardService {
                 // manquer parce que la personne est partie en mission ce matin.
                 "WHERE ep.lifecycle_status IN " + IN_SERVICE_SQL + " " +
                 "  AND ep.deleted = 0 " +
-                (paysId != null ? "  AND ep.pays_id = ? " : "") +
+                paysIn("ep.pays_id", paysIds) +
                 "  AND NOT EXISTS ( " +
                 "    SELECT 1 FROM [dbo].[employee_documents] ed " +
                 "    WHERE ed.employee_profile_id = ep.id " +

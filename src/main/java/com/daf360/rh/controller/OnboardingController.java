@@ -24,14 +24,18 @@ public class OnboardingController {
 
     @GetMapping("/kpi")
     @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
-    public OnboardingKpiDto getKpi() {
-        return onboardingService.getKpi();
+    public OnboardingKpiDto getKpi(
+            // Drapeaux de la navbar : paysId=179,64 (absent = tout le périmètre du rôle).
+            @RequestParam(required = false) List<Long> paysId) {
+        return onboardingService.getKpi(paysId);
     }
 
     @GetMapping("/pending")
     @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
-    public List<OnboardingListItem> getPendingList() {
-        return onboardingService.getPendingList();
+    public List<OnboardingListItem> getPendingList(
+            // Drapeaux de la navbar : paysId=179,64 (absent = tout le périmètre du rôle).
+            @RequestParam(required = false) List<Long> paysId) {
+        return onboardingService.getPendingList(paysId);
     }
 
     @GetMapping("/{candidateId}/form")
