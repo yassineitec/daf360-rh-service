@@ -38,7 +38,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 
-import com.daf360.rh.dto.candidate.CandidateHistoryItem;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -99,13 +98,29 @@ public class CandidateService {
     private final PaysTimezoneService             paysTimezoneService;
     /** V132: who may read the record (interviewers without RH codes included). */
     private final InterviewAccess                 interviewAccess;
+    /** V137: posts filled per demand — guards and recounts on attach / move / hire. */
+    private final DemandFillService               demandFillService;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
+    /**
+     * Statuses of a candidature whose process is still running (V137). Only these block a new
+     * candidature with the same e-mail: a person whose earlier candidature was archived,
+     * rejected — or who was hired and has since left — may apply again.
+     */
+    private static final Set<CandidateStatus> IN_PROGRESS = Set.of(
+            CandidateStatus.PENDING, CandidateStatus.ACCEPTED, CandidateStatus.OFFER_SENT,
+            CandidateStatus.IT_IN_PROGRESS, CandidateStatus.EMAIL_RECEIVED, CandidateStatus.HR_IN_PROGRESS);
+
     public CandidateResponse createCandidate(CreateCandidateRequest request, Long actorUserId) {
-        if (candidateRepo.existsByEmailPersonal(request.getEmailPersonal())) {
-            throw new AppException(ErrorCode.CANDIDATE_EMAIL_DUPLICATE);
+        if (request.getEmailPersonal() != null
+                && candidateRepo.existsByEmailPersonalIgnoreCaseAndStatusIn(request.getEmailPersonal().trim(), IN_PROGRESS)) {
+            throw new AppException(ErrorCode.CANDIDATE_EMAIL_DUPLICATE,
+                    "Une candidature est déjà en cours avec cet email. Une nouvelle candidature n'est possible "
+                    + "qu'une fois la précédente terminée (rejetée ou archivée).");
         }
+        // V137: a full demand takes no new candidature, even before the reconcile closes it.
+        demandFillService.requireOpenPost(request.getRecruitmentDemandId());
 
         Candidate candidate = mapper.toEntity(request);
         // Prénom with leading capitals, NOM in capitals — the same rule as the profile page.
@@ -126,9 +141,56 @@ public class CandidateService {
         candidate = candidateRepo.save(candidate);
 
         auditService.log(actorUserId.toString(), "CREATE", "CANDIDATE", candidate.getId(),
-                null, "status=PENDING");
+                null, "status=PENDING"
+                        + (request.getCopiedFromCandidateId() != null ? "; copiedFrom=" + request.getCopiedFromCandidateId() : ""));
+
+        if (request.getCopiedFromCandidateId() != null) {
+            candidate = copyCvFrom(request.getCopiedFromCandidateId(), candidate);
+        }
+
+        demandFillService.recomputeFor(candidate.getRecruitmentDemandId(), actorUserId);
 
         return toFullResponse(candidate);
+    }
+
+    /**
+     * A candidature copied from an archived one gets its own copy of the CV file — never a shared
+     * path: replacing the CV of one must not delete the other's (uploadCv deletes the old file).
+     * The source must be ARCHIVED and in the caller's scope; a missing file is skipped, not fatal.
+     */
+    private Candidate copyCvFrom(Long sourceId, Candidate target) {
+        Candidate source = findOrThrow(sourceId);
+        if (source.getStatus() != CandidateStatus.ARCHIVED) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "Seule une candidature archivée peut être reprise.");
+        }
+        if (source.getPaysId() != null && target.getPaysId() != null
+                && !source.getPaysId().equals(target.getPaysId())) {
+            throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
+                    "La candidature archivée appartient à une autre entité.");
+        }
+        if (source.getCvPath() == null) return target;
+        try {
+            Path from = Paths.get(source.getCvPath());
+            if (!Files.exists(from)) {
+                log.warn("Archived candidate {} CV file missing ({}), not copied", sourceId, from);
+                return target;
+            }
+            Path dir = Paths.get(appProperties.getStoragePath(), "candidates", target.getId().toString());
+            Files.createDirectories(dir);
+            String name = source.getCvOriginalName() != null ? source.getCvOriginalName() : from.getFileName().toString();
+            Path to = dir.resolve(UUID.randomUUID() + "_" + name);
+            Files.copy(from, to);
+            target.setCvPath(to.toString());
+            target.setCvOriginalName(source.getCvOriginalName());
+            target.setCvUploadedAt(OffsetDateTime.now());
+            target.setUpdatedAt(OffsetDateTime.now());
+            return candidateRepo.save(target);
+        } catch (IOException ex) {
+            // The candidature exists; RH can still upload the CV by hand.
+            log.warn("CV copy from candidate {} to {} failed: {}", sourceId, target.getId(), ex.getMessage());
+            return target;
+        }
     }
 
     public CandidateResponse updateCandidate(Long id, UpdateCandidateRequest request, Long actorUserId) {
@@ -136,11 +198,14 @@ public class CandidateService {
 
         if (request.getEmailPersonal() != null
                 && !request.getEmailPersonal().equalsIgnoreCase(candidate.getEmailPersonal())
-                && candidateRepo.existsByEmailPersonal(request.getEmailPersonal())) {
-            throw new AppException(ErrorCode.CANDIDATE_EMAIL_DUPLICATE);
+                && candidateRepo.existsByEmailPersonalIgnoreCaseAndStatusInAndIdNot(
+                        request.getEmailPersonal().trim(), IN_PROGRESS, candidate.getId())) {
+            throw new AppException(ErrorCode.CANDIDATE_EMAIL_DUPLICATE,
+                    "Une autre candidature est en cours avec cet email.");
         }
 
         String before = "status=" + candidate.getStatus();
+        Long demandBefore = candidate.getRecruitmentDemandId();
         mapper.updateEntity(candidate, request);
         if (request.getGender() != null) {
             candidate.setGender(com.daf360.rh.common.GenderNormalizer.normalize(request.getGender()));
@@ -152,10 +217,24 @@ public class CandidateService {
         // Absent → left as it was; present (including null) → applied. That is what lets a
         // spontaneous application be attached to a vacancy later, or detached.
         if (request.isRecruitmentDemandProvided()) {
-            applyRecruitmentDemand(candidate, request.getRecruitmentDemandId());
+            // V137: moving a candidature onto a demand takes one of its posts — refused when none
+            // is left. Staying on the same demand is not a move.
+            Long target = request.getRecruitmentDemandId();
+            if (target != null && !target.equals(demandBefore)) {
+                demandFillService.requireOpenPost(target);
+            }
+            applyRecruitmentDemand(candidate, target);
         }
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidate = candidateRepo.save(candidate);
+
+        // Both demands recount: the one it left may have a post free again, the one it joined
+        // may now be full.
+        Long demandAfter = candidate.getRecruitmentDemandId();
+        if (!java.util.Objects.equals(demandBefore, demandAfter)) {
+            demandFillService.recomputeFor(demandBefore, actorUserId);
+            demandFillService.recomputeFor(demandAfter, actorUserId);
+        }
 
         auditService.log(actorUserId.toString(), "UPDATE", "CANDIDATE", candidate.getId(),
                 before, "email=" + candidate.getEmailPersonal()
@@ -298,6 +377,9 @@ public class CandidateService {
         candidate.setStatus(CandidateStatus.HIRED);
         candidate.setUpdatedAt(OffsetDateTime.now());
         candidateRepo.save(candidate);
+
+        // A hire straight from ACCEPTED takes a post here, not at an offer hand-off (V137).
+        demandFillService.recomputeFor(candidate.getRecruitmentDemandId(), actorUserId);
 
         /*
          * Open the IT equipment ledger for the new employee (V76).
@@ -583,8 +665,6 @@ public class CandidateService {
         if (!interviewAccess.hasFullRecordAccess()) {
             response.setSalaireNetRh(null);
             response.setSalaireNetCandidat(null);
-            response.setNationalId(null);
-            response.setPassportNumber(null);
             response.setItProvisioning(null);
             response.setCvPath(null);
             response.setInterviewerView(true);
@@ -671,74 +751,7 @@ public class CandidateService {
         }
     }
 
-    // ── History ───────────────────────────────────────────────────────────────
-
-    @Transactional(readOnly = true)
-    public List<CandidateHistoryItem> getHistory(Long candidateId) {
-        findOrThrow(candidateId);
-        String sql = "SELECT al.id, al.timestamp, al.action, al.new_value, " +
-                     "al.user_id as actor_id, u.fullName as actor_name " +
-                     "FROM audit_log al " +
-                     "LEFT JOIN [dbo].[Users] u ON u.id = TRY_CAST(al.user_id AS BIGINT) " +
-                     "WHERE al.entity_type = 'CANDIDATE' " +
-                     "AND al.entity_id = ? " +
-                     "ORDER BY al.timestamp DESC";
-        return jdbc.query(sql, (rs, rowNum) -> {
-            String action  = rs.getString("action");
-            String newVal  = rs.getString("new_value");
-            String actorId = rs.getString("actor_id");
-            java.sql.Timestamp ts = rs.getTimestamp("timestamp");
-            return CandidateHistoryItem.builder()
-                .id(rs.getLong("id"))
-                .timestamp(ts != null ? ts.toInstant().toString() : null)
-                .action(action)
-                .actionLabel(mapHistoryActionLabel(action))
-                .performedByUserId(actorId != null ? safeParseL(actorId) : null)
-                .performedByName(rs.getString("actor_name"))
-                .comment(extractHistoryComment(newVal))
-                .resultingStatus(extractHistoryStatus(newVal))
-                .build();
-        }, candidateId.toString());
-    }
-
-    private String mapHistoryActionLabel(String action) {
-        if (action == null) return "—";
-        return switch (action) {
-            case "CREATE_CANDIDATE", "CREATE" -> "Candidature créée";
-            case "UPDATE_CANDIDATE", "UPDATE" -> "Profil modifié";
-            case "ACCEPT_CANDIDATE", "ACCEPT" -> "Statut : Accepté(e)";
-            case "REJECT_CANDIDATE", "REJECT" -> "Statut : Refusé(e)";
-            case "UPDATE_IT_PROVISIONING"      -> "Provisioning IT mis à jour";
-            case "SUBMIT_MS365_EMAIL"          -> "Compte Microsoft 365 créé";
-            case "COMPLETE_IT_PROVISIONING"    -> "Provisioning IT terminé";
-            case "COMPLETE_ONBOARDING_PROFILE" -> "Dossier RH complété";
-            case "UPLOAD_CV"                   -> "CV téléversé";
-            default                            -> action;
-        };
-    }
-
-    private String extractHistoryComment(String v) {
-        if (v == null || v.isBlank()) return null;
-        try {
-            com.fasterxml.jackson.databind.JsonNode n =
-                new com.fasterxml.jackson.databind.ObjectMapper().readTree(v);
-            if (n.has("comment")) return n.get("comment").asText();
-        } catch (Exception ignored) {}
-        if (v.contains("comment=")) {
-            int s = v.indexOf("comment=") + 8, e = v.indexOf(";", s);
-            return e == -1 ? v.substring(s) : v.substring(s, e);
-        }
-        return v.length() > 80 ? null : v;
-    }
-
-    private String extractHistoryStatus(String v) {
-        if (v == null) return null;
-        return v.startsWith("status=") ? v.replace("status=", "") : null;
-    }
-
-    private Long safeParseL(String s) {
-        try { return Long.parseLong(s.trim()); } catch (Exception e) { return null; }
-    }
+    // History moved to CandidateHistoryService (« Historique » tab).
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 

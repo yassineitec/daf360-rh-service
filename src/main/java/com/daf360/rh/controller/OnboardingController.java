@@ -21,6 +21,7 @@ import java.util.Map;
 public class OnboardingController {
 
     private final OnboardingService onboardingService;
+    private final com.daf360.rh.service.CandidateHistoryService candidateHistoryService;
 
     @GetMapping("/kpi")
     @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
@@ -36,6 +37,20 @@ public class OnboardingController {
             // Drapeaux de la navbar : paysId=179,64 (absent = tout le périmètre du rôle).
             @RequestParam(required = false) List<Long> paysId) {
         return onboardingService.getPendingList(paysId);
+    }
+
+    /**
+     * « Historique » tab — every onboarding action of the caller's entities, newest first.
+     * [from, to] are calendar days, both included (none = the last 12 months).
+     */
+    @GetMapping("/history")
+    @PreAuthorize("hasPermission(null, 'HR_ONBOARDING')")
+    public List<com.daf360.rh.history.HistoryEntryDto> history(
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to) {
+        return candidateHistoryService.onboardingHistory(from, to);
     }
 
     @GetMapping("/{candidateId}/form")

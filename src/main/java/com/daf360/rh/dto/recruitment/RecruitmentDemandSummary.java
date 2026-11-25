@@ -20,6 +20,11 @@ public class RecruitmentDemandSummary {
     private String recruitmentReasonLabel;
     private int headcount;
     private int candidateCount;
+    /** Posts filled (V137): offer agreed — onboarding, IT or hired. */
+    private int positionsFilled;
+    private int hiredCount;
+    /** AUTO_FILLED | MANUAL | null (V137). */
+    private String closedReason;
     private OffsetDateTime submittedAt;
     private Long createdByUserId;
 }

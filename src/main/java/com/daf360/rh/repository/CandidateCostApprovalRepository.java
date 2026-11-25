@@ -17,6 +17,9 @@ public interface CandidateCostApprovalRepository extends JpaRepository<Candidate
 
     List<CandidateCostApproval> findByCandidateIdOrderBySubmittedAtDesc(Long candidateId);
 
+    /** A candidate's requests in one status — PENDING ones are withdrawn when it is archived (V137). */
+    List<CandidateCostApproval> findByCandidateIdAndStatus(Long candidateId, String status);
+
     /**
      * The candidate's standalone budget pre-validations (no offer round) still waiting for
      * finance, newest first — re-submitting updates the first one instead of queueing another.

@@ -41,6 +41,7 @@ class CandidateServiceTest {
     @Mock JdbcTemplate             jdbc;
     @Mock NotificationRoutingService notificationRoutingService;
     @Mock CandidateInterviewRepository interviewRepo;
+    @Mock com.daf360.rh.service.DemandFillService demandFillService;
 
     @InjectMocks CandidateService service;
 
@@ -91,7 +92,8 @@ class CandidateServiceTest {
         Candidate entity = pendingCandidate(null);
         Candidate saved  = pendingCandidate(1L);
 
-        when(candidateRepo.existsByEmailPersonal(req.getEmailPersonal())).thenReturn(false);
+        when(candidateRepo.existsByEmailPersonalIgnoreCaseAndStatusIn(eq(req.getEmailPersonal()), anyCollection()))
+                .thenReturn(false);
         when(mapper.toEntity(req)).thenReturn(entity);
         when(candidateRepo.save(entity)).thenReturn(saved);
         when(mapper.toResponse(saved)).thenReturn(stubResponse(saved));
@@ -111,7 +113,8 @@ class CandidateServiceTest {
         req.setEmailPersonal("duplicate@example.com");
         req.setPaysId(PAYS_ID);
 
-        when(candidateRepo.existsByEmailPersonal("duplicate@example.com")).thenReturn(true);
+        when(candidateRepo.existsByEmailPersonalIgnoreCaseAndStatusIn(eq("duplicate@example.com"), anyCollection()))
+                .thenReturn(true);
 
         assertThatThrownBy(() -> service.createCandidate(req, ACTOR_ID))
                 .isInstanceOf(AppException.class)
@@ -119,6 +122,33 @@ class CandidateServiceTest {
                         .isEqualTo(ErrorCode.CANDIDATE_EMAIL_DUPLICATE));
 
         verify(candidateRepo, never()).save(any());
+    }
+
+    /** V137: an e-mail whose earlier candidatures are all over (archived, rejected) applies again. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void createCandidate_emailOfAnArchivedCandidature_isAccepted() {
+        CreateCandidateRequest req = new CreateCandidateRequest();
+        req.setFirstName("Alice");
+        req.setLastName("Martin");
+        req.setEmailPersonal("alice.martin@example.com");
+        req.setPaysId(PAYS_ID);
+
+        Candidate entity = pendingCandidate(null);
+        Candidate saved  = pendingCandidate(2L);
+        org.mockito.ArgumentCaptor<java.util.Collection<CandidateStatus>> statuses =
+                org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        when(candidateRepo.existsByEmailPersonalIgnoreCaseAndStatusIn(eq("alice.martin@example.com"), statuses.capture()))
+                .thenReturn(false);
+        when(mapper.toEntity(req)).thenReturn(entity);
+        when(candidateRepo.save(entity)).thenReturn(saved);
+        when(mapper.toResponse(saved)).thenReturn(stubResponse(saved));
+
+        assertThat(service.createCandidate(req, ACTOR_ID).getId()).isEqualTo(2L);
+        // Only a candidature still in progress blocks the e-mail.
+        assertThat(statuses.getValue())
+                .doesNotContain(CandidateStatus.ARCHIVED, CandidateStatus.REJECTED, CandidateStatus.HIRED)
+                .contains(CandidateStatus.PENDING, CandidateStatus.OFFER_SENT, CandidateStatus.HR_IN_PROGRESS);
     }
 
     // ── acceptCandidate ───────────────────────────────────────────────────────

@@ -62,6 +62,7 @@ public class OfferService {
     private final AuditService auditService;
     private final OfferNotifier offerNotifier;
     private final HiringHandoffService handoff;
+    private final DemandFillService demandFillService;
 
     /** The candidate's current round, whatever its state. 404 when none was ever drafted. */
     @Transactional(readOnly = true)
@@ -90,6 +91,8 @@ public class OfferService {
      */
     public OfferResponse draftOffer(Long candidateId, CreateOfferRequest req, Long actorUserId) {
         Candidate candidate = findCandidateOrThrow(candidateId);
+        // V137: no salary is negotiated for a post that is already taken.
+        demandFillService.requireOpenPost(candidate.getRecruitmentDemandId());
 
         if (req.getSimulationSnapshot() == null || req.getSimulationSnapshot().isBlank()) {
             throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
@@ -276,6 +279,8 @@ public class OfferService {
             throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
                     "Cette offre n'a pas encore été validée par le contrôle budgétaire.");
         }
+        // V137: never send an offer for a post that is already taken.
+        demandFillService.requireOpenPost(candidate.getRecruitmentDemandId());
         if (candidate.getEmailPersonal() == null || candidate.getEmailPersonal().isBlank()) {
             throw new AppException(ErrorCode.BUSINESS_RULE_VIOLATION,
                     "Le candidat n'a pas d'email personnel : renseignez-le dans l'onglet Profil avant d'envoyer l'offre.");
@@ -416,6 +421,8 @@ public class OfferService {
         JobOffer offer = findCurrentOrThrow(candidateId);
         Candidate candidate = findCandidateOrThrow(candidateId);
         assertPending(offer, candidate);
+        // V137: the last post may have been taken since the offer went out.
+        demandFillService.requireOpenPost(candidate.getRecruitmentDemandId());
 
         OffsetDateTime now = OffsetDateTime.now();
         offer.setStatus(OfferStatus.ACCEPTED);

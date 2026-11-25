@@ -97,6 +97,20 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /**
+     * A URL that matches no controller (typo'd path, missing prefix on the caller's side)
+     * reaches here as a 404, not a crash — without this it fell into the generic handler
+     * below and came out as a 500 "unexpected error", which hid a simple wrong-URL mistake
+     * behind a misleading server-crash report (found via the RH audit screen calling
+     * {@code /audit/logs} instead of {@code /api/hr/audit/logs}).
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ProblemDetail handleNoResource(org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, "Ressource introuvable : " + ex.getResourcePath());
+        pd.setProperty("code", "RESOURCE_NOT_FOUND");
+        return pd;
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGeneric(Exception ex) {
         log.error("Unexpected error", ex);

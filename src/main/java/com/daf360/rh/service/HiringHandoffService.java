@@ -40,6 +40,7 @@ public class HiringHandoffService {
     private final ItProvisioningRepository   itProvRepo;
     private final CandidateRepository        candidateRepo;
     private final NotificationRoutingService notificationRoutingService;
+    private final DemandFillService          demandFillService;
 
     /** Opens IT provisioning and onboarding for a candidate whose offer is agreed. Idempotent. */
     public void startOnboardingAndIt(Candidate candidate) {
@@ -58,6 +59,10 @@ public class HiringHandoffService {
         candidate.setStatus(CandidateStatus.HR_IN_PROGRESS);
         candidate.setUpdatedAt(now);
         candidateRepo.save(candidate);
+
+        // The post is now taken (V137): the demand may be full — close it and archive the
+        // candidatures still competing for it.
+        demandFillService.recomputeFor(candidate.getRecruitmentDemandId(), null);
 
         try {
             notificationRoutingService.resolveAndDispatch(

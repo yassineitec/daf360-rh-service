@@ -53,15 +53,8 @@ public class Candidate {
     @JoinColumn(name = "nationality_id")
     private Nationality nationality;
 
-    @Column(name = "national_id", length = 100)
-    private String nationalId;
-
-    /**
-     * Passport number, kept apart from {@link #nationalId} (the CIN) so onboarding pre-fills
-     * each into its own field of the employee profile. Same width as employee_profiles.
-     */
-    @Column(name = "passport_number", length = 100)
-    private String passportNumber;
+    // No CIN / passport on a candidature (2026-11-25): both are captured once, at onboarding,
+    // on the employee profile. candidates.national_id / passport_number are dropped by V139.
 
     /**
      * Candidate gender — canonical GENDER list value_code (MALE/FEMALE/OTHER/
@@ -131,6 +124,29 @@ public class Candidate {
 
     @Column(name = "recruitment_demand_id")
     private Long recruitmentDemandId;
+
+    // ── Archiving (V137) ──────────────────────────────────────────────────────
+    @Column(name = "archived_at", columnDefinition = "datetimeoffset(6)")
+    private OffsetDateTime archivedAt;
+
+    /** Null when the system archived it (demand filled). */
+    @Column(name = "archived_by")
+    private Long archivedBy;
+
+    /** POSITION_FILLED | DEMAND_CLOSED | MANUAL — see {@link #ARCHIVE_POSITION_FILLED}. */
+    @Column(name = "archive_reason", length = 30)
+    private String archiveReason;
+
+    @Column(name = "archive_note", length = 500, columnDefinition = "nvarchar(500)")
+    private String archiveNote;
+
+    /** The status before archiving: an archived HIRED recruit still occupies its post. */
+    @Column(name = "archived_from_status", length = 30)
+    private String archivedFromStatus;
+
+    public static final String ARCHIVE_POSITION_FILLED = "POSITION_FILLED";
+    public static final String ARCHIVE_DEMAND_CLOSED   = "DEMAND_CLOSED";
+    public static final String ARCHIVE_MANUAL          = "MANUAL";
 
     @Column(name = "employment_type_id")
     private Long employmentTypeId;
