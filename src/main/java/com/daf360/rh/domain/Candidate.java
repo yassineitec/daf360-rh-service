@@ -53,15 +53,8 @@ public class Candidate {
     @JoinColumn(name = "nationality_id")
     private Nationality nationality;
 
-    @Column(name = "national_id", length = 100)
-    private String nationalId;
-
-    /**
-     * Passport number, kept apart from {@link #nationalId} (the CIN) so onboarding pre-fills
-     * each into its own field of the employee profile. Same width as employee_profiles.
-     */
-    @Column(name = "passport_number", length = 100)
-    private String passportNumber;
+    // No CIN / passport on a candidature (2026-11-25): both are captured once, at onboarding,
+    // on the employee profile. candidates.national_id / passport_number are dropped by V139.
 
     /**
      * Candidate gender — canonical GENDER list value_code (MALE/FEMALE/OTHER/

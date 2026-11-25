@@ -225,7 +225,10 @@ public class RecruitmentDemandService {
         return approved.stream()
                 .map(d -> {
                     List<Long> others = otherDemandsOfPost(idsByPost, d);
-                    int archived = others.stream().mapToInt(id -> archivedByDemand.getOrDefault(id, 0)).sum();
+                    // The demand's OWN archived candidatures count too: a demand closed (which
+                    // archives them) and then reopened must offer them back.
+                    int archived = archivedByDemand.getOrDefault(d.getId(), 0)
+                            + others.stream().mapToInt(id -> archivedByDemand.getOrDefault(id, 0)).sum();
                     return new ApprovedDemandOption(d.getId(), d.getJobTitle(), d.getDepartment(),
                             d.getHeadcount(), d.getPositionsFilled(), others.size(), archived);
                 })
@@ -233,8 +236,9 @@ public class RecruitmentDemandService {
     }
 
     /**
-     * The ARCHIVED candidatures of the OTHER demands raised for the same post as this one —
-     * what the creation wizard offers to copy from. Newest archive first.
+     * The ARCHIVED candidatures of this demand (a closed-then-reopened demand archived its own)
+     * and of the OTHER demands raised for the same post — what the creation wizard offers to copy
+     * from. Newest archive first.
      */
     @Transactional(readOnly = true)
     public List<com.daf360.rh.dto.pipeline.ArchivedCandidateDto> relatedArchivedCandidates(Long demandId) {
@@ -245,8 +249,8 @@ public class RecruitmentDemandService {
         for (RecruitmentDemand d : demandRepo.findAllByPaysId(demand.getPaysId())) {
             idsByPost.computeIfAbsent(postKey(d), k -> new java.util.ArrayList<>()).add(d.getId());
         }
-        List<Long> others = otherDemandsOfPost(idsByPost, demand);
-        if (others.isEmpty()) return List.of();
+        List<Long> others = new java.util.ArrayList<>(otherDemandsOfPost(idsByPost, demand));
+        others.add(demand.getId());
 
         String in = String.join(",", Collections.nCopies(others.size(), "?"));
         String sql = """

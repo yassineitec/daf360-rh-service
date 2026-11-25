@@ -661,8 +661,6 @@ public class CandidateService {
         if (!interviewAccess.hasFullRecordAccess()) {
             response.setSalaireNetRh(null);
             response.setSalaireNetCandidat(null);
-            response.setNationalId(null);
-            response.setPassportNumber(null);
             response.setItProvisioning(null);
             response.setCvPath(null);
             response.setInterviewerView(true);

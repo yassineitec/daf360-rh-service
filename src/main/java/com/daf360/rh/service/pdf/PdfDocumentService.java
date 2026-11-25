@@ -99,11 +99,12 @@ public class PdfDocumentService {
     // adds them there, and selecting c.cin_city broke the décharge with "Invalid column name"
     // on every database not patched by hand. Take them from the candidate's profile when one
     // exists (OUTER APPLY TOP 1: at IT-provisioning time the profile may not exist yet).
+    // The CIN number too: candidates no longer carry one (V139), only the profile does.
     private static final String CAND_SQL =
-            "SELECT c.first_name, c.last_name, c.gender, c.national_id, c.pays_id, " +
+            "SELECT c.first_name, c.last_name, c.gender, ep.national_id, c.pays_id, " +
             "       ep.cin_city, ep.cin_date " +
             "FROM [dbo].[candidates] c " +
-            "OUTER APPLY (SELECT TOP 1 e.cin_city, e.cin_date FROM [dbo].[employee_profiles] e " +
+            "OUTER APPLY (SELECT TOP 1 e.national_id, e.cin_city, e.cin_date FROM [dbo].[employee_profiles] e " +
             "             WHERE e.candidate_id = c.id ORDER BY e.id DESC) ep " +
             "WHERE c.id = ?";
 
@@ -158,7 +159,7 @@ public class PdfDocumentService {
         // Employee identity
         data.put("civilite",   deriveCivilite(gender));
         data.put("fullName",   fullName);
-        data.put("nationalId", nationalId);
+        data.put("nationalId", nationalId != null ? nationalId : "________");
         data.put("cinCity",    cinCity != null ? cinCity : "________");
         data.put("cinDate",    cinDate);
         // Hardware

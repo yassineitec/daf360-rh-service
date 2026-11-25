@@ -635,8 +635,9 @@ public class OnboardingService {
                 .dateOfBirth(hasDraft ? draft.getDateOfBirth()
                            : hasProfile ? existingProfile.getDateOfBirth() : c.getDateOfBirth())
                 .nationality(c.getNationality() != null ? c.getNationality().getLabelFr() : null)
+                // CIN / passport are no longer on the candidature: typed here, at onboarding.
                 .nationalId(hasDraft ? draft.getNationalId()
-                          : hasProfile ? existingProfile.getNationalId() : c.getNationalId())
+                          : hasProfile ? existingProfile.getNationalId() : null)
                 .ms365Email(prov != null ? prov.getMs365Email() : null)
                 // The vacancy behind this hire — read straight off the candidate, so it holds
                 // for the whole wizard without another lookup per step.
@@ -697,7 +698,7 @@ public class OnboardingService {
                         ? existingProfile.getNationality().getId()
                         : c.getNationality() != null ? c.getNationality().getId() : null)
                 .passportNumber(hasDraft ? draft.getPassportNumber()
-                              : hasProfile ? existingProfile.getPassportNumber() : c.getPassportNumber())
+                              : hasProfile ? existingProfile.getPassportNumber() : null)
                 .cnssNumber(hasDraft ? draft.getCnssNumber()
                           : hasProfile ? existingProfile.getCnssNumber() : null)
                 .cnssAffiliationDate(hasDraft ? draft.getCnssAffiliationDate()
