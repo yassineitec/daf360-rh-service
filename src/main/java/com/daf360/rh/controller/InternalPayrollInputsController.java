@@ -147,6 +147,7 @@ public class InternalPayrollInputsController {
             log.warn("payroll-inputs: régime not resolvable for user {} on {}: {}", userId, to, e.getMessage());
         }
 
+        RoleRef role = roleOf(userId);
         return ResponseEntity.ok(new PayrollInputs(
                 userId, paysId, year, month, from, to,
                 weekend, holidays, workingDaysInPeriod,
@@ -155,7 +156,52 @@ public class InternalPayrollInputsController {
                 absences(userId, paysId, from, to),
                 autorisationMinutes(userId, from, to),
                 monthlyAutorisationQuota(paysId),
-                balances(userId, paysId, from, to)));
+                balances(userId, paysId, from, to),
+                role != null ? role.id() : null,
+                role != null ? role.labelFr() : null));
+    }
+
+    /**
+     * Reference data for payroll's settings screens: the weekend days of a country (the days a
+     * weekend-overtime majoration can be set for), the RH roles (a daily overtime cap can be set
+     * per role) and, with {@code userId}, that employee's country of work and role.
+     *
+     * GET /api/hr/internal/payroll-settings-ref?paysId=178[&userId=207]
+     */
+    @GetMapping("/api/hr/internal/payroll-settings-ref")
+    @Transactional(readOnly = true)
+    public SettingsRef settingsRef(@RequestParam(required = false) Long paysId,
+                                   @RequestParam(required = false) Long userId,
+                                   @RequestHeader(value = HEADER, required = false) String key) {
+        requireInternalKey(key);
+        Long employeePays = null;
+        RoleRef employeeRole = null;
+        if (userId != null) {
+            employeePays = profileRepo.findByUserId(userId)
+                    .filter(p -> !Boolean.TRUE.equals(p.getDeleted()))
+                    .map(EmployeeProfile::getPaysId).orElse(null);
+            employeeRole = roleOf(userId);
+        }
+        Long pays = paysId != null ? paysId : employeePays;
+        List<String> weekend = pays == null ? List.of() : calendar.weekendFor(pays).stream()
+                .sorted(Comparator.comparingInt(DayOfWeek::getValue))
+                .map(DayOfWeek::name)
+                .toList();
+        List<RoleRef> roles = jdbcTemplate.query("""
+                SELECT id, frenchName, englishName FROM [dbo].[Roles]
+                WHERE ISNULL(deleted, 0) = 0 ORDER BY frenchName
+                """, (rs, i) -> new RoleRef(rs.getLong("id"), rs.getString("frenchName"), rs.getString("englishName")));
+        return new SettingsRef(pays, weekend, roles, userId, employeePays,
+                employeeRole != null ? employeeRole.id() : null);
+    }
+
+    private RoleRef roleOf(Long userId) {
+        List<RoleRef> rows = jdbcTemplate.query("""
+                SELECT r.id, r.frenchName, r.englishName
+                FROM   [dbo].[Users] u JOIN [dbo].[Roles] r ON r.id = u.role_id
+                WHERE  u.id = ?
+                """, (rs, i) -> new RoleRef(rs.getLong("id"), rs.getString("frenchName"), rs.getString("englishName")), userId);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     /**
@@ -348,7 +394,23 @@ public class InternalPayrollInputsController {
             int autorisationMinutes,
             /** Null = no monthly limit. */
             Integer autorisationMonthlyQuotaMinutes,
-            List<BalanceLine> balances
+            List<BalanceLine> balances,
+            /** RH role (Users.role_id) — payroll can set a daily overtime cap per role. */
+            Long roleId,
+            String roleLabel
+    ) {}
+
+    public record RoleRef(long id, String labelFr, String labelEn) {}
+
+    public record SettingsRef(
+            Long paysId,
+            /** DayOfWeek names of the country's weekend. */
+            List<String> weekendDays,
+            List<RoleRef> roles,
+            Long userId,
+            /** The employee's country of work (with userId). */
+            Long employeePaysId,
+            Long employeeRoleId
     ) {}
 
     public record AbsenceLine(
