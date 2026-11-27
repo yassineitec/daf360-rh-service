@@ -33,6 +33,14 @@ mail:
   enabled:  true
   from:     HR.DAF@arx.ing
 
+# No SMTP on a developer machine (nothing on localhost:1025): the mail health check failed
+# and turned /actuator/health DOWN (503) although every API answered. Local profile only —
+# deployed environments keep the check.
+management:
+  health:
+    mail:
+      enabled: false
+
 app:
   # Both of these must agree with the portal's own local profile, because the portal is
   # what SIGNS the token this service validates:

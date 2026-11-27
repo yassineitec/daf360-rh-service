@@ -58,11 +58,20 @@ public class AutorisationController {
 
     // ═══ The form ════════════════════════════════════════════════════════════
 
-    /** The caps in force for this employee and what is left of the monthly one. */
+    /**
+     * The caps in force for this employee and what is left of the monthly one.
+     *
+     * {@code date} = the day the form is about: the monthly figures are those of ITS month, the
+     * one {@code assertFits} will check (default: the current month). {@code excludeId} = the
+     * pending request being edited, which must not count against itself — same as the check.
+     */
     @GetMapping("/quota")
     @PreAuthorize("hasAuthority('ADD_LEAVE') or hasAuthority('GET_LEAVES')")
-    public AutorisationQuotaDto quota(Authentication auth) {
-        return service.quotaOf(actorId(auth));
+    public AutorisationQuotaDto quota(@RequestParam(required = false)
+                                      @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+                                      @RequestParam(required = false) Long excludeId,
+                                      Authentication auth) {
+        return service.quotaOf(actorId(auth), date, excludeId);
     }
 
     @PostMapping

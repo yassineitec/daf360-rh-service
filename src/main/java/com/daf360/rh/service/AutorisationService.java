@@ -257,14 +257,25 @@ public class AutorisationService {
         return rows.isEmpty() ? new Rules(null, null, null, null, Boolean.FALSE) : rows.get(0);
     }
 
-    /** What the form shows: the rules, and what is left of the monthly cap. */
+    /** What the form shows: the rules, and what is left of the current month's cap. */
     @Transactional(readOnly = true)
     public AutorisationQuotaDto quotaOf(Long userId) {
+        return quotaOf(userId, null, null);
+    }
+
+    /**
+     * What the form shows for the day being requested: the rules, and what is left of the cap
+     * of THAT day's month — the month {@link #assertFits} checks. It used to be the current
+     * month whatever the date, so once this month was full the form refused December too while
+     * the server would have accepted it. {@code excludeId}: the pending request being edited,
+     * left out exactly as the check leaves it out.
+     */
+    @Transactional(readOnly = true)
+    public AutorisationQuotaDto quotaOf(Long userId, LocalDate date, Long excludeId) {
         Long paysId = paysOf(userId);
         Rules r = rulesFor(paysId);
-        LocalDate today = LocalDate.now();
-        LocalDate monthStart = today.withDayOfMonth(1);
-        long used = repository.minutesInMonth(userId, monthStart, monthStart.plusMonths(1), null);
+        LocalDate monthStart = (date != null ? date : LocalDate.now()).withDayOfMonth(1);
+        long used = repository.minutesInMonth(userId, monthStart, monthStart.plusMonths(1), excludeId);
 
         return AutorisationQuotaDto.builder()
                 .dailyCapMinutes(r.dailyCapMinutes())
